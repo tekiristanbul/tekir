@@ -44,3 +44,7 @@ cats istanbul exists to make this information easy to discover on a map.
 - it is not a place for conversation unrelated to a cat's location or status.
 - it is not a general-purpose pet or animal app. it is specific to street cats.
 - it is not a rescue or shelter management system.
+
+## success
+
+success means that people can quickly discover reliable, up-to-date information about street cats and contribute new information whenever something changes.
