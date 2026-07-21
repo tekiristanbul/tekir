@@ -16,3 +16,11 @@ git config core.hooksPath .githooks
 ```
 
 (git hooks aren't enabled by cloning alone — this has to be run locally once.)
+
+## where things live
+
+- product decisions → `docs/product/` (one file per topic).
+- architecture decisions → `docs/architecture/` (api, db, flutter, backend).
+- design artifacts (wireframes, mockups, diagrams) → `docs/design/`, each asset paired with a short `.md` covering goal, decisions, open questions, and out of scope — same structure as `docs/product/`.
+
+nothing that's meant to persist stays only in a chat artifact, a scratch file, or an external tool (figma, claude.ai/design) without a copy landing in the matching `docs/` folder above, committed like everything else.
