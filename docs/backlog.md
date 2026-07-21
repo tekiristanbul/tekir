@@ -39,3 +39,4 @@ see the blocking-decisions list above — none of them are resolved here, this b
 
 - estimation, sequencing, or milestone assignment — this is a draft inventory, not a plan.
 - non-mvp features (anything under "out of scope" in the relevant `docs/product/*.md` files).
+- staying a live, maintained list: once an item here is ready to act on, it becomes a github issue tracked in github projects. this file is the reasoning behind the backlog, not the backlog itself — don't expect it to reflect current status.
