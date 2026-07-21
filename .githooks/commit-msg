@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# enforces commit message conventions documented in CONTRIBUTING.md:
+#   - subject: "<type>: description", <= 50 chars
+#   - blank line between subject and body
+#   - body lines <= 72 chars (trailers like "Co-Authored-By:" are exempt)
+set -euo pipefail
+
+msg_file="$1"
+allowed_types="feat|fix|docs|chore|refactor|test|style|perf|build|ci|revert"
+
+# strip comment lines git may add (interactive commits)
+mapfile -t lines < <(grep -v '^#' "$msg_file")
+
+subject="${lines[0]:-}"
+
+# let git's own merge/revert commit messages through untouched
+if [[ "$subject" =~ ^Merge\  ]]; then
+  exit 0
+fi
+
+if ! [[ "$subject" =~ ^(${allowed_types})(\([a-z0-9,-]+\))?:\ .+ ]]; then
+  echo "commit-msg: subject must look like '<type>: description'" >&2
+  echo "  allowed types: ${allowed_types//|/, }" >&2
+  echo "  got: $subject" >&2
+  exit 1
+fi
+
+if [ "${#subject}" -gt 50 ]; then
+  echo "commit-msg: subject is ${#subject} chars, keep it <= 50" >&2
+  echo "  got: $subject" >&2
+  exit 1
+fi
+
+if [ "${#lines[@]}" -gt 1 ] && [ -n "${lines[1]:-}" ]; then
+  echo "commit-msg: line 2 must be blank, separating subject from body" >&2
+  exit 1
+fi
+
+for i in "${!lines[@]}"; do
+  [ "$i" -lt 2 ] && continue
+  line="${lines[$i]}"
+  # trailers (e.g. "Co-Authored-By: ...") can't be wrapped, so they're exempt
+  if [[ "$line" =~ ^[A-Za-z-]+:\  ]]; then
+    continue
+  fi
+  if [ "${#line}" -gt 72 ]; then
+    echo "commit-msg: body line $((i + 1)) is ${#line} chars, wrap body at <= 72" >&2
+    echo "  got: $line" >&2
+    exit 1
+  fi
+done
+
+exit 0
