@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # enforces commit message conventions documented in CONTRIBUTING.md:
+#   - english only (no turkish-specific characters)
 #   - subject: "<type>: description", <= 50 chars
 #   - blank line between subject and body
 #   - body lines <= 72 chars (trailers like "Co-Authored-By:" are exempt)
@@ -7,6 +8,7 @@ set -euo pipefail
 
 msg_file="$1"
 allowed_types="feat|fix|docs|chore|refactor|test|style|perf|build|ci|revert"
+turkish_chars='[çÇğĞıİöÖşŞüÜ]'
 
 # strip comment lines git may add (interactive commits)
 mapfile -t lines < <(grep -v '^#' "$msg_file")
@@ -16,6 +18,12 @@ subject="${lines[0]:-}"
 # let git's own merge/revert commit messages through untouched
 if [[ "$subject" =~ ^Merge\  ]]; then
   exit 0
+fi
+
+if grep -qE "$turkish_chars" "$msg_file"; then
+  echo "commit-msg: write commit messages in english" >&2
+  echo "  found a turkish-specific character (ç ğ ı ö ş ü)" >&2
+  exit 1
 fi
 
 if ! [[ "$subject" =~ ^(${allowed_types})(\([a-z0-9,-]+\))?:\ .+ ]]; then
