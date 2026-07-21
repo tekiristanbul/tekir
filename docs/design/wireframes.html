@@ -1,0 +1,515 @@
+<title>cats istanbul — wireframes</title>
+<style>
+  :root{
+    --ink:#14181f;
+    --paper:#eef0f0;
+    --panel:#ffffff;
+    --accent:#d9862a;
+    --accent-ink:#3c2604;
+    --line:#9aa1a6;
+    --line-soft:#c9cdd0;
+    --muted:#5b6167;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --radius-md: 10px;
+    --radius-lg: 22px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --ink:#e7e5df;
+      --paper:#0e1116;
+      --panel:#171b22;
+      --accent:#eda63f;
+      --accent-ink:#241500;
+      --line:#454b54;
+      --line-soft:#2b2f36;
+      --muted:#9096a0;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#e7e5df; --paper:#0e1116; --panel:#171b22; --accent:#eda63f; --accent-ink:#241500; --line:#454b54; --line-soft:#2b2f36; --muted:#9096a0;
+  }
+  :root[data-theme="light"]{
+    --ink:#14181f; --paper:#eef0f0; --panel:#ffffff; --accent:#d9862a; --accent-ink:#3c2604; --line:#9aa1a6; --line-soft:#c9cdd0; --muted:#5b6167;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+  }
+  .app{
+    display:grid;
+    grid-template-columns:250px 1fr;
+    min-height:100vh;
+  }
+  .rail{
+    border-right:1px solid var(--line-soft);
+    padding:20px 14px;
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+    position:sticky;
+    top:0;
+    height:100vh;
+    overflow-y:auto;
+  }
+  .rail h1{
+    font-family:var(--mono);
+    font-size:.72rem;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin:0 8px 14px;
+    font-weight:600;
+  }
+  .rail h1 span{display:block;font-family:var(--sans);font-size:1.05rem;letter-spacing:0;text-transform:none;color:var(--ink);font-weight:700;margin-top:3px;}
+  .rail button{
+    all:unset;
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+    padding:10px 8px;
+    border-radius:8px;
+    cursor:pointer;
+    font-size:.86rem;
+    color:var(--muted);
+  }
+  .rail button .n{font-family:var(--mono);font-size:.72rem;color:var(--line);width:1.4em;flex:none;}
+  .rail button:hover{background:var(--line-soft);}
+  .rail button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  .rail button[aria-current="true"]{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:inset 0 0 0 1px var(--line-soft);}
+  .rail button[aria-current="true"] .n{color:var(--accent);}
+  .legend{
+    margin-top:auto;
+    padding:12px 8px 4px;
+    border-top:1px solid var(--line-soft);
+    font-family:var(--mono);
+    font-size:.68rem;
+    color:var(--muted);
+    line-height:1.7;
+  }
+  .legend b{color:var(--ink);}
+  .legend .sw{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.35em;}
+  .sw.dash{border:1.5px dashed var(--line);}
+  .sw.acc{background:var(--accent);}
+  .sw.img{background:linear-gradient(45deg, transparent 46%, var(--line) 47%, var(--line) 53%, transparent 54%), linear-gradient(-45deg, transparent 46%, var(--line) 47%, var(--line) 53%, transparent 54%); border:1px solid var(--line);}
+
+  main{padding:34px 40px 60px;max-width:1180px;}
+  .stage-head{margin-bottom:26px;}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 6px;}
+  .stage-head h2{font-size:1.7rem;margin:0;text-wrap:balance;letter-spacing:-.01em;}
+
+  .screen{display:none;}
+  .screen[data-active="true"]{display:block;}
+  .layout{display:grid;grid-template-columns:300px 1fr;gap:36px;align-items:start;}
+
+  /* phone frame */
+  .phone{
+    width:300px;
+    height:620px;
+    background:var(--panel);
+    border:2px solid var(--ink);
+    border-radius:34px;
+    padding:10px;
+    box-shadow:0 20px 40px -20px rgba(0,0,0,.35);
+    position:relative;
+  }
+  .screen-glass{
+    width:100%;height:100%;border-radius:24px;overflow:hidden;background:var(--panel);
+    display:flex;flex-direction:column;font-size:.72rem;position:relative;
+    border:1px solid var(--line-soft);
+  }
+  .bar{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;font-size:.68rem;color:var(--muted);font-family:var(--mono);}
+  .bar .icon{width:20px;height:20px;border:1.4px solid var(--line);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.8rem;}
+  .bar .icon.filled{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
+
+  .imgph{
+    background:linear-gradient(45deg, transparent 46%, var(--line) 47%, var(--line) 53%, transparent 54%), linear-gradient(-45deg, transparent 46%, var(--line) 47%, var(--line) 53%, transparent 54%), var(--paper);
+    border:1px solid var(--line);
+  }
+  .chip{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:.66rem;color:var(--muted);margin:2px 4px 2px 0;}
+  .chip.on{background:var(--ink);color:var(--panel);border-color:var(--ink);}
+  .btn{border-radius:var(--radius-md);text-align:center;padding:9px;font-size:.72rem;font-weight:600;border:1px solid var(--line);}
+  .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);}
+  .btn.dashed{border-style:dashed;color:var(--muted);background:transparent;}
+  .row{display:flex;flex-direction:column;gap:8px;padding:10px 12px;}
+  .badge-alert{background:var(--accent);color:var(--accent-ink);border-radius:6px;padding:2px 6px;font-size:.62rem;font-weight:700;display:inline-flex;align-items:center;gap:4px;}
+  .badge-new{width:8px;height:8px;border-radius:50%;background:var(--ink);display:inline-block;}
+  .hairline{border-top:1px solid var(--line-soft);}
+
+  .tabbar{margin-top:auto;display:flex;border-top:1px solid var(--line-soft);}
+  .tabbar div{flex:1;text-align:center;padding:9px 2px 8px;font-size:.6rem;color:var(--muted);font-family:var(--mono);}
+  .tabbar div .dot{width:16px;height:16px;border:1.4px solid var(--line);border-radius:5px;margin:0 auto 3px;}
+  .tabbar div.active{color:var(--ink);font-weight:700;}
+  .tabbar div.active .dot{border-color:var(--accent);background:var(--accent);}
+
+  .map-canvas{
+    flex:1;position:relative;overflow:hidden;
+    background-image:
+      linear-gradient(var(--line-soft) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+    background-size:34px 34px;
+    background-color:var(--paper);
+  }
+  .pin{position:absolute;display:flex;flex-direction:column;align-items:center;font-family:var(--mono);font-size:.58rem;color:var(--muted);}
+  .pin .dot{width:30px;height:30px;border-radius:50%;border:2px solid var(--ink);background:var(--panel);position:relative;}
+  .pin .dot::after{content:attr(data-mark);position:absolute;top:-6px;right:-6px;}
+  .fab{position:absolute;right:16px;bottom:16px;width:44px;height:44px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;font-size:1.3rem;font-weight:700;border:1px solid var(--accent);}
+
+  .segmented{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:0 12px;}
+  .segmented div{flex:1;text-align:center;padding:7px 4px;font-size:.66rem;color:var(--muted);}
+  .segmented div.on{background:var(--ink);color:var(--panel);font-weight:700;}
+
+  .type-card{border:1px solid var(--line);border-radius:var(--radius-md);padding:10px;font-size:.68rem;}
+  .type-card.on{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 14%, transparent);font-weight:700;}
+
+  .modal-overlay{position:absolute;inset:0;background:color-mix(in srgb, var(--ink) 45%, transparent);display:flex;align-items:flex-end;padding:14px;}
+  .modal-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;font-size:.66rem;width:100%;}
+
+  /* spec panel */
+  .spec{background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--radius-lg);padding:22px 24px;display:flex;flex-direction:column;gap:16px;}
+  .spec .field b{display:block;font-family:var(--mono);font-size:.66rem;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);margin-bottom:4px;}
+  .spec .field p{margin:0;font-size:.92rem;line-height:1.5;}
+  .spec .field ul{margin:2px 0 0;padding-left:1.1em;font-size:.92rem;line-height:1.55;}
+  .open-q{margin-top:18px;border-top:1px dashed var(--line);padding-top:14px;font-size:.82rem;color:var(--muted);}
+  .open-q b{font-family:var(--mono);font-size:.66rem;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:6px;}
+
+  @media (max-width:860px){
+    .app{grid-template-columns:1fr;}
+    .rail{position:static;height:auto;flex-direction:row;overflow-x:auto;border-right:none;border-bottom:1px solid var(--line-soft);}
+    .rail h1,.legend{display:none;}
+    main{padding:22px 16px 60px;}
+    .layout{grid-template-columns:1fr;justify-items:center;}
+  }
+</style>
+
+<div class="app">
+  <nav class="rail" aria-label="ekran listesi">
+    <h1>cats istanbul<span>wireframe akışı</span></h1>
+    <button data-target="s-map" aria-current="true"><span class="n">01</span>harita</button>
+    <button data-target="s-detail"><span class="n">02</span>kedi detay</button>
+    <button data-target="s-update"><span class="n">03</span>update ekle</button>
+    <button data-target="s-addloc"><span class="n">04</span>kedi ekle · konum</button>
+    <button data-target="s-adddetail"><span class="n">05</span>kedi ekle · detay</button>
+    <button data-target="s-discover"><span class="n">06</span>keşfet</button>
+    <button data-target="s-notif"><span class="n">07</span>bildirimler</button>
+    <button data-target="s-account"><span class="n">08</span>hesap</button>
+    <button data-target="s-login"><span class="n">09</span>giriş</button>
+    <div class="legend">
+      <div><span class="sw dash"></span>opsiyonel öğe</div>
+      <div><span class="sw img"></span>foto/medya yer tutucu</div>
+      <div><span class="sw acc"></span>vurgu / needs-help</div>
+    </div>
+  </nav>
+
+  <main>
+    <!-- 01 HARITA -->
+    <section class="screen" id="s-map" data-active="true">
+      <div class="stage-head">
+        <p class="eyebrow">01 · ana ekran</p>
+        <h2>harita</h2>
+      </div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="map-canvas" style="height:100%;">
+            <div class="pin" style="top:38%;left:20%;" data-mark="">
+              <div class="dot">🐱</div>
+              <span class="badge-new" style="margin-top:2px;"></span>
+            </div>
+            <div class="pin" style="top:24%;left:60%;">
+              <div class="dot">🐱</div>
+              <span style="font-family:var(--mono);">+3</span>
+            </div>
+            <div class="pin" style="top:64%;left:46%;">
+              <div class="dot">🐱</div>
+              <span class="badge-alert">⚠ yardım</span>
+            </div>
+            <div class="fab">+</div>
+          </div>
+          <div class="tabbar">
+            <div class="active"><div class="dot"></div>harita</div>
+            <div><div class="dot"></div>keşfet</div>
+            <div><div class="dot"></div>bildirim</div>
+            <div><div class="dot"></div>hesap</div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>kullanıcının amacı</b><p>etraftaki kedileri hızlıca görmek, son hareketliliği fark etmek ve bir kediye ulaşmak.</p></div>
+          <div class="field"><b>ana aksiyon</b><p>bir kedi pinine dokunup kedi detayına gitmek.</p></div>
+          <div class="field"><b>ikincil aksiyon</b><ul><li>yeni kedi ekle (fab)</li><li>alt menüden sekme değiştirmek</li><li>haritayı sürükle / yakınlaştır</li></ul></div>
+          <div class="field"><b>gerekli bilgiler</b><ul><li>kullanıcının konumu</li><li>kedi pinleri (foto thumbnail)</li><li>needs-help göstergesi</li><li>"yeni update" göstergesi</li><li>küme sayısı</li></ul></div>
+          <div class="field"><b>gerekli bileşenler</b><ul><li>tam ekran harita view</li><li>pin + cluster bileşeni</li><li>fab: kedi ekle</li><li>alt tab bar</li></ul></div>
+          <div class="open-q"><b>açık konu</b>koloni yoğunluğunda (20-30 kedi/1km) cluster davranışı — koloni vs tekil kedi kararı bekliyor.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 KEDI DETAY -->
+    <section class="screen" id="s-detail">
+      <div class="stage-head"><p class="eyebrow">02 · detay</p><h2>kedi detay</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span class="icon">←</span><span>tekir kedi</span><span class="icon">♥</span></div>
+          <div class="imgph" style="height:150px;margin:0 12px;border-radius:8px;"></div>
+          <div style="text-align:center;font-size:.6rem;color:var(--muted);margin:4px 0;">● ○ ○ ○</div>
+          <div class="row" style="padding-top:0;">
+            <div><span class="chip">sokulgan</span><span class="chip">kısa tüy</span><span class="chip">tekir</span></div>
+            <div class="badge-alert" style="width:fit-content;">⚠ yardım gerekiyor · 2sa</div>
+            <div class="btn primary">+ update ekle</div>
+          </div>
+          <div class="hairline"></div>
+          <div style="overflow-y:auto;flex:1;">
+            <div class="row">
+              <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">bugün 14:20 · durum güncellemesi</div>
+              <div style="font-size:.68rem;">"susuz kalmış gibiydi, su bıraktım"</div>
+            </div>
+            <div class="hairline"></div>
+            <div class="row">
+              <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">dün 09:10 · durum güncellemesi</div>
+              <div class="imgph" style="height:40px;width:40px;border-radius:6px;"></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>kullanıcının amacı</b><p>kedinin kimliğini, güncel durumunu ve geçmişini anlamak.</p></div>
+          <div class="field"><b>ana aksiyon</b><p>update ekle.</p></div>
+          <div class="field"><b>ikincil aksiyon</b><ul><li>takip et (login gerekmez)</li><li>foto galerisine bak</li><li>geri dön</li></ul></div>
+          <div class="field"><b>gerekli bilgiler</b><ul><li>fotoğraflar, fiziksel özellikler, isim (varsa)</li><li>needs-help durumu (aktifse)</li><li>update geçmişi: tip + opsiyonel yorum/foto + zaman, en yeniden eskiye</li><li>takip durumu</li></ul></div>
+          <div class="field"><b>gerekli bileşenler</b><ul><li>foto carousel</li><li>özellik chip'leri</li><li>takip toggle</li><li>update ekle cta</li><li>update listesi</li></ul></div>
+          <div class="open-q"><b>açık konu</b>birden fazla kullanıcı çelişen update girerse "güncel durum" hangisi sayılır — belirsiz.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 UPDATE EKLE -->
+    <section class="screen" id="s-update">
+      <div class="stage-head"><p class="eyebrow">03 · update ekle</p><h2>update ekle</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span class="icon">✕</span><span>update ekle</span><span></span></div>
+          <div style="padding:0 12px;font-size:.68rem;color:var(--muted);">🐱 tekir kedi</div>
+          <div class="row">
+            <div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);">tip seç</div>
+            <div style="display:flex;gap:8px;">
+              <div class="type-card on" style="flex:1;">durum güncellemesi</div>
+              <div class="type-card" style="flex:1;">yardım gerekiyor</div>
+            </div>
+            <div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);margin-top:4px;">yorum (opsiyonel)</div>
+            <div class="btn dashed" style="text-align:left;color:var(--muted);">metin ekle…</div>
+            <div class="btn dashed">📷 foto ekle (opsiyonel)</div>
+            <div class="btn primary" style="margin-top:auto;">paylaş</div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>kullanıcının amacı</b><p>kedinin güncel durumunu hızlıca paylaşmak.</p></div>
+          <div class="field"><b>ana aksiyon</b><p>tip seç ve paylaş.</p></div>
+          <div class="field"><b>ikincil aksiyon</b><ul><li>opsiyonel yorum yaz</li><li>opsiyonel foto ekle</li><li>vazgeç</li></ul></div>
+          <div class="field"><b>gerekli bilgiler</b><ul><li>tip: durum güncellemesi / yardım gerekiyor (yalnızca bu iki tip)</li><li>opsiyonel yorum, opsiyonel foto</li></ul></div>
+          <div class="field"><b>gerekli bileşenler</b><ul><li>kedi mini-header</li><li>2 tipli seçici</li><li>yorum input</li><li>foto ekle</li><li>paylaş cta</li></ul></div>
+          <div class="open-q"><b>açık konu</b>"durum güncellemesi" içeriği (serbest metin mi, ileride sabit bir liste mi) henüz karar değil. foto/video eklenirse giriş + telefon doğrulama gerekir (akış 09), eklenmezse gerekmez.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 KEDI EKLE KONUM -->
+    <section class="screen" id="s-addloc">
+      <div class="stage-head"><p class="eyebrow">04 · kedi ekle</p><h2>konum seç</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span class="icon">✕</span><span>konum seç</span><span></span></div>
+          <div class="map-canvas" style="height:280px;margin:0 12px;border-radius:8px;position:relative;">
+            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90px;height:90px;border-radius:50%;border:1.5px dashed var(--line);"></div>
+            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-100%);font-size:1.1rem;">📍</div>
+          </div>
+          <div class="row"><div class="btn dashed">📍 mevcut konumu kullan</div><div class="btn primary">bu konumu kullan</div></div>
+          <div class="modal-overlay">
+            <div class="modal-card">
+              <b style="display:block;margin-bottom:6px;">bu alanda kayıtlı bir kedi var. bu senin gördüğün kedi mi?</b>
+              <div style="display:flex;gap:6px;margin-top:8px;"><div class="btn primary" style="flex:1;">evet, bu o</div><div class="btn" style="flex:1;">hayır</div></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>kullanıcının amacı</b><p>yeni gördüğü kedinin bulunduğu alanı işaretlemek.</p></div>
+          <div class="field"><b>ana aksiyon</b><p>pini yerleştirip devam etmek.</p></div>
+          <div class="field"><b>ikincil aksiyon</b><ul><li>mevcut konumu kullan</li><li>vazgeç</li></ul></div>
+          <div class="field"><b>gerekli bilgiler</b><ul><li>kullanıcının anlık konumu</li><li>~50m alan görselleştirmesi</li><li>aynı alanda kayıtlı kedi var mı kontrolü</li></ul></div>
+          <div class="field"><b>gerekli bileşenler</b><ul><li>sürüklenebilir mini harita</li><li>alan dairesi</li><li>"bu konumu kullan" cta</li><li>duplicate uyarı modalı</li></ul></div>
+          <div class="open-q"><b>açık konu</b>"hayır, farklı bir kedi" seçilirse iki kayıt bir süre paralel kalabilir — birleştirme yöntemi henüz karar değil.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 05 KEDI EKLE DETAY -->
+    <section class="screen" id="s-adddetail">
+      <div class="stage-head"><p class="eyebrow">05 · kedi ekle</p><h2>detaylar</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span class="icon">←</span><span>kedi ekle</span><span></span></div>
+          <div class="row">
+            <div class="imgph" style="height:110px;border-radius:8px;position:relative;">
+              <span style="position:absolute;bottom:6px;left:6px;font-family:var(--mono);font-size:.58rem;background:var(--panel);padding:1px 5px;border-radius:4px;border:1px solid var(--line);">zorunlu</span>
+            </div>
+            <div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);">fiziksel özellikler</div>
+            <div><span class="chip on">tekir</span><span class="chip">siyah-beyaz</span><span class="chip">sokulgan</span><span class="chip">kısa tüy</span></div>
+            <div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);">isim (opsiyonel)</div>
+            <div class="btn dashed" style="text-align:left;color:var(--muted);">isim ekle…</div>
+            <div class="btn primary" style="margin-top:auto;">kaydet</div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>kullanıcının amacı</b><p>kedinin kimliğini oluşturacak fotoğrafı ve özellikleri girip kaydı tamamlamak.</p></div>
+          <div class="field"><b>ana aksiyon</b><p>fotoğraf ekle ve kaydet.</p></div>
+          <div class="field"><b>ikincil aksiyon</b><ul><li>fiziksel özellik seç</li><li>opsiyonel isim gir</li><li>geri dön</li></ul></div>
+          <div class="field"><b>gerekli bilgiler</b><ul><li>zorunlu foto (en az 1)</li><li>fiziksel özellikler</li><li>opsiyonel isim</li></ul></div>
+          <div class="field"><b>gerekli bileşenler</b><ul><li>foto ekleme alanı</li><li>çoklu seçim chip grubu</li><li>isim input</li><li>kaydet cta</li></ul></div>
+          <div class="open-q"><b>açık konu</b>fotoğraf zorunlu olduğu için bu ekran her zaman giriş + telefon doğrulama gerektirir (akış 09).</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 06 KESFET -->
+    <section class="screen" id="s-discover">
+      <div class="stage-head"><p class="eyebrow">06 · liste</p><h2>keşfet</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span></span><span>keşfet</span><span></span></div>
+          <div class="segmented"><div class="on">yakınımdaki</div><div>favoriler</div></div>
+          <div style="padding:8px 12px;"><span class="chip">⚠ yardım gerekiyor</span></div>
+          <div class="hairline"></div>
+          <div style="overflow-y:auto;flex:1;">
+            <div class="row" style="flex-direction:row;align-items:center;">
+              <div class="imgph" style="width:34px;height:34px;border-radius:50%;flex:none;"></div>
+              <div style="flex:1;"><div style="font-size:.7rem;">tekir kedi</div><div style="font-size:.6rem;color:var(--muted);">sokulgan, kısa tüy</div></div>
+              <div style="font-family:var(--mono);font-size:.6rem;">120m</div>
+              <span class="badge-alert">⚠</span>
+            </div>
+            <div class="hairline"></div>
+            <div class="row" style="flex-direction:row;align-items:center;">
+              <div class="imgph" style="width:34px;height:34px;border-radius:50%;flex:none;"></div>
+              <div style="flex:1;"><div style="font-size:.7rem;">siyah kedi</div><div style="font-size:.6rem;color:var(--muted);">ürkek, uzun tüy</div></div>
+              <div style="font-family:var(--mono);font-size:.6rem;">300m</div>
+            </div>
+          </div>
+          <div class="tabbar"><div><div class="dot"></div>harita</div><div class="active"><div class="dot"></div>keşfet</div><div><div class="dot"></div>bildirim</div><div><div class="dot"></div>hesap</div></div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>kullanıcının amacı</b><p>haritanın dışında listede kedilere göz atmak ve filtrelemek.</p></div>
+          <div class="field"><b>ana aksiyon</b><p>listeden bir kediye dokunup detayına gitmek.</p></div>
+          <div class="field"><b>ikincil aksiyon</b><ul><li>yardım gerekiyor filtresi aç/kapat</li><li>favoriler sekmesine geç</li></ul></div>
+          <div class="field"><b>gerekli bilgiler</b><ul><li>yakındaki kediler listesi (mesafeye göre)</li><li>foto, özet etiket, mesafe, needs-help göstergesi</li><li>favorilerde: takip edilenler</li></ul></div>
+          <div class="field"><b>gerekli bileşenler</b><ul><li>segment: yakınımdaki / favoriler</li><li>filtre chip</li><li>liste görünümü</li><li>boş durum</li><li>alt tab bar</li></ul></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 07 BILDIRIMLER -->
+    <section class="screen" id="s-notif">
+      <div class="stage-head"><p class="eyebrow">07 · liste</p><h2>bildirimler</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span></span><span>bildirimler</span><span></span></div>
+          <div style="overflow-y:auto;flex:1;">
+            <div class="row" style="flex-direction:row;align-items:center;">
+              <span class="badge-new"></span>
+              <div class="imgph" style="width:34px;height:34px;border-radius:50%;flex:none;"></div>
+              <div style="flex:1;"><div style="font-size:.7rem;">tekir kedi</div><div style="font-size:.6rem;"><span class="badge-alert">⚠ yardım gerekiyor</span></div></div>
+              <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">2sa</div>
+            </div>
+            <div class="hairline"></div>
+            <div class="row" style="flex-direction:row;align-items:center;">
+              <div class="imgph" style="width:34px;height:34px;border-radius:50%;flex:none;"></div>
+              <div style="flex:1;"><div style="font-size:.7rem;">siyah kedi</div><div style="font-size:.6rem;color:var(--muted);">durum güncellemesi</div></div>
+              <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">1g</div>
+            </div>
+          </div>
+          <div class="tabbar"><div><div class="dot"></div>harita</div><div><div class="dot"></div>keşfet</div><div class="active"><div class="dot"></div>bildirim</div><div><div class="dot"></div>hesap</div></div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>kullanıcının amacı</b><p>takip ettiği kedilerle ilgili neler olduğunu görmek.</p></div>
+          <div class="field"><b>ana aksiyon</b><p>bildirime dokunup ilgili kedi detayına (update vurgulanmış) gitmek.</p></div>
+          <div class="field"><b>ikincil aksiyon</b><ul><li>bildirim okundu işaretlenir (dokununca)</li><li>boşsa keşfete yönlendirme</li></ul></div>
+          <div class="field"><b>gerekli bilgiler</b><ul><li>takip edilenlerin update akışı, en yeniden eskiye</li><li>foto, kedi adı, update özeti, zaman, okundu durumu</li></ul></div>
+          <div class="field"><b>gerekli bileşenler</b><ul><li>liste görünümü</li><li>okunmamış işareti</li><li>needs-help vurgusu</li><li>boş durum</li><li>alt tab bar</li></ul></div>
+          <div class="open-q"><b>açık konu</b>"yardım gerekiyor" bildirimlerinin normal update bildirimlerinden farklı davranıp davranmayacağı belirsiz.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 08 HESAP -->
+    <section class="screen" id="s-account">
+      <div class="stage-head"><p class="eyebrow">08 · durum ekranı</p><h2>hesap</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span></span><span>hesap</span><span></span></div>
+          <div class="row">
+            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">misafir durumu</div>
+            <div style="font-size:.66rem;">giriş yapmadın. fotoğraf/video eklemek için giriş yap.</div>
+            <div class="btn primary">giriş yap</div>
+          </div>
+          <div class="hairline"></div>
+          <div class="row">
+            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">giriş yapılmış durumu</div>
+            <div style="display:flex;gap:6px;align-items:center;"><div class="imgph" style="width:24px;height:24px;border-radius:50%;"></div><span style="font-size:.68rem;">tekir kedi</span></div>
+            <div style="display:flex;gap:6px;align-items:center;"><div class="imgph" style="width:24px;height:24px;border-radius:50%;"></div><span style="font-size:.68rem;">siyah kedi</span></div>
+            <div class="btn">çıkış yap</div>
+          </div>
+          <div class="tabbar"><div><div class="dot"></div>harita</div><div><div class="dot"></div>keşfet</div><div><div class="dot"></div>bildirim</div><div class="active"><div class="dot"></div>hesap</div></div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>kullanıcının amacı</b><p>giriş durumunu yönetmek ve takip ettiği kedilere hızlı erişmek.</p></div>
+          <div class="field"><b>ana aksiyon</b><p>misafirse giriş yap; giriş yapılmışsa takip edilen bir kediye git.</p></div>
+          <div class="field"><b>ikincil aksiyon</b><ul><li>çıkış yap</li></ul></div>
+          <div class="field"><b>gerekli bilgiler</b><ul><li>giriş durumu</li><li>takip edilen kediler (giriş yapılmışsa)</li></ul></div>
+          <div class="field"><b>gerekli bileşenler</b><ul><li>misafir cta</li><li>takip edilenler mini-liste</li><li>çıkış seçeneği</li><li>alt tab bar</li></ul></div>
+          <div class="open-q"><b>açık konu</b>profil / rozet / puan sistemi mvp kapsamı dışında bırakıldı — bileşen olarak yer almıyor.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 GIRIS -->
+    <section class="screen" id="s-login">
+      <div class="stage-head"><p class="eyebrow">09 · ortak akış</p><h2>giriş</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span class="icon">✕</span><span></span><span></span></div>
+          <div class="row">
+            <div style="font-size:.7rem;font-weight:600;">fotoğraf/video eklemek için giriş yap</div>
+            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">telefon numarası</div>
+            <div class="btn dashed" style="text-align:left;">+90</div>
+            <div class="btn">kod gönder</div>
+            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);margin-top:8px;">doğrulama kodu</div>
+            <div class="btn dashed" style="text-align:left;letter-spacing:.3em;">------</div>
+            <div class="btn primary">giriş yap</div>
+            <div class="btn dashed" style="margin-top:auto;">medyasız devam et</div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>kullanıcının amacı</b><p>fotoğraf/video eklemek istediği an hızlıca giriş yapıp devam etmek.</p></div>
+          <div class="field"><b>ana aksiyon</b><p>telefon numarası → sms kod → giriş yap.</p></div>
+          <div class="field"><b>ikincil aksiyon</b><ul><li>vazgeç / medyasız devam et</li></ul></div>
+          <div class="field"><b>gerekli bilgiler</b><ul><li>telefon numarası</li><li>sms doğrulama kodu</li><li>bağlam metni: hangi aksiyon için</li></ul></div>
+          <div class="field"><b>gerekli bileşenler</b><ul><li>telefon input</li><li>kod gönder cta</li><li>sms kod input</li><li>giriş yap cta</li><li>medyasız devam et (update akışında)</li></ul></div>
+          <div class="open-q"><b>açık konu</b>takip etmek ve fotoğrafsız update paylaşmak bu akışı hiç tetiklemez — sadece foto/video eklenince devreye girer.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  var buttons = document.querySelectorAll('.rail button');
+  var screens = document.querySelectorAll('.screen');
+  buttons.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var target = btn.getAttribute('data-target');
+      buttons.forEach(function(b){ b.removeAttribute('aria-current'); });
+      btn.setAttribute('aria-current','true');
+      screens.forEach(function(s){ s.removeAttribute('data-active'); });
+      document.getElementById(target).setAttribute('data-active','true');
+    });
+  });
+</script>
