@@ -118,8 +118,61 @@ var CATS = [
     updates:[
       { type:'sighting', comment:'Sokak köpeklerinden kaçarken görüldü, sonra kayboldu.', photo:PHOTOS.brickwall, timeText:'4 gün önce' }
     ]
+  },
+  // the four cats below back the "+4" cluster marker near yeldeğirmeni — inCluster:true means
+  // they stay hidden behind the cluster until the map is zoomed past CLUSTER_ZOOM_THRESHOLD
+  // (see renderLeafletMarkers()), so tapping the cluster and zooming in actually reveals them.
+  {
+    id:'minnos', name:'Minnoş', traits:['tekir','kısa tüylü','sakin'], inCluster:true,
+    photo:PHOTOS.sultanahmet, photos:[PHOTOS.sultanahmet],
+    mapPos:{lat:40.9862,lng:29.0308}, fallbackPos:{top:'26%',left:'76%'},
+    areaLabel:'Yeldeğirmeni, Kadıköy',
+    lastSeenShort:'1 sa önce', lastSeenFull:'bugün 13:10', freshness:'fresh',
+    condition:'İyi görünüyor, apartman girişinde uyuyordu.',
+    water:'Bilinmiyor', food:'Bilinmiyor',
+    needsHelp:{ active:false, sinceText:'' },
+    followed:false,
+    updates:[{ type:'sighting', comment:'Apartman girişinde uyuyordu.', photo:null, timeText:'bugün 13:10' }]
+  },
+  {
+    id:'boncuk', name:'Boncuk', traits:['beyaz-kızıl','uzun tüylü','dost canlısı'], inCluster:true,
+    photo:PHOTOS.oldistanbul, photos:[PHOTOS.oldistanbul],
+    mapPos:{lat:40.9868,lng:29.0309}, fallbackPos:{top:'22%',left:'84%'},
+    areaLabel:'Yeldeğirmeni, Kadıköy',
+    lastSeenShort:'dün 20:15', lastSeenFull:'dün 20:15', freshness:'neutral',
+    condition:'İyi görünüyor, mahalledeki çoğu kişi tanıyor.',
+    water:'Bilinmiyor', food:'Dün mama verildi',
+    needsHelp:{ active:false, sinceText:'' },
+    followed:false,
+    updates:[{ type:'food', comment:'', photo:null, timeText:'dün 20:15' }]
+  },
+  {
+    id:'duman', name:'Duman', traits:['gri','kısa tüylü','çekingen'], inCluster:true,
+    photo:PHOTOS.fatih, photos:[PHOTOS.fatih],
+    mapPos:{lat:40.9863,lng:29.0316}, fallbackPos:{top:'30%',left:'80%'},
+    areaLabel:'Yeldeğirmeni, Kadıköy',
+    lastSeenShort:'5 gün önce', lastSeenFull:'5 gün önce', freshness:'stale',
+    condition:'Son günlerde daha az görülüyor.',
+    water:'Bilinmiyor', food:'Bilinmiyor',
+    needsHelp:{ active:false, sinceText:'' },
+    followed:false,
+    updates:[{ type:'sighting', comment:'Bodrum kat penceresinden izliyordu.', photo:null, timeText:'5 gün önce' }]
+  },
+  {
+    id:'pamuk', name:'Pamuk', traits:['beyaz','uzun tüylü','dost canlısı'], inCluster:true,
+    photo:PHOTOS.brickwall, photos:[PHOTOS.brickwall],
+    mapPos:{lat:40.9868,lng:29.0315}, fallbackPos:{top:'20%',left:'88%'},
+    areaLabel:'Yeldeğirmeni, Kadıköy',
+    lastSeenShort:'3 sa önce', lastSeenFull:'bugün 11:00', freshness:'fresh',
+    condition:'İyi görünüyor, kafeler civarında geziyor.',
+    water:'Bugün su verildi', food:'Bilinmiyor',
+    needsHelp:{ active:false, sinceText:'' },
+    followed:false,
+    updates:[{ type:'water', comment:'', photo:null, timeText:'bugün 11:00' }]
   }
 ];
+var CLUSTER_LATLNG = { lat:40.9865, lng:29.0312 };
+var CLUSTER_ZOOM_THRESHOLD = 17;
 var DUPLICATE_DEMO_CAT_ID = 'portakal'; // add-cat location picker starts near this cat, to demo the duplicate check
 
 function findCat(id){ for(var i=0;i<CATS.length;i++) if(CATS[i].id===id) return CATS[i]; return null; }
@@ -325,6 +378,7 @@ function initLeaflet(){
     tiles.addTo(leafletMap);
     L.control.zoom({ position:'bottomright' }).addTo(leafletMap);
     leafletMap.on('click', function(){ closeSheet(); });
+    leafletMap.on('zoomend', updateMapMarkersDom);
     CATS.forEach(addLeafletMarker);
     addLeafletCluster();
   }catch(e){ leafletFailed = true; activateMapFallback(); }
@@ -336,10 +390,15 @@ function addLeafletMarker(cat){
   leafletMarkers[cat.id] = m;
 }
 function addLeafletCluster(){
-  var html = '<div class="marker-cluster" data-action="cluster-tap" role="button" tabindex="0" aria-label="bölgedeki diğer kediler">'+icon('pin',{size:14})+'<span>+4</span></div>';
+  var html = '<div class="marker-cluster" role="button" tabindex="0" aria-label="bölgedeki diğer kediler, yakınlaştırmak için dokun">'+icon('pin',{size:14})+'<span>+4</span></div>';
   var divIcon = L.divIcon({ className:'', html:html, iconSize:[46,42], iconAnchor:[23,21] });
-  leafletCluster = L.marker([40.9865,29.0312], { icon:divIcon, keyboard:false }).addTo(leafletMap);
-  leafletCluster.on('click', function(e){ if(e.originalEvent) e.originalEvent.stopPropagation(); toast('Bu bölgede 4 kedi daha var, yakınlaştırarak görebilirsin.', {icon:'compass'}); });
+  leafletCluster = L.marker([CLUSTER_LATLNG.lat, CLUSTER_LATLNG.lng], { icon:divIcon, keyboard:false }).addTo(leafletMap);
+  // tapping the cluster actually zooms into it — updateMapMarkersDom() runs again on the
+  // resulting 'zoomend' event and swaps the cluster for the 4 real cats it represents
+  leafletCluster.on('click', function(e){
+    if(e.originalEvent) e.originalEvent.stopPropagation();
+    leafletMap.setView([CLUSTER_LATLNG.lat, CLUSTER_LATLNG.lng], CLUSTER_ZOOM_THRESHOLD, { animate:true });
+  });
 }
 
 /* single entry point for entering fallback mode, used by both the synchronous
@@ -358,31 +417,34 @@ function updateMapMarkersDom(){
   renderFallbackMarkers();
 }
 function renderLeafletMarkers(){
+  var zoomedIntoCluster = leafletMap.getZoom() >= CLUSTER_ZOOM_THRESHOLD;
   CATS.forEach(function(cat){
     var m = leafletMarkers[cat.id]; if(!m) return;
     var sel = cat.id === state.selectedCatId;
     m.setIcon(L.divIcon({ className:'', html:markerHTML(cat, sel), iconSize: sel?[56,56]:[40,40], iconAnchor: sel?[28,28]:[20,20] }));
-    var visible = !state.mapHelpFilter || cat.needsHelp.active;
+    var passesHelpFilter = !state.mapHelpFilter || cat.needsHelp.active;
+    var passesClusterGate = !cat.inCluster || zoomedIntoCluster;
+    var visible = passesHelpFilter && passesClusterGate;
     var onMap = leafletMap.hasLayer(m);
     if(visible && !onMap) m.addTo(leafletMap);
     else if(!visible && onMap) leafletMap.removeLayer(m);
   });
   if(leafletCluster){
+    var clusterVisible = !state.mapHelpFilter && !zoomedIntoCluster;
     var clusterOnMap = leafletMap.hasLayer(leafletCluster);
-    if(!state.mapHelpFilter && !clusterOnMap) leafletCluster.addTo(leafletMap);
-    else if(state.mapHelpFilter && clusterOnMap) leafletMap.removeLayer(leafletCluster);
+    if(clusterVisible && !clusterOnMap) leafletCluster.addTo(leafletMap);
+    else if(!clusterVisible && clusterOnMap) leafletMap.removeLayer(leafletCluster);
   }
 }
 function renderFallbackMarkers(){
+  // no real zoom control in fallback mode, so there's nothing to gate the cluster
+  // cats behind — show every cat directly instead of promising a reveal it can't do
   var wrap = $('#mapMarkers'); if(!wrap) return;
   var visibleCats = CATS.filter(function(c){ return !state.mapHelpFilter || c.needsHelp.active; });
   var html = visibleCats.map(function(cat){
     var sel = cat.id === state.selectedCatId;
     return '<div style="position:absolute;top:'+cat.fallbackPos.top+';left:'+cat.fallbackPos.left+';transform:translate(-50%,-50%);">'+markerHTML(cat, sel)+'</div>';
   }).join('');
-  if(!state.mapHelpFilter){
-    html += '<div style="position:absolute;top:30%;left:80%;transform:translate(-50%,-50%);"><div class="marker-cluster" data-action="cluster-tap" role="button" tabindex="0" aria-label="bölgedeki diğer kediler">'+icon('pin',{size:14})+'<span>+4</span></div></div>';
-  }
   wrap.innerHTML = html;
 }
 
@@ -950,7 +1012,6 @@ document.addEventListener('click', function(e){
     case 'send-code': sendCode(); break;
     case 'do-login': doLogin(); break;
     case 'cancel-login': cancelLogin(); break;
-    case 'cluster-tap': toast('Bu bölgede 4 kedi daha var, yakınlaştırarak görebilirsin.', {icon:'compass'}); break;
   }
 });
 
