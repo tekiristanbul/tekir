@@ -281,6 +281,7 @@ function renderMap(){
         '</div>' +
       '</div>' +
       '<button class="fab" data-action="go-add-cat" aria-label="yeni kedi ekle" style="position:absolute;right:'+'20px;bottom:104px;">'+icon('plus',{size:24})+'</button>' +
+      '<a class="map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>' +
     '</div>' +
     '<div class="sheet-scrim" id="sheetScrim" data-action="close-sheet"></div>' +
     '<div class="sheet" id="catSheet"></div>' +
@@ -312,8 +313,10 @@ function initLeaflet(){
   if(leafletMap || leafletFailed) return;
   if(typeof L === 'undefined'){ leafletFailed = true; activateMapFallback(); return; }
   try{
+    // attributionControl stays off here — the map's own .map-attribution element (in renderMap's
+    // markup) carries the required OSM credit instead, at a z-index above the bottom sheet, so it's
+    // never fully hidden while leaflet's own bottomright control would be.
     leafletMap = L.map('leafletMap', { zoomControl:false, attributionControl:false }).setView([40.9822,29.0288], 15.7);
-    L.control.attribution({ prefix:false, position:'bottomright' }).addTo(leafletMap);
     var tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom:19,
       attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
@@ -593,6 +596,10 @@ function renderAddLoc(){
     state.draftCat = { lat:seed.mapPos.lat, lng:seed.mapPos.lng, geoError:'', photo:null, traits:[], name:'', saving:false };
   }
   var d = state.draftCat;
+  // this screen has no dataset.built cache (unlike the map screen) — it's rebuilt every time
+  // renderAddLoc() runs, including from useCurrentLocation()'s callback, so the leaflet instance
+  // bound to the old #locationMap node must be torn down before a new one replaces it.
+  teardownLocationMap();
   el.innerHTML =
     topbar('Konumu seç', { close:true }) +
     '<div class="screen-body no-pad-x">' +
@@ -612,8 +619,18 @@ function renderAddLoc(){
 
   setTimeout(initLocationMap, 0);
 }
+
+/* mirrors teardownLeafletMap() for the add-cat location-picker map */
+function teardownLocationMap(){
+  if(locMap){
+    try{ locMap.remove(); }catch(e){ /* dom node already gone — nothing to clean up */ }
+  }
+  locMap = null;
+  locMapFailed = false;
+}
+
 function initLocationMap(){
-  var el = $('#locationMap'); if(!el || locMap) { if(locMap) locMap.invalidateSize(); return; }
+  var el = $('#locationMap'); if(!el || locMap) return;
   if(typeof L === 'undefined'){ locMapFailed = true; var fb=$('#locFallback'); if(fb) fb.hidden=false; return; }
   try{
     locMap = L.map('locationMap', { zoomControl:false, attributionControl:false, dragging:true })
@@ -635,8 +652,10 @@ function distanceMeters(a,b){
 function useCurrentLocation(){
   var d = state.draftCat;
   if(!navigator.geolocation){ d.geoError = 'Bu tarayıcıda konum servisi yok. Haritadan elle seç.'; renderAddLoc(); return; }
-  navigator.geolocation.getCurrentPosition(function(){
+  navigator.geolocation.getCurrentPosition(function(position){
     d.geoError = '';
+    d.lat = position.coords.latitude;
+    d.lng = position.coords.longitude;
     toast('Konumun bulundu', {icon:'location'});
     renderAddLoc();
   }, function(){

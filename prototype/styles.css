@@ -440,6 +440,18 @@ button, input, textarea{ color:inherit; }
 }
 .fab:active{ transform:scale(.93); }
 
+/* required osm credit, rendered outside #leafletMap. the bottom sheet can cover up to
+   78% of the screen height, so any bottom-anchored attribution would sit underneath it
+   whenever a cat is selected — placed in the top band instead, which the sheet never
+   reaches, so it stays visible without having to float on top of the sheet's own content */
+.map-attribution{
+  position:absolute; right:10px; top:76px; z-index:11;
+  font-size:10px; line-height:1.3; color:var(--color-muted);
+  background:rgba(255,255,255,.85); padding:2px 6px; border-radius:4px;
+  text-decoration:none; white-space:nowrap;
+}
+.map-attribution:hover{ color:var(--color-ink); text-decoration:underline; }
+
 /* bottom nav */
 .bottom-nav{
   flex:none; display:flex; align-items:center; background:var(--color-bg-elevated); border-top:1px solid var(--color-line);
