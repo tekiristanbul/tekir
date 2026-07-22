@@ -9,7 +9,7 @@ define how [[api]] and [[db]] get deployed and operated, for a solo, currently-u
 ### service shape (single service, no microservices)
 
 - **api service** (go: handler → service → repository, interfaces, testable): serves every endpoint in [[api]], stateless, scales horizontally. ships as a single container image — that's what keeps the door open to kubernetes later without committing to it now.
-- **notification worker**: same repo, separate binary/process, polling the `notification_outbox` table (see [[db]]) and dispatching fcm pushes to followers. a full message broker (kafka/rabbitmq) is unwarranted at this scale.
+- **notification worker**: same repo, separate binary/process, polling the `notification_outbox` table (see [[db]]) and dispatching fcm pushes to followers. a full message broker (kafka/rabbitmq) is unwarranted at this scale. the fan-out must follow the insert-before-push order documented in [[db]] so a crash mid-batch retries safely instead of double-sending pushes.
 
 ### data layer — managed, not self-hosted
 

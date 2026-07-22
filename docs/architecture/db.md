@@ -112,16 +112,17 @@ create table notifications (
   cat_id     uuid not null references cats(id),
   update_id  uuid not null references updates(id),
   read_at    timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  unique (device_id, update_id)
 );
 create index notif_device_created_idx on notifications (device_id, created_at desc);
 ```
 
 ### design notes
 
-- `devices.token_hash`: the client never sends a self-chosen identifier. `POST /v1/devices` (see [[api]]) generates the token server-side and returns it once; only its hash is stored, the same way a password would be. `devices.revoked_at` lets a moderator kill an abusive anonymous device without the client being able to mint a replacement identity.
+- `devices.token_hash`: the client never sends a self-chosen identifier. `POST /v1/devices` (see [[api]]) generates the token server-side and returns it once; only its hash is stored, the same way a password would be. `devices.revoked_at` invalidates that one credential — it doesn't ban a person or a physical device, since nothing stops a client from calling `POST /v1/devices` again for a fresh identity. it's a mitigation for a single bad session, not an identity ban.
 - `refresh_tokens`: backs the `access_token`/`refresh_token` pair in [[api]] — short-lived jwts plus a revocable, hashed refresh token, so login doesn't require a fresh otp on every app open.
-- `notification_outbox` + the `updates_enqueue_outbox` trigger: this is what the notification worker in [[backend]] actually polls. it exists separately from `notifications` because one update fans out to N follower rows, and the trigger guarantees every update gets enqueued exactly once, at the database level, regardless of which code path inserted it.
+- `notification_outbox` + the `updates_enqueue_outbox` trigger: this is what the notification worker in [[backend]] actually polls. it exists separately from `notifications` because one update fans out to N follower rows, and the trigger guarantees every update gets enqueued exactly once, at the database level, regardless of which code path inserted it. **idempotency**: the worker must `insert into notifications (...) on conflict (device_id, update_id) do nothing returning id` for each follower *before* sending that follower's push, and only send the push if a row was actually returned. that ordering, backed by the `unique (device_id, update_id)` constraint, is what makes retrying the same outbox row after a crash safe — a follower already notified is skipped instead of re-pushed, and any followers not yet reached still get processed.
 - ⚠ `updates.type`/`updates.comment` are a **provisional contract** — see the callout in [[api]]. no minimum status vocabulary is decided, so `comment` is free text and nothing should be built that depends on parsing it.
 - `cats.area` is a point; the ~50m "area" concept from [[cats]] is expressed at query time via `st_dwithin(area, point, 50)` rather than a separate area table — that table would add complexity with no behavior it doesn't already give.
 - `cats.needs_help_until`: set to `now() + <duration>` whenever a new `help_request` update lands. the duration is a config value — [[alerts]] never settled on one.
