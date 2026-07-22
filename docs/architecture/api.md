@@ -55,7 +55,7 @@ GET    /v1/me/notifications?cursor=                               → [{ id, cat
 POST   /v1/me/notifications/{id}/read                             → 204
 ```
 
-push delivery is not client-facing. every new update writes a row to `notification_outbox` (see [[db]]); the worker (see [[backend]]) polls that table and fans it out to followers. the fan-out is idempotent under retries/crashes — see the `notifications` unique constraint in [[db]] — so a push is never sent twice for the same device/update pair even if the worker dies mid-batch and re-polls the same outbox row.
+push delivery is not client-facing. every new update writes a row to `notification_outbox` (see [[db]]); the worker (see [[backend]]) polls that table and fans it out to followers. delivery is **at-most-once**: the `notifications` unique constraint (see [[db]]) guarantees a push is never sent twice for the same device/update pair, but it does not guarantee a push is sent at all — a crash between recording the notification and actually sending it loses that push silently. accepted as a small loss window for mvp, not claimed as crash-safe or exactly-once.
 
 ### modeling notes
 
