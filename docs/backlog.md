@@ -13,15 +13,15 @@ these gate real implementation work and should be resolved before the item next 
 - duplicate-cat merge mechanism ([[cats]]) — blocks anything beyond the basic "confirm it's a different cat" step in add-cat.
 - cat-inactivity threshold ([[cats]]) — blocks the job that marks cats inactive.
 - sms otp provider choice ([[backend]]) — blocks the auth/otp endpoints.
-- k8s cluster + s3-compatible storage provider choice ([[backend]]) — blocks any real deployment.
+- managed postgres provider + managed s3-compatible storage provider choice ([[backend]]) — blocks any real deployment. kubernetes is explicitly deferred, not part of this decision.
 
 ### backend
 - scaffold the go api service (handler → service → repository layers per [[backend]]).
-- implement device registration + otp auth endpoints.
+- implement device registration + otp auth endpoints (server-issued device token, refresh token).
 - implement cat endpoints (list, nearby, detail, create).
 - implement update endpoints (list, create, media upload).
 - implement follow + notification endpoints.
-- stand up cnpg (postgres/postgis) and the notification worker on a cluster, once the provider is picked.
+- stand up managed postgres/postgis and deploy the api + notification worker containers (single vm or managed container platform), once a provider is picked.
 
 ### flutter
 - scaffold the app (`core/network`, `core/identity`, `core/router` per [[flutter]]).
