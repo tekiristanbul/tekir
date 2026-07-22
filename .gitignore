@@ -1,2 +1,8 @@
 .tokensave/
 .claude/settings.local.json
+
+# backend build output
+backend/bin/
+
+# os junk
+.DS_Store
