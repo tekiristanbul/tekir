@@ -187,30 +187,30 @@
 </style>
 
 <div class="app">
-  <nav class="rail" aria-label="ekran listesi">
-    <h1>cats istanbul<span>wireframe akışı</span></h1>
-    <button data-target="s-map" aria-current="true"><span class="n">01</span>harita</button>
-    <button data-target="s-detail"><span class="n">02</span>kedi detay</button>
-    <button data-target="s-update"><span class="n">03</span>update ekle</button>
-    <button data-target="s-addloc"><span class="n">04</span>kedi ekle · konum</button>
-    <button data-target="s-adddetail"><span class="n">05</span>kedi ekle · detay</button>
-    <button data-target="s-discover"><span class="n">06</span>keşfet</button>
-    <button data-target="s-notif"><span class="n">07</span>bildirimler</button>
-    <button data-target="s-account"><span class="n">08</span>hesap</button>
-    <button data-target="s-login"><span class="n">09</span>giriş</button>
+  <nav class="rail" aria-label="screen list">
+    <h1>cats istanbul<span>wireframe flow</span></h1>
+    <button data-target="s-map" aria-current="true"><span class="n">01</span>map</button>
+    <button data-target="s-detail"><span class="n">02</span>cat detail</button>
+    <button data-target="s-update"><span class="n">03</span>add update</button>
+    <button data-target="s-addloc"><span class="n">04</span>add cat · location</button>
+    <button data-target="s-adddetail"><span class="n">05</span>add cat · details</button>
+    <button data-target="s-discover"><span class="n">06</span>discover</button>
+    <button data-target="s-notif"><span class="n">07</span>notifications</button>
+    <button data-target="s-account"><span class="n">08</span>account</button>
+    <button data-target="s-login"><span class="n">09</span>login</button>
     <div class="legend">
-      <div><span class="sw dash"></span>opsiyonel öğe</div>
-      <div><span class="sw img"></span>foto/medya yer tutucu</div>
-      <div><span class="sw acc"></span>vurgu / needs-help</div>
+      <div><span class="sw dash"></span>optional element</div>
+      <div><span class="sw img"></span>photo/media placeholder</div>
+      <div><span class="sw acc"></span>emphasis / needs-help</div>
     </div>
   </nav>
 
   <main>
-    <!-- 01 HARITA -->
+    <!-- 01 MAP -->
     <section class="screen" id="s-map" data-active="true">
       <div class="stage-head">
-        <p class="eyebrow">01 · ana ekran</p>
-        <h2>harita</h2>
+        <p class="eyebrow">01 · home screen</p>
+        <h2>map</h2>
       </div>
       <div class="layout">
         <div class="phone"><div class="screen-glass">
@@ -237,19 +237,19 @@
           </div>
         </div></div>
         <div class="spec">
-          <div class="field"><b>kullanıcının amacı</b><p>etraftaki kedileri hızlıca görmek, son hareketliliği fark etmek ve bir kediye ulaşmak.</p></div>
-          <div class="field"><b>ana aksiyon</b><p>bir kedi pinine dokunup kedi detayına gitmek.</p></div>
-          <div class="field"><b>ikincil aksiyon</b><ul><li>yeni kedi ekle (fab)</li><li>alt menüden sekme değiştirmek</li><li>haritayı sürükle / yakınlaştır</li></ul></div>
-          <div class="field"><b>gerekli bilgiler</b><ul><li>kullanıcının konumu</li><li>kedi pinleri (foto thumbnail)</li><li>needs-help göstergesi</li><li>"yeni update" göstergesi</li><li>küme sayısı</li></ul></div>
-          <div class="field"><b>gerekli bileşenler</b><ul><li>tam ekran harita view</li><li>pin + cluster bileşeni</li><li>fab: kedi ekle</li><li>alt tab bar</li></ul></div>
-          <div class="open-q"><b>açık konu</b>koloni yoğunluğunda (20-30 kedi/1km) cluster davranışı — koloni vs tekil kedi kararı bekliyor.</div>
+          <div class="field"><b>user goal</b><p>quickly see nearby cats, notice recent activity, and reach a cat.</p></div>
+          <div class="field"><b>primary action</b><p>tap a cat pin to open its detail page.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>add a new cat (fab)</li><li>switch tabs from the bottom nav</li><li>drag / zoom the map</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>the user's location</li><li>cat pins (photo thumbnail)</li><li>needs-help indicator</li><li>"recently updated" indicator</li><li>cluster count</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>full-screen map view</li><li>pin + cluster component</li><li>fab: add cat</li><li>bottom tab bar</li></ul></div>
+          <div class="open-q"><b>open question</b>cluster behavior at colony density (20-30 cats/1km) — waiting on the colony-vs-individual-cat decision.</div>
         </div>
       </div>
     </section>
 
-    <!-- 02 KEDI DETAY -->
+    <!-- 02 CAT DETAIL -->
     <section class="screen" id="s-detail">
-      <div class="stage-head"><p class="eyebrow">02 · detay</p><h2>kedi detay</h2></div>
+      <div class="stage-head"><p class="eyebrow">02 · detail</p><h2>cat detail</h2></div>
       <div class="layout">
         <div class="phone"><div class="screen-glass">
           <div class="bar"><span class="icon">←</span><span>tekir kedi</span><span class="icon">♥</span></div>
@@ -274,19 +274,19 @@
           </div>
         </div></div>
         <div class="spec">
-          <div class="field"><b>kullanıcının amacı</b><p>kedinin kimliğini, güncel durumunu ve geçmişini anlamak.</p></div>
-          <div class="field"><b>ana aksiyon</b><p>update ekle.</p></div>
-          <div class="field"><b>ikincil aksiyon</b><ul><li>takip et (login gerekmez)</li><li>foto galerisine bak</li><li>geri dön</li></ul></div>
-          <div class="field"><b>gerekli bilgiler</b><ul><li>fotoğraflar, fiziksel özellikler, isim (varsa)</li><li>needs-help durumu (aktifse)</li><li>update geçmişi: tip + opsiyonel yorum/foto + zaman, en yeniden eskiye</li><li>takip durumu</li></ul></div>
-          <div class="field"><b>gerekli bileşenler</b><ul><li>foto carousel</li><li>özellik chip'leri</li><li>takip toggle</li><li>update ekle cta</li><li>update listesi</li></ul></div>
-          <div class="open-q"><b>açık konu</b>birden fazla kullanıcı çelişen update girerse "güncel durum" hangisi sayılır — belirsiz.</div>
+          <div class="field"><b>user goal</b><p>understand the cat's identity, current status, and history.</p></div>
+          <div class="field"><b>primary action</b><p>add an update.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>follow (no login needed)</li><li>view the photo gallery</li><li>go back</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>photos, physical traits, name (if any)</li><li>needs-help status (if active)</li><li>update history: type + optional comment/photo + time, newest first</li><li>follow status</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>photo carousel</li><li>trait chips</li><li>follow toggle</li><li>add-update cta</li><li>update list</li></ul></div>
+          <div class="open-q"><b>open question</b>when multiple users post conflicting updates, which one counts as "current status" is undefined.</div>
         </div>
       </div>
     </section>
 
-    <!-- 03 UPDATE EKLE -->
+    <!-- 03 ADD UPDATE -->
     <section class="screen" id="s-update">
-      <div class="stage-head"><p class="eyebrow">03 · update ekle</p><h2>update ekle</h2></div>
+      <div class="stage-head"><p class="eyebrow">03 · add update</p><h2>add update</h2></div>
       <div class="layout">
         <div class="phone"><div class="screen-glass">
           <div class="bar"><span class="icon">✕</span><span>update ekle</span><span></span></div>
@@ -304,19 +304,19 @@
           </div>
         </div></div>
         <div class="spec">
-          <div class="field"><b>kullanıcının amacı</b><p>kedinin güncel durumunu hızlıca paylaşmak.</p></div>
-          <div class="field"><b>ana aksiyon</b><p>tip seç ve paylaş.</p></div>
-          <div class="field"><b>ikincil aksiyon</b><ul><li>opsiyonel yorum yaz</li><li>opsiyonel foto ekle</li><li>vazgeç</li></ul></div>
-          <div class="field"><b>gerekli bilgiler</b><ul><li>tip: durum güncellemesi / yardım gerekiyor (yalnızca bu iki tip)</li><li>opsiyonel yorum, opsiyonel foto</li></ul></div>
-          <div class="field"><b>gerekli bileşenler</b><ul><li>kedi mini-header</li><li>2 tipli seçici</li><li>yorum input</li><li>foto ekle</li><li>paylaş cta</li></ul></div>
-          <div class="open-q"><b>açık konu</b>"durum güncellemesi" içeriği (serbest metin mi, ileride sabit bir liste mi) henüz karar değil. foto/video eklenirse giriş + telefon doğrulama gerekir (akış 09), eklenmezse gerekmez.</div>
+          <div class="field"><b>user goal</b><p>quickly share the cat's current status.</p></div>
+          <div class="field"><b>primary action</b><p>pick a type and post.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>write an optional comment</li><li>add an optional photo</li><li>cancel</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>type: status update / needs help (only these two types)</li><li>optional comment, optional photo</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>cat mini-header</li><li>2-way type selector</li><li>comment input</li><li>add photo</li><li>post cta</li></ul></div>
+          <div class="open-q"><b>open question</b>the content of a "status update" (free text vs. a fixed list later) isn't decided yet. adding a photo/video triggers login + phone verification (flow 09); without one, it doesn't.</div>
         </div>
       </div>
     </section>
 
-    <!-- 04 KEDI EKLE KONUM -->
+    <!-- 04 ADD CAT: LOCATION -->
     <section class="screen" id="s-addloc">
-      <div class="stage-head"><p class="eyebrow">04 · kedi ekle</p><h2>konum seç</h2></div>
+      <div class="stage-head"><p class="eyebrow">04 · add cat</p><h2>choose location</h2></div>
       <div class="layout">
         <div class="phone"><div class="screen-glass">
           <div class="bar"><span class="icon">✕</span><span>konum seç</span><span></span></div>
@@ -333,25 +333,25 @@
           </div>
         </div></div>
         <div class="spec">
-          <div class="field"><b>kullanıcının amacı</b><p>yeni gördüğü kedinin bulunduğu alanı işaretlemek.</p></div>
-          <div class="field"><b>ana aksiyon</b><p>pini yerleştirip devam etmek.</p></div>
-          <div class="field"><b>ikincil aksiyon</b><ul><li>mevcut konumu kullan</li><li>vazgeç</li></ul></div>
-          <div class="field"><b>gerekli bilgiler</b><ul><li>kullanıcının anlık konumu</li><li>~50m alan görselleştirmesi</li><li>aynı alanda kayıtlı kedi var mı kontrolü</li></ul></div>
-          <div class="field"><b>gerekli bileşenler</b><ul><li>sürüklenebilir mini harita</li><li>alan dairesi</li><li>"bu konumu kullan" cta</li><li>duplicate uyarı modalı</li></ul></div>
-          <div class="open-q"><b>açık konu</b>"hayır, farklı bir kedi" seçilirse iki kayıt bir süre paralel kalabilir — birleştirme yöntemi henüz karar değil.</div>
+          <div class="field"><b>user goal</b><p>mark the area where the newly spotted cat is.</p></div>
+          <div class="field"><b>primary action</b><p>place the pin and continue.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>use current location</li><li>cancel</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>the user's current location</li><li>~50m area visualization</li><li>check for an already-registered cat in the same area</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>draggable mini map</li><li>area circle</li><li>"use this location" cta</li><li>duplicate-warning modal</li></ul></div>
+          <div class="open-q"><b>open question</b>if "no, a different cat" is chosen, two records may coexist for a while — the merge mechanism isn't decided yet.</div>
         </div>
       </div>
     </section>
 
-    <!-- 05 KEDI EKLE DETAY -->
+    <!-- 05 ADD CAT: DETAILS -->
     <section class="screen" id="s-adddetail">
-      <div class="stage-head"><p class="eyebrow">05 · kedi ekle</p><h2>detaylar</h2></div>
+      <div class="stage-head"><p class="eyebrow">05 · add cat</p><h2>details</h2></div>
       <div class="layout">
         <div class="phone"><div class="screen-glass">
           <div class="bar"><span class="icon">←</span><span>kedi ekle</span><span></span></div>
           <div class="row">
             <div class="imgph" style="height:110px;border-radius:8px;position:relative;">
-              <span style="position:absolute;bottom:6px;left:6px;font-family:var(--mono);font-size:.58rem;background:var(--panel);padding:1px 5px;border-radius:4px;border:1px solid var(--line);">zorunlu</span>
+              <span style="position:absolute;bottom:6px;left:6px;font-family:var(--mono);font-size:.58rem;background:var(--panel);padding:1px 5px;border-radius:4px;border:1px solid var(--line);">required</span>
             </div>
             <div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);">fiziksel özellikler</div>
             <div><span class="chip on">tekir</span><span class="chip">siyah-beyaz</span><span class="chip">sokulgan</span><span class="chip">kısa tüy</span></div>
@@ -361,19 +361,19 @@
           </div>
         </div></div>
         <div class="spec">
-          <div class="field"><b>kullanıcının amacı</b><p>kedinin kimliğini oluşturacak fotoğrafı ve özellikleri girip kaydı tamamlamak.</p></div>
-          <div class="field"><b>ana aksiyon</b><p>fotoğraf ekle ve kaydet.</p></div>
-          <div class="field"><b>ikincil aksiyon</b><ul><li>fiziksel özellik seç</li><li>opsiyonel isim gir</li><li>geri dön</li></ul></div>
-          <div class="field"><b>gerekli bilgiler</b><ul><li>zorunlu foto (en az 1)</li><li>fiziksel özellikler</li><li>opsiyonel isim</li></ul></div>
-          <div class="field"><b>gerekli bileşenler</b><ul><li>foto ekleme alanı</li><li>çoklu seçim chip grubu</li><li>isim input</li><li>kaydet cta</li></ul></div>
-          <div class="open-q"><b>açık konu</b>fotoğraf zorunlu olduğu için bu ekran her zaman giriş + telefon doğrulama gerektirir (akış 09).</div>
+          <div class="field"><b>user goal</b><p>enter the photo and traits that establish the cat's identity, then save.</p></div>
+          <div class="field"><b>primary action</b><p>add a photo and save.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>select physical traits</li><li>enter an optional name</li><li>go back</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>required photo (at least 1)</li><li>physical traits</li><li>optional name</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>photo-add area</li><li>multi-select chip group</li><li>name input</li><li>save cta</li></ul></div>
+          <div class="open-q"><b>open question</b>because a photo is mandatory, this screen always requires login + phone verification (flow 09).</div>
         </div>
       </div>
     </section>
 
-    <!-- 06 KESFET -->
+    <!-- 06 DISCOVER -->
     <section class="screen" id="s-discover">
-      <div class="stage-head"><p class="eyebrow">06 · liste</p><h2>keşfet</h2></div>
+      <div class="stage-head"><p class="eyebrow">06 · list</p><h2>discover</h2></div>
       <div class="layout">
         <div class="phone"><div class="screen-glass">
           <div class="bar"><span></span><span>keşfet</span><span></span></div>
@@ -397,18 +397,18 @@
           <div class="tabbar"><div><div class="dot"></div>harita</div><div class="active"><div class="dot"></div>keşfet</div><div><div class="dot"></div>bildirim</div><div><div class="dot"></div>hesap</div></div>
         </div></div>
         <div class="spec">
-          <div class="field"><b>kullanıcının amacı</b><p>haritanın dışında listede kedilere göz atmak ve filtrelemek.</p></div>
-          <div class="field"><b>ana aksiyon</b><p>listeden bir kediye dokunup detayına gitmek.</p></div>
-          <div class="field"><b>ikincil aksiyon</b><ul><li>yardım gerekiyor filtresi aç/kapat</li><li>favoriler sekmesine geç</li></ul></div>
-          <div class="field"><b>gerekli bilgiler</b><ul><li>yakındaki kediler listesi (mesafeye göre)</li><li>foto, özet etiket, mesafe, needs-help göstergesi</li><li>favorilerde: takip edilenler</li></ul></div>
-          <div class="field"><b>gerekli bileşenler</b><ul><li>segment: yakınımdaki / favoriler</li><li>filtre chip</li><li>liste görünümü</li><li>boş durum</li><li>alt tab bar</li></ul></div>
+          <div class="field"><b>user goal</b><p>browse and filter cats in a list, outside of the map.</p></div>
+          <div class="field"><b>primary action</b><p>tap a cat in the list to open its detail page.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>toggle the needs-help filter</li><li>switch to the favorites tab</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>nearby cats list (by distance)</li><li>photo, trait summary, distance, needs-help indicator</li><li>favorites tab: followed cats</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>segment: nearby / favorites</li><li>filter chip</li><li>list view</li><li>empty state</li><li>bottom tab bar</li></ul></div>
         </div>
       </div>
     </section>
 
-    <!-- 07 BILDIRIMLER -->
+    <!-- 07 NOTIFICATIONS -->
     <section class="screen" id="s-notif">
-      <div class="stage-head"><p class="eyebrow">07 · liste</p><h2>bildirimler</h2></div>
+      <div class="stage-head"><p class="eyebrow">07 · list</p><h2>notifications</h2></div>
       <div class="layout">
         <div class="phone"><div class="screen-glass">
           <div class="bar"><span></span><span>bildirimler</span><span></span></div>
@@ -429,30 +429,30 @@
           <div class="tabbar"><div><div class="dot"></div>harita</div><div><div class="dot"></div>keşfet</div><div class="active"><div class="dot"></div>bildirim</div><div><div class="dot"></div>hesap</div></div>
         </div></div>
         <div class="spec">
-          <div class="field"><b>kullanıcının amacı</b><p>takip ettiği kedilerle ilgili neler olduğunu görmek.</p></div>
-          <div class="field"><b>ana aksiyon</b><p>bildirime dokunup ilgili kedi detayına (update vurgulanmış) gitmek.</p></div>
-          <div class="field"><b>ikincil aksiyon</b><ul><li>bildirim okundu işaretlenir (dokununca)</li><li>boşsa keşfete yönlendirme</li></ul></div>
-          <div class="field"><b>gerekli bilgiler</b><ul><li>takip edilenlerin update akışı, en yeniden eskiye</li><li>foto, kedi adı, update özeti, zaman, okundu durumu</li></ul></div>
-          <div class="field"><b>gerekli bileşenler</b><ul><li>liste görünümü</li><li>okunmamış işareti</li><li>needs-help vurgusu</li><li>boş durum</li><li>alt tab bar</li></ul></div>
-          <div class="open-q"><b>açık konu</b>"yardım gerekiyor" bildirimlerinin normal update bildirimlerinden farklı davranıp davranmayacağı belirsiz.</div>
+          <div class="field"><b>user goal</b><p>see what's happening with the cats they follow.</p></div>
+          <div class="field"><b>primary action</b><p>tap a notification to open the cat's detail page (with the update highlighted).</p></div>
+          <div class="field"><b>secondary action</b><ul><li>notification marked read on tap</li><li>empty state links to discover</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>update feed for followed cats, newest first</li><li>photo, cat name, update summary, time, read state</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>list view</li><li>unread indicator</li><li>needs-help emphasis</li><li>empty state</li><li>bottom tab bar</li></ul></div>
+          <div class="open-q"><b>open question</b>whether "needs help" notifications should behave differently from regular update notifications is undecided.</div>
         </div>
       </div>
     </section>
 
-    <!-- 08 HESAP -->
+    <!-- 08 ACCOUNT -->
     <section class="screen" id="s-account">
-      <div class="stage-head"><p class="eyebrow">08 · durum ekranı</p><h2>hesap</h2></div>
+      <div class="stage-head"><p class="eyebrow">08 · status screen</p><h2>account</h2></div>
       <div class="layout">
         <div class="phone"><div class="screen-glass">
           <div class="bar"><span></span><span>hesap</span><span></span></div>
           <div class="row">
-            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">misafir durumu</div>
+            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">guest state</div>
             <div style="font-size:.66rem;">giriş yapmadın. fotoğraf/video eklemek için giriş yap.</div>
             <div class="btn primary">giriş yap</div>
           </div>
           <div class="hairline"></div>
           <div class="row">
-            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">giriş yapılmış durumu</div>
+            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">logged-in state</div>
             <div style="display:flex;gap:6px;align-items:center;"><div class="imgph" style="width:24px;height:24px;border-radius:50%;"></div><span style="font-size:.68rem;">tekir kedi</span></div>
             <div style="display:flex;gap:6px;align-items:center;"><div class="imgph" style="width:24px;height:24px;border-radius:50%;"></div><span style="font-size:.68rem;">siyah kedi</span></div>
             <div class="btn">çıkış yap</div>
@@ -460,19 +460,19 @@
           <div class="tabbar"><div><div class="dot"></div>harita</div><div><div class="dot"></div>keşfet</div><div><div class="dot"></div>bildirim</div><div class="active"><div class="dot"></div>hesap</div></div>
         </div></div>
         <div class="spec">
-          <div class="field"><b>kullanıcının amacı</b><p>giriş durumunu yönetmek ve takip ettiği kedilere hızlı erişmek.</p></div>
-          <div class="field"><b>ana aksiyon</b><p>misafirse giriş yap; giriş yapılmışsa takip edilen bir kediye git.</p></div>
-          <div class="field"><b>ikincil aksiyon</b><ul><li>çıkış yap</li></ul></div>
-          <div class="field"><b>gerekli bilgiler</b><ul><li>giriş durumu</li><li>takip edilen kediler (giriş yapılmışsa)</li></ul></div>
-          <div class="field"><b>gerekli bileşenler</b><ul><li>misafir cta</li><li>takip edilenler mini-liste</li><li>çıkış seçeneği</li><li>alt tab bar</li></ul></div>
-          <div class="open-q"><b>açık konu</b>profil / rozet / puan sistemi mvp kapsamı dışında bırakıldı — bileşen olarak yer almıyor.</div>
+          <div class="field"><b>user goal</b><p>manage login state and quickly reach followed cats.</p></div>
+          <div class="field"><b>primary action</b><p>if a guest, log in; if logged in, go to a followed cat.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>log out</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>login state</li><li>followed cats (if logged in)</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>guest cta</li><li>followed-cats mini-list</li><li>log-out option</li><li>bottom tab bar</li></ul></div>
+          <div class="open-q"><b>open question</b>profile / badge / points system is left out of mvp scope — not present as a component.</div>
         </div>
       </div>
     </section>
 
-    <!-- 09 GIRIS -->
+    <!-- 09 LOGIN -->
     <section class="screen" id="s-login">
-      <div class="stage-head"><p class="eyebrow">09 · ortak akış</p><h2>giriş</h2></div>
+      <div class="stage-head"><p class="eyebrow">09 · shared flow</p><h2>login</h2></div>
       <div class="layout">
         <div class="phone"><div class="screen-glass">
           <div class="bar"><span class="icon">✕</span><span></span><span></span></div>
@@ -488,12 +488,12 @@
           </div>
         </div></div>
         <div class="spec">
-          <div class="field"><b>kullanıcının amacı</b><p>fotoğraf/video eklemek istediği an hızlıca giriş yapıp devam etmek.</p></div>
-          <div class="field"><b>ana aksiyon</b><p>telefon numarası → sms kod → giriş yap.</p></div>
-          <div class="field"><b>ikincil aksiyon</b><ul><li>vazgeç / medyasız devam et</li></ul></div>
-          <div class="field"><b>gerekli bilgiler</b><ul><li>telefon numarası</li><li>sms doğrulama kodu</li><li>bağlam metni: hangi aksiyon için</li></ul></div>
-          <div class="field"><b>gerekli bileşenler</b><ul><li>telefon input</li><li>kod gönder cta</li><li>sms kod input</li><li>giriş yap cta</li><li>medyasız devam et (update akışında)</li></ul></div>
-          <div class="open-q"><b>açık konu</b>takip etmek ve fotoğrafsız update paylaşmak bu akışı hiç tetiklemez — sadece foto/video eklenince devreye girer.</div>
+          <div class="field"><b>user goal</b><p>log in quickly the moment they want to add a photo/video, and continue.</p></div>
+          <div class="field"><b>primary action</b><p>phone number → sms code → log in.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>cancel / continue without media</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>phone number</li><li>sms verification code</li><li>context text: which action triggered this</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>phone input</li><li>send-code cta</li><li>sms code input</li><li>log-in cta</li><li>continue without media (in the update flow)</li></ul></div>
+          <div class="open-q"><b>open question</b>following and posting a photo-free update never trigger this flow — only adding a photo/video does.</div>
         </div>
       </div>
     </section>
