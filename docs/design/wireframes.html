@@ -1,0 +1,515 @@
+<title>cats istanbul — wireframes</title>
+<style>
+  :root{
+    --ink:#14181f;
+    --paper:#eef0f0;
+    --panel:#ffffff;
+    --accent:#d9862a;
+    --accent-ink:#3c2604;
+    --line:#9aa1a6;
+    --line-soft:#c9cdd0;
+    --muted:#5b6167;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --radius-md: 10px;
+    --radius-lg: 22px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --ink:#e7e5df;
+      --paper:#0e1116;
+      --panel:#171b22;
+      --accent:#eda63f;
+      --accent-ink:#241500;
+      --line:#454b54;
+      --line-soft:#2b2f36;
+      --muted:#9096a0;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#e7e5df; --paper:#0e1116; --panel:#171b22; --accent:#eda63f; --accent-ink:#241500; --line:#454b54; --line-soft:#2b2f36; --muted:#9096a0;
+  }
+  :root[data-theme="light"]{
+    --ink:#14181f; --paper:#eef0f0; --panel:#ffffff; --accent:#d9862a; --accent-ink:#3c2604; --line:#9aa1a6; --line-soft:#c9cdd0; --muted:#5b6167;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+  }
+  .app{
+    display:grid;
+    grid-template-columns:250px 1fr;
+    min-height:100vh;
+  }
+  .rail{
+    border-right:1px solid var(--line-soft);
+    padding:20px 14px;
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+    position:sticky;
+    top:0;
+    height:100vh;
+    overflow-y:auto;
+  }
+  .rail h1{
+    font-family:var(--mono);
+    font-size:.72rem;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin:0 8px 14px;
+    font-weight:600;
+  }
+  .rail h1 span{display:block;font-family:var(--sans);font-size:1.05rem;letter-spacing:0;text-transform:none;color:var(--ink);font-weight:700;margin-top:3px;}
+  .rail button{
+    all:unset;
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+    padding:10px 8px;
+    border-radius:8px;
+    cursor:pointer;
+    font-size:.86rem;
+    color:var(--muted);
+  }
+  .rail button .n{font-family:var(--mono);font-size:.72rem;color:var(--line);width:1.4em;flex:none;}
+  .rail button:hover{background:var(--line-soft);}
+  .rail button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  .rail button[aria-current="true"]{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:inset 0 0 0 1px var(--line-soft);}
+  .rail button[aria-current="true"] .n{color:var(--accent);}
+  .legend{
+    margin-top:auto;
+    padding:12px 8px 4px;
+    border-top:1px solid var(--line-soft);
+    font-family:var(--mono);
+    font-size:.68rem;
+    color:var(--muted);
+    line-height:1.7;
+  }
+  .legend b{color:var(--ink);}
+  .legend .sw{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.35em;}
+  .sw.dash{border:1.5px dashed var(--line);}
+  .sw.acc{background:var(--accent);}
+  .sw.img{background:linear-gradient(45deg, transparent 46%, var(--line) 47%, var(--line) 53%, transparent 54%), linear-gradient(-45deg, transparent 46%, var(--line) 47%, var(--line) 53%, transparent 54%); border:1px solid var(--line);}
+
+  main{padding:34px 40px 60px;max-width:1180px;}
+  .stage-head{margin-bottom:26px;}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 6px;}
+  .stage-head h2{font-size:1.7rem;margin:0;text-wrap:balance;letter-spacing:-.01em;}
+
+  .screen{display:none;}
+  .screen[data-active="true"]{display:block;}
+  .layout{display:grid;grid-template-columns:300px 1fr;gap:36px;align-items:start;}
+
+  /* phone frame */
+  .phone{
+    width:300px;
+    height:620px;
+    background:var(--panel);
+    border:2px solid var(--ink);
+    border-radius:34px;
+    padding:10px;
+    box-shadow:0 20px 40px -20px rgba(0,0,0,.35);
+    position:relative;
+  }
+  .screen-glass{
+    width:100%;height:100%;border-radius:24px;overflow:hidden;background:var(--panel);
+    display:flex;flex-direction:column;font-size:.72rem;position:relative;
+    border:1px solid var(--line-soft);
+  }
+  .bar{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;font-size:.68rem;color:var(--muted);font-family:var(--mono);}
+  .bar .icon{width:20px;height:20px;border:1.4px solid var(--line);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.8rem;}
+  .bar .icon.filled{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
+
+  .imgph{
+    background:linear-gradient(45deg, transparent 46%, var(--line) 47%, var(--line) 53%, transparent 54%), linear-gradient(-45deg, transparent 46%, var(--line) 47%, var(--line) 53%, transparent 54%), var(--paper);
+    border:1px solid var(--line);
+  }
+  .chip{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:.66rem;color:var(--muted);margin:2px 4px 2px 0;}
+  .chip.on{background:var(--ink);color:var(--panel);border-color:var(--ink);}
+  .btn{border-radius:var(--radius-md);text-align:center;padding:9px;font-size:.72rem;font-weight:600;border:1px solid var(--line);}
+  .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);}
+  .btn.dashed{border-style:dashed;color:var(--muted);background:transparent;}
+  .row{display:flex;flex-direction:column;gap:8px;padding:10px 12px;}
+  .badge-alert{background:var(--accent);color:var(--accent-ink);border-radius:6px;padding:2px 6px;font-size:.62rem;font-weight:700;display:inline-flex;align-items:center;gap:4px;}
+  .badge-new{width:8px;height:8px;border-radius:50%;background:var(--ink);display:inline-block;}
+  .hairline{border-top:1px solid var(--line-soft);}
+
+  .tabbar{margin-top:auto;display:flex;border-top:1px solid var(--line-soft);}
+  .tabbar div{flex:1;text-align:center;padding:9px 2px 8px;font-size:.6rem;color:var(--muted);font-family:var(--mono);}
+  .tabbar div .dot{width:16px;height:16px;border:1.4px solid var(--line);border-radius:5px;margin:0 auto 3px;}
+  .tabbar div.active{color:var(--ink);font-weight:700;}
+  .tabbar div.active .dot{border-color:var(--accent);background:var(--accent);}
+
+  .map-canvas{
+    flex:1;position:relative;overflow:hidden;
+    background-image:
+      linear-gradient(var(--line-soft) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+    background-size:34px 34px;
+    background-color:var(--paper);
+  }
+  .pin{position:absolute;display:flex;flex-direction:column;align-items:center;font-family:var(--mono);font-size:.58rem;color:var(--muted);}
+  .pin .dot{width:30px;height:30px;border-radius:50%;border:2px solid var(--ink);background:var(--panel);position:relative;}
+  .pin .dot::after{content:attr(data-mark);position:absolute;top:-6px;right:-6px;}
+  .fab{position:absolute;right:16px;bottom:16px;width:44px;height:44px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;font-size:1.3rem;font-weight:700;border:1px solid var(--accent);}
+
+  .segmented{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:0 12px;}
+  .segmented div{flex:1;text-align:center;padding:7px 4px;font-size:.66rem;color:var(--muted);}
+  .segmented div.on{background:var(--ink);color:var(--panel);font-weight:700;}
+
+  .type-card{border:1px solid var(--line);border-radius:var(--radius-md);padding:10px;font-size:.68rem;}
+  .type-card.on{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 14%, transparent);font-weight:700;}
+
+  .modal-overlay{position:absolute;inset:0;background:color-mix(in srgb, var(--ink) 45%, transparent);display:flex;align-items:flex-end;padding:14px;}
+  .modal-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;font-size:.66rem;width:100%;}
+
+  /* spec panel */
+  .spec{background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--radius-lg);padding:22px 24px;display:flex;flex-direction:column;gap:16px;}
+  .spec .field b{display:block;font-family:var(--mono);font-size:.66rem;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);margin-bottom:4px;}
+  .spec .field p{margin:0;font-size:.92rem;line-height:1.5;}
+  .spec .field ul{margin:2px 0 0;padding-left:1.1em;font-size:.92rem;line-height:1.55;}
+  .open-q{margin-top:18px;border-top:1px dashed var(--line);padding-top:14px;font-size:.82rem;color:var(--muted);}
+  .open-q b{font-family:var(--mono);font-size:.66rem;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:6px;}
+
+  @media (max-width:860px){
+    .app{grid-template-columns:1fr;}
+    .rail{position:static;height:auto;flex-direction:row;overflow-x:auto;border-right:none;border-bottom:1px solid var(--line-soft);}
+    .rail h1,.legend{display:none;}
+    main{padding:22px 16px 60px;}
+    .layout{grid-template-columns:1fr;justify-items:center;}
+  }
+</style>
+
+<div class="app">
+  <nav class="rail" aria-label="screen list">
+    <h1>cats istanbul<span>wireframe flow</span></h1>
+    <button data-target="s-map" aria-current="true"><span class="n">01</span>map</button>
+    <button data-target="s-detail"><span class="n">02</span>cat detail</button>
+    <button data-target="s-update"><span class="n">03</span>add update</button>
+    <button data-target="s-addloc"><span class="n">04</span>add cat · location</button>
+    <button data-target="s-adddetail"><span class="n">05</span>add cat · details</button>
+    <button data-target="s-discover"><span class="n">06</span>discover</button>
+    <button data-target="s-notif"><span class="n">07</span>notifications</button>
+    <button data-target="s-account"><span class="n">08</span>account</button>
+    <button data-target="s-login"><span class="n">09</span>login</button>
+    <div class="legend">
+      <div><span class="sw dash"></span>optional element</div>
+      <div><span class="sw img"></span>photo/media placeholder</div>
+      <div><span class="sw acc"></span>emphasis / needs-help</div>
+    </div>
+  </nav>
+
+  <main>
+    <!-- 01 MAP -->
+    <section class="screen" id="s-map" data-active="true">
+      <div class="stage-head">
+        <p class="eyebrow">01 · home screen</p>
+        <h2>map</h2>
+      </div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="map-canvas" style="height:100%;">
+            <div class="pin" style="top:38%;left:20%;" data-mark="">
+              <div class="dot">🐱</div>
+              <span class="badge-new" style="margin-top:2px;"></span>
+            </div>
+            <div class="pin" style="top:24%;left:60%;">
+              <div class="dot">🐱</div>
+              <span style="font-family:var(--mono);">+3</span>
+            </div>
+            <div class="pin" style="top:64%;left:46%;">
+              <div class="dot">🐱</div>
+              <span class="badge-alert">⚠ help</span>
+            </div>
+            <div class="fab">+</div>
+          </div>
+          <div class="tabbar">
+            <div class="active"><div class="dot"></div>map</div>
+            <div><div class="dot"></div>discover</div>
+            <div><div class="dot"></div>notifications</div>
+            <div><div class="dot"></div>account</div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>user goal</b><p>quickly see nearby cats, notice recent activity, and reach a cat.</p></div>
+          <div class="field"><b>primary action</b><p>tap a cat pin to open its detail page.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>add a new cat (fab)</li><li>switch tabs from the bottom nav</li><li>drag / zoom the map</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>the user's location</li><li>cat pins (photo thumbnail)</li><li>needs-help indicator</li><li>"recently updated" indicator</li><li>cluster count</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>full-screen map view</li><li>pin + cluster component</li><li>fab: add cat</li><li>bottom tab bar</li></ul></div>
+          <div class="open-q"><b>open question</b>cluster behavior at colony density (20-30 cats/1km) — waiting on the colony-vs-individual-cat decision.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 CAT DETAIL -->
+    <section class="screen" id="s-detail">
+      <div class="stage-head"><p class="eyebrow">02 · detail</p><h2>cat detail</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span class="icon">←</span><span>tabby cat</span><span class="icon">♥</span></div>
+          <div class="imgph" style="height:150px;margin:0 12px;border-radius:8px;"></div>
+          <div style="text-align:center;font-size:.6rem;color:var(--muted);margin:4px 0;">● ○ ○ ○</div>
+          <div class="row" style="padding-top:0;">
+            <div><span class="chip">friendly</span><span class="chip">short hair</span><span class="chip">tabby</span></div>
+            <div class="badge-alert" style="width:fit-content;">⚠ needs help · 2h</div>
+            <div class="btn primary">+ add update</div>
+          </div>
+          <div class="hairline"></div>
+          <div style="overflow-y:auto;flex:1;">
+            <div class="row">
+              <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">today 14:20 · status update</div>
+              <div style="font-size:.68rem;">"seemed thirsty, left some water"</div>
+            </div>
+            <div class="hairline"></div>
+            <div class="row">
+              <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">yesterday 09:10 · status update</div>
+              <div class="imgph" style="height:40px;width:40px;border-radius:6px;"></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>user goal</b><p>understand the cat's identity, current status, and history.</p></div>
+          <div class="field"><b>primary action</b><p>add an update.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>follow (no login needed)</li><li>view the photo gallery</li><li>go back</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>photos, physical traits, name (if any)</li><li>needs-help status (if active)</li><li>update history: type + optional comment/photo + time, newest first</li><li>follow status</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>photo carousel</li><li>trait chips</li><li>follow toggle</li><li>add-update cta</li><li>update list</li></ul></div>
+          <div class="open-q"><b>open question</b>when multiple users post conflicting updates, which one counts as "current status" is undefined.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 ADD UPDATE -->
+    <section class="screen" id="s-update">
+      <div class="stage-head"><p class="eyebrow">03 · add update</p><h2>add update</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span class="icon">✕</span><span>add update</span><span></span></div>
+          <div style="padding:0 12px;font-size:.68rem;color:var(--muted);">🐱 tabby cat</div>
+          <div class="row">
+            <div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);">choose type</div>
+            <div style="display:flex;gap:8px;">
+              <div class="type-card on" style="flex:1;">status update</div>
+              <div class="type-card" style="flex:1;">needs help</div>
+            </div>
+            <div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);margin-top:4px;">comment (optional)</div>
+            <div class="btn dashed" style="text-align:left;color:var(--muted);">add text…</div>
+            <div class="btn dashed">📷 add photo (optional)</div>
+            <div class="btn primary" style="margin-top:auto;">post</div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>user goal</b><p>quickly share the cat's current status.</p></div>
+          <div class="field"><b>primary action</b><p>pick a type and post.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>write an optional comment</li><li>add an optional photo</li><li>cancel</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>type: status update / needs help (only these two types)</li><li>optional comment, optional photo</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>cat mini-header</li><li>2-way type selector</li><li>comment input</li><li>add photo</li><li>post cta</li></ul></div>
+          <div class="open-q"><b>open question</b>the content of a "status update" (free text vs. a fixed list later) isn't decided yet. adding a photo/video triggers login + phone verification (flow 09); without one, it doesn't.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 ADD CAT: LOCATION -->
+    <section class="screen" id="s-addloc">
+      <div class="stage-head"><p class="eyebrow">04 · add cat</p><h2>choose location</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span class="icon">✕</span><span>choose location</span><span></span></div>
+          <div class="map-canvas" style="height:280px;margin:0 12px;border-radius:8px;position:relative;">
+            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90px;height:90px;border-radius:50%;border:1.5px dashed var(--line);"></div>
+            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-100%);font-size:1.1rem;">📍</div>
+          </div>
+          <div class="row"><div class="btn dashed">📍 use current location</div><div class="btn primary">use this location</div></div>
+          <div class="modal-overlay">
+            <div class="modal-card">
+              <b style="display:block;margin-bottom:6px;">there's already a registered cat in this area. is this the cat you saw?</b>
+              <div style="display:flex;gap:6px;margin-top:8px;"><div class="btn primary" style="flex:1;">yes, that's it</div><div class="btn" style="flex:1;">no</div></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>user goal</b><p>mark the area where the newly spotted cat is.</p></div>
+          <div class="field"><b>primary action</b><p>place the pin and continue.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>use current location</li><li>cancel</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>the user's current location</li><li>~50m area visualization</li><li>check for an already-registered cat in the same area</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>draggable mini map</li><li>area circle</li><li>"use this location" cta</li><li>duplicate-warning modal</li></ul></div>
+          <div class="open-q"><b>open question</b>if "no, a different cat" is chosen, two records may coexist for a while — the merge mechanism isn't decided yet.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 05 ADD CAT: DETAILS -->
+    <section class="screen" id="s-adddetail">
+      <div class="stage-head"><p class="eyebrow">05 · add cat</p><h2>details</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span class="icon">←</span><span>add cat</span><span></span></div>
+          <div class="row">
+            <div class="imgph" style="height:110px;border-radius:8px;position:relative;">
+              <span style="position:absolute;bottom:6px;left:6px;font-family:var(--mono);font-size:.58rem;background:var(--panel);padding:1px 5px;border-radius:4px;border:1px solid var(--line);">required</span>
+            </div>
+            <div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);">physical traits</div>
+            <div><span class="chip on">tabby</span><span class="chip">black-and-white</span><span class="chip">friendly</span><span class="chip">short hair</span></div>
+            <div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);">name (optional)</div>
+            <div class="btn dashed" style="text-align:left;color:var(--muted);">add name…</div>
+            <div class="btn primary" style="margin-top:auto;">save</div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>user goal</b><p>enter the photo and traits that establish the cat's identity, then save.</p></div>
+          <div class="field"><b>primary action</b><p>add a photo and save.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>select physical traits</li><li>enter an optional name</li><li>go back</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>required photo (at least 1)</li><li>physical traits</li><li>optional name</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>photo-add area</li><li>multi-select chip group</li><li>name input</li><li>save cta</li></ul></div>
+          <div class="open-q"><b>open question</b>because a photo is mandatory, this screen always requires login + phone verification (flow 09).</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 06 DISCOVER -->
+    <section class="screen" id="s-discover">
+      <div class="stage-head"><p class="eyebrow">06 · list</p><h2>discover</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span></span><span>discover</span><span></span></div>
+          <div class="segmented"><div class="on">nearby</div><div>favorites</div></div>
+          <div style="padding:8px 12px;"><span class="chip">⚠ needs help</span></div>
+          <div class="hairline"></div>
+          <div style="overflow-y:auto;flex:1;">
+            <div class="row" style="flex-direction:row;align-items:center;">
+              <div class="imgph" style="width:34px;height:34px;border-radius:50%;flex:none;"></div>
+              <div style="flex:1;"><div style="font-size:.7rem;">tabby cat</div><div style="font-size:.6rem;color:var(--muted);">friendly, short hair</div></div>
+              <div style="font-family:var(--mono);font-size:.6rem;">120m</div>
+              <span class="badge-alert">⚠</span>
+            </div>
+            <div class="hairline"></div>
+            <div class="row" style="flex-direction:row;align-items:center;">
+              <div class="imgph" style="width:34px;height:34px;border-radius:50%;flex:none;"></div>
+              <div style="flex:1;"><div style="font-size:.7rem;">black cat</div><div style="font-size:.6rem;color:var(--muted);">skittish, long hair</div></div>
+              <div style="font-family:var(--mono);font-size:.6rem;">300m</div>
+            </div>
+          </div>
+          <div class="tabbar"><div><div class="dot"></div>map</div><div class="active"><div class="dot"></div>discover</div><div><div class="dot"></div>notifications</div><div><div class="dot"></div>account</div></div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>user goal</b><p>browse and filter cats in a list, outside of the map.</p></div>
+          <div class="field"><b>primary action</b><p>tap a cat in the list to open its detail page.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>toggle the needs-help filter</li><li>switch to the favorites tab</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>nearby cats list (by distance)</li><li>photo, trait summary, distance, needs-help indicator</li><li>favorites tab: followed cats</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>segment: nearby / favorites</li><li>filter chip</li><li>list view</li><li>empty state</li><li>bottom tab bar</li></ul></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 07 NOTIFICATIONS -->
+    <section class="screen" id="s-notif">
+      <div class="stage-head"><p class="eyebrow">07 · list</p><h2>notifications</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span></span><span>notifications</span><span></span></div>
+          <div style="overflow-y:auto;flex:1;">
+            <div class="row" style="flex-direction:row;align-items:center;">
+              <span class="badge-new"></span>
+              <div class="imgph" style="width:34px;height:34px;border-radius:50%;flex:none;"></div>
+              <div style="flex:1;"><div style="font-size:.7rem;">tabby cat</div><div style="font-size:.6rem;"><span class="badge-alert">⚠ needs help</span></div></div>
+              <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">2h</div>
+            </div>
+            <div class="hairline"></div>
+            <div class="row" style="flex-direction:row;align-items:center;">
+              <div class="imgph" style="width:34px;height:34px;border-radius:50%;flex:none;"></div>
+              <div style="flex:1;"><div style="font-size:.7rem;">black cat</div><div style="font-size:.6rem;color:var(--muted);">status update</div></div>
+              <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">1d</div>
+            </div>
+          </div>
+          <div class="tabbar"><div><div class="dot"></div>map</div><div><div class="dot"></div>discover</div><div class="active"><div class="dot"></div>notifications</div><div><div class="dot"></div>account</div></div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>user goal</b><p>see what's happening with the cats they follow.</p></div>
+          <div class="field"><b>primary action</b><p>tap a notification to open the cat's detail page (with the update highlighted).</p></div>
+          <div class="field"><b>secondary action</b><ul><li>notification marked read on tap</li><li>empty state links to discover</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>update feed for followed cats, newest first</li><li>photo, cat name, update summary, time, read state</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>list view</li><li>unread indicator</li><li>needs-help emphasis</li><li>empty state</li><li>bottom tab bar</li></ul></div>
+          <div class="open-q"><b>open question</b>whether "needs help" notifications should behave differently from regular update notifications is undecided.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 08 ACCOUNT -->
+    <section class="screen" id="s-account">
+      <div class="stage-head"><p class="eyebrow">08 · status screen</p><h2>account</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span></span><span>account</span><span></span></div>
+          <div class="row">
+            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">guest state</div>
+            <div style="font-size:.66rem;">you're not logged in. log in to add a photo/video.</div>
+            <div class="btn primary">log in</div>
+          </div>
+          <div class="hairline"></div>
+          <div class="row">
+            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">logged-in state</div>
+            <div style="display:flex;gap:6px;align-items:center;"><div class="imgph" style="width:24px;height:24px;border-radius:50%;"></div><span style="font-size:.68rem;">tabby cat</span></div>
+            <div style="display:flex;gap:6px;align-items:center;"><div class="imgph" style="width:24px;height:24px;border-radius:50%;"></div><span style="font-size:.68rem;">black cat</span></div>
+            <div class="btn">log out</div>
+          </div>
+          <div class="tabbar"><div><div class="dot"></div>map</div><div><div class="dot"></div>discover</div><div><div class="dot"></div>notifications</div><div class="active"><div class="dot"></div>account</div></div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>user goal</b><p>manage login state and quickly reach followed cats.</p></div>
+          <div class="field"><b>primary action</b><p>if a guest, log in; if logged in, go to a followed cat.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>log out</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>login state</li><li>followed cats (if logged in)</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>guest cta</li><li>followed-cats mini-list</li><li>log-out option</li><li>bottom tab bar</li></ul></div>
+          <div class="open-q"><b>open question</b>profile / badge / points system is left out of mvp scope — not present as a component.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 LOGIN -->
+    <section class="screen" id="s-login">
+      <div class="stage-head"><p class="eyebrow">09 · shared flow</p><h2>login</h2></div>
+      <div class="layout">
+        <div class="phone"><div class="screen-glass">
+          <div class="bar"><span class="icon">✕</span><span></span><span></span></div>
+          <div class="row">
+            <div style="font-size:.7rem;font-weight:600;">log in to add a photo/video</div>
+            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);">phone number</div>
+            <div class="btn dashed" style="text-align:left;">+90</div>
+            <div class="btn">send code</div>
+            <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);margin-top:8px;">verification code</div>
+            <div class="btn dashed" style="text-align:left;letter-spacing:.3em;">------</div>
+            <div class="btn primary">log in</div>
+            <div class="btn dashed" style="margin-top:auto;">continue without media</div>
+          </div>
+        </div></div>
+        <div class="spec">
+          <div class="field"><b>user goal</b><p>log in quickly the moment they want to add a photo/video, and continue.</p></div>
+          <div class="field"><b>primary action</b><p>phone number → sms code → log in.</p></div>
+          <div class="field"><b>secondary action</b><ul><li>cancel / continue without media</li></ul></div>
+          <div class="field"><b>required info</b><ul><li>phone number</li><li>sms verification code</li><li>context text: which action triggered this</li></ul></div>
+          <div class="field"><b>required components</b><ul><li>phone input</li><li>send-code cta</li><li>sms code input</li><li>log-in cta</li><li>continue without media (in the update flow)</li></ul></div>
+          <div class="open-q"><b>open question</b>following and posting a photo-free update never trigger this flow — only adding a photo/video does.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  var buttons = document.querySelectorAll('.rail button');
+  var screens = document.querySelectorAll('.screen');
+  buttons.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var target = btn.getAttribute('data-target');
+      buttons.forEach(function(b){ b.removeAttribute('aria-current'); });
+      btn.setAttribute('aria-current','true');
+      screens.forEach(function(s){ s.removeAttribute('data-active'); });
+      document.getElementById(target).setAttribute('data-active','true');
+    });
+  });
+</script>
