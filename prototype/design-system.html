@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -46,27 +46,27 @@
 <body>
 
 <div class="ds-app">
-  <nav class="ds-rail" aria-label="bölümler">
+  <nav class="ds-rail" aria-label="sections">
     <div class="ds-rail__title">cats istanbul</div>
     <div class="ds-rail__sub">design system</div>
-    <a href="#colors">Renkler</a>
-    <a href="#type">Tipografi</a>
+    <a href="#colors">Colors</a>
+    <a href="#type">Typography</a>
     <a href="#spacing">Spacing</a>
     <a href="#radius">Radius</a>
     <a href="#elevation">Elevation</a>
-    <a href="#icons">İkonlar</a>
-    <a href="#buttons">Butonlar</a>
+    <a href="#icons">Icons</a>
+    <a href="#buttons">Buttons</a>
     <a href="#inputs">Input &amp; textarea</a>
     <a href="#search">Search field</a>
     <a href="#chips">Chip</a>
-    <a href="#markers">Harita marker'ları</a>
+    <a href="#markers">Map markers</a>
     <a href="#badges">Badge &amp; freshness</a>
     <a href="#cards">Cat card</a>
     <a href="#sheet">Bottom sheet</a>
     <a href="#nav">Bottom navigation</a>
     <a href="#states">Empty / loading / error / permission</a>
     <a href="#modal">Modal</a>
-    <a href="index.html" style="margin-top:var(--space-4);color:var(--color-primary-strong);">← prototipe dön</a>
+    <a href="index.html" style="margin-top:var(--space-4);color:var(--color-primary-strong);">← back to prototype</a>
   </nav>
 
   <main class="ds-main">
@@ -75,22 +75,22 @@
 
     <!-- COLORS -->
     <section class="ds-section" id="colors">
-      <h2>Renkler</h2>
-      <p class="ds-desc">Sıcak ve açık bir zemin üzerine kurulu; pastel mor tek vurgu rengi, yardım/uyarı için mordan ayrışan sıcak amber.</p>
+      <h2>Colors</h2>
+      <p class="ds-desc">Built on a warm, light surface; pastel purple is the single accent color, with a warm amber — distinct from purple — reserved for help/warning.</p>
       <div class="ds-group"><h3>Foundations</h3><div class="ds-row" id="colorFoundations"></div></div>
-      <div class="ds-group"><h3>Primary — pastel mor</h3><div class="ds-row" id="colorPrimary"></div></div>
-      <div class="ds-group"><h3>Accent — sıcak amber (yardım / uyarı)</h3><div class="ds-row" id="colorAccent"></div></div>
+      <div class="ds-group"><h3>Primary — pastel purple</h3><div class="ds-row" id="colorPrimary"></div></div>
+      <div class="ds-group"><h3>Accent — warm amber (help / warning)</h3><div class="ds-row" id="colorAccent"></div></div>
       <div class="ds-group"><h3>Success</h3><div class="ds-row" id="colorSuccess"></div></div>
       <div class="ds-group"><h3>Line</h3><div class="ds-row" id="colorLine"></div></div>
     </section>
 
     <!-- TYPE -->
     <section class="ds-section" id="type">
-      <h2>Tipografi</h2>
-      <p class="ds-desc">Başlıklar ve kedi isimleri için <b>Fraunces</b> (karakterli serif), arayüz metni için <b>Work Sans</b> (nötr, okunaklı grotesk).</p>
+      <h2>Typography</h2>
+      <p class="ds-desc"><b>Fraunces</b> (a characterful serif) for headings and cat names, <b>Work Sans</b> (a neutral, legible grotesk) for interface text. Samples below are real product copy from the app.</p>
       <div class="type-sample"><span class="lbl">display / xl</span><span class="h-display" style="font-size:var(--text-2xl);">Portakal</span></div>
-      <div class="type-sample"><span class="lbl">display / lg</span><span class="h-display" style="font-size:var(--text-xl);">Kedi detayı</span></div>
-      <div class="type-sample"><span class="lbl">display / md</span><span class="h-display" style="font-size:var(--text-md);">Bottom sheet başlığı</span></div>
+      <div class="type-sample"><span class="lbl">display / lg</span><span class="h-display" style="font-size:var(--text-xl);">Cat detail</span></div>
+      <div class="type-sample"><span class="lbl">display / md</span><span class="h-display" style="font-size:var(--text-md);">Bottom sheet title</span></div>
       <div class="type-sample"><span class="lbl">body / base</span><span style="font-size:var(--text-base);">Arka bacağını yere basmıyor, yaklaşınca kaçmadı.</span></div>
       <div class="type-sample"><span class="lbl">body / sm</span><span style="font-size:var(--text-sm);color:var(--color-muted);">2 saat önce güncellendi</span></div>
       <div class="type-sample"><span class="lbl">eyebrow / 2xs</span><span class="eyebrow">Son güncellemeler</span></div>
@@ -99,7 +99,7 @@
     <!-- SPACING -->
     <section class="ds-section" id="spacing">
       <h2>Spacing</h2>
-      <p class="ds-desc">4/8 tabanlı ölçek.</p>
+      <p class="ds-desc">A 4/8-based scale.</p>
       <div id="spacingScale"></div>
     </section>
 
@@ -122,14 +122,14 @@
 
     <!-- ICONS -->
     <section class="ds-section" id="icons">
-      <h2>İkonlar</h2>
-      <p class="ds-desc">Tek bir tutarlı çizgi ikon seti (icons.js), emoji kullanılmaz.</p>
+      <h2>Icons</h2>
+      <p class="ds-desc">One consistent line-icon set (icons.js); no emoji.</p>
       <div class="ds-row" id="iconGrid"></div>
     </section>
 
     <!-- BUTTONS -->
     <section class="ds-section" id="buttons">
-      <h2>Butonlar</h2>
+      <h2>Buttons</h2>
       <div class="ds-group"><h3>Primary — default / pressed / disabled</h3>
         <div class="ds-row">
           <button class="btn btn-primary">Gönder</button>
@@ -143,7 +143,7 @@
           <button class="btn btn-secondary" disabled>Takip et</button>
         </div>
       </div>
-      <div class="ds-group"><h3>Warm (yardım aksiyonu — agresif değil)</h3>
+      <div class="ds-group"><h3>Warm (help action — not aggressive)</h3>
         <div class="ds-row"><button class="btn btn-warm" id="btnWarmIcon">Yardıma ihtiyacı var</button></div>
       </div>
       <div class="ds-group"><h3>Ghost</h3>
@@ -165,9 +165,9 @@
       <div class="ds-row" style="max-width:420px;flex-direction:column;">
         <div class="field"><span class="field-label">İsim (opsiyonel)</span><input class="input" placeholder="Henüz adı yoksa boş bırakabilirsin"></div>
         <div class="field"><span class="field-label">Telefon numarası</span><input class="input" value="5xx xxx xx xx"></div>
-        <div class="field"><span class="field-label">Doğrulama kodu — hata</span><input class="input input-error" value="12"><div class="field-error" id="fieldErrorDemo"></div></div>
+        <div class="field"><span class="field-label">Doğrulama kodu (error state)</span><input class="input input-error" value="12"><div class="field-error" id="fieldErrorDemo"></div></div>
         <div class="field"><span class="field-label">Yorum (opsiyonel)</span><textarea class="textarea" placeholder="Örn. kase boştu, biraz su bıraktım…"></textarea></div>
-        <div class="field"><span class="field-label">Devre dışı</span><input class="input" value="Düzenlenemez" disabled></div>
+        <div class="field"><span class="field-label">Disabled</span><input class="input" value="Not editable" disabled></div>
       </div>
     </section>
 
@@ -186,17 +186,17 @@
         <div class="chip-row">
           <span class="chip">sarman</span>
           <span class="chip is-on">kısa tüylü</span>
-          <span class="chip" style="opacity:.45;">devre dışı</span>
+          <span class="chip" style="opacity:.45;">disabled</span>
         </div>
       </div>
-      <div class="ds-group"><h3>Warm on — yardım filtresi</h3>
+      <div class="ds-group"><h3>Warm on — help filter</h3>
         <div class="chip-row"><span class="chip is-warm is-on" id="chipWarmDemo"></span></div>
       </div>
     </section>
 
     <!-- MARKERS -->
     <section class="ds-section" id="markers">
-      <h2>Harita marker'ları</h2>
+      <h2>Map markers</h2>
       <div class="demo-surface" style="position:relative;height:150px;">
         <div class="ds-row" style="align-items:center;height:100%;">
           <div style="text-align:center;"><div class="marker" id="markerDefault"></div><div class="swatch-value mt-2">default</div></div>
@@ -209,7 +209,7 @@
 
     <!-- BADGES -->
     <section class="ds-section" id="badges">
-      <h2>Badge &amp; freshness durumları</h2>
+      <h2>Badge &amp; freshness states</h2>
       <div class="chip-row">
         <span class="badge badge-fresh" id="badgeFresh"></span>
         <span class="badge badge-neutral" id="badgeNeutral"></span>
@@ -232,7 +232,7 @@
     <!-- SHEET -->
     <section class="ds-section" id="sheet">
       <h2>Cat preview bottom sheet</h2>
-      <p class="ds-desc">Haritada bir marker seçildiğinde ekranın ~%35'ini kaplar. Aşağıda telefon çerçevesi olmadan, doğrudan bileşen görünüyor.</p>
+      <p class="ds-desc">Covers about ~35% of the screen when a marker is selected on the map. Shown below without the phone frame, as the component on its own.</p>
       <div style="max-width:360px;background:var(--color-bg-elevated);border-radius:var(--radius-xl) var(--radius-xl) 0 0;box-shadow:var(--shadow-lg);padding:var(--space-2) var(--space-5) var(--space-6);">
         <div class="sheet-grabber"></div>
         <div id="sheetDemo"></div>
@@ -249,7 +249,7 @@
 
     <!-- STATES -->
     <section class="ds-section" id="states">
-      <h2>Empty / loading / error / permission state'leri</h2>
+      <h2>Empty / loading / error / permission states</h2>
       <div class="ds-row">
         <div class="demo-surface" style="width:280px;" id="stateEmpty"></div>
         <div class="demo-surface" style="width:280px;">

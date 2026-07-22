@@ -1,58 +1,65 @@
-# cats istanbul — hi-fi prototip
+# cats istanbul — hi-fi prototype
 
-issue #5 kapsamında, `docs/design/wireframes.html`'deki ekran ve akışların lokalde gezilebilir, görsel olarak
-tamamlanmış bir versiyonu. figma değil — build step veya framework yok, doğrudan `index.html` açılarak ya da
-basit bir static server ile çalışır.
+Built for issue #5: a locally browsable, visually complete pass over the screens and flows in
+`docs/design/wireframes.html`. Not Figma — no build step or framework, opens directly as `index.html`
+or runs from a simple static server.
 
-## çalıştırma
+Note: the in-app product copy (button labels, cat statuses, screen text) is intentionally in Turkish —
+Turkish street-cat helpers are the primary audience for the real product. This README, the design
+system's own labels, and everything else in the repo (code, comments, commits) are in English.
+
+## running it
 
 ```
 cd prototype
 python3 -m http.server 8000
 ```
 
-sonra `http://localhost:8000` adresini aç. `index.html`'i çift tıklayarak (file://) açmak da çalışır; harita için
-internet bağlantısı gerekir, yoksa harita alanı desende bir fallback görünüme düşer, marker'lar yine görünür kalır.
+then open `http://localhost:8000`. double-clicking `index.html` to open it via `file://` also works;
+the map needs an internet connection — without one it falls back to a static patterned background,
+with the cat markers still visible.
 
-## dosyalar
+## files
 
-- `index.html` — uygulama kabuğu, 9 ekran
-- `styles.css` — design token'lar (renk, tipografi, spacing, radius, elevation) + tekrar kullanılabilir component class'ları
-- `icons.js` — paylaşılan svg ikon seti, hem uygulama hem design-system.html tarafından kullanılır
-- `app.js` — ekran render'ları, state, navigasyon, leaflet harita entegrasyonu
-- `design-system.html` — ekranlardan bağımsız component/token kataloğu, aynı `styles.css`'i kullanır
+- `index.html` — app shell, 9 screens
+- `styles.css` — design tokens (color, typography, spacing, radius, elevation) + reusable component classes
+- `icons.js` — shared svg icon set, used by both the app and design-system.html
+- `app.js` — screen rendering, state, navigation, leaflet map integration
+- `design-system.html` — screen-independent component/token catalog, uses the same `styles.css`
 
-## kedi fotoğrafları
+## cat photos
 
-Tamamı wikimedia commons üzerinden, cc lisanslı, gerçek sokak kedisi fotoğrafları:
+All real, CC-licensed street cat photos sourced from wikimedia commons:
 
-| kullanım | dosya | fotoğrafçı | lisans |
+| used for | file | photographer | license |
 |---|---|---|---|
 | Portakal | [Cat near Kabataş in Istanbul](https://commons.wikimedia.org/wiki/File:Cat_near_Kabata%C5%9F_in_Istanbul,_20260605_1734_1298.jpg) | Jakub Hałun | CC BY 4.0 |
 | Zeytin | [Cats, Kadikoey, Istanbul](https://commons.wikimedia.org/wiki/File:Cats,_Kadikoey,_Istanbul_(P1100168).jpg) | Matti Blume | CC BY-SA |
 | Sultan | [Istanbul - cat of Sultanahmet](https://commons.wikimedia.org/wiki/File:Istanbul_-_cat_of_Sultanahmet.jpg) | Jorge Franganillo | CC BY 4.0 |
-| (isimsiz, beyaz-kızıl) | [Old Istanbul Cat](https://commons.wikimedia.org/wiki/File:Old_Istanbul_Cat.jpg) | Amak-i Hayal | CC BY-SA 4.0 |
+| (unnamed, white-ginger) | [Old Istanbul Cat](https://commons.wikimedia.org/wiki/File:Old_Istanbul_Cat.jpg) | Amak-i Hayal | CC BY-SA 4.0 |
 | Yavru | [Cat, Istanbul (P1180136)](https://commons.wikimedia.org/wiki/File:Cat,_Istanbul_(P1180136).jpg) | Matti Blume | CC BY-SA |
 | Kaplan | [Turkey (Istanbul) Street cat](https://commons.wikimedia.org/wiki/File:Turkey_(Istanbul)_Street_cat_(21956691179).jpg) | Flickr / f_snarfel | CC BY 2.0 |
 
-görsel yüklenemezse (`onerror`) tüm `<img>`'ler bir pati ikonlu, marka renginde bir fallback'e düşer — boş gri
-placeholder yok.
+if an image fails to load (`onerror`), every `<img>` falls back to a paw-icon placeholder in the brand
+color — no empty gray placeholders.
 
-## harita
+## map
 
-leaflet + openstreetmap, cdn üzerinden (`unpkg.com/leaflet`). merkez: kadıköy/moda, sokak seviyesi zoom.
-leaflet cdn'den yüklenemezse ya da tile istekleri başarısız olursa, uygulama otomatik olarak aynı kedi
-marker'larını grid desenli statik bir fallback zemin üzerinde absolute pozisyonlarla gösterir — harita boş kalmaz.
+leaflet + openstreetmap, via cdn (`unpkg.com/leaflet`). centered on kadıköy/moda, street-level zoom.
+if the leaflet cdn fails to load, or tile requests fail, the app automatically falls back to rendering
+the same cat markers as absolutely-positioned elements over a static grid background — the map never
+goes empty. this fallback is exercised by both the synchronous init-failure path and leaflet's async
+`tileerror` event, through one shared `activateMapFallback()` function.
 
-## kapsam dışı bırakılan / uyarlanan noktalar
+## scoped-out / adapted decisions
 
-- `docs/product/trust.md`'deki karara göre: metin-only durum güncellemesi ve takip etme girişsiz yapılabilir;
-  yalnızca fotoğraf/medya eklemek ve yeni kedi eklemek giriş + telefon doğrulama gerektirir.
-- `docs/product/alerts.md`'ye göre: "yardım gerekiyor" bildirimi oluşturmak fotoğraf eklenmese bile her zaman
-  giriş gerektirir (alert'lerin takipçilere gittiği için daha yüksek bir güven eşiği var).
-- wireframe'deki "medya olmadan devam et" aksiyonu kaldırıldı — yukarıdaki kurala göre metin-only update zaten
-  giriş istemiyor, o kısayola gerek kalmadı. yerine genel bir "vazgeç" var.
-- durum güncellemesi eklerken ilk gönderim denemesi, hata + "tekrar dene" state'ini göstermek için bilinçli
-  olarak bir kere başarısız olacak şekilde simüle edildi; sonraki denemeler normal çalışır.
-- "kedi ekle: konum" ekranı, kayıtlı bir kedinin (Portakal) yakınında başlıyor — bu, "burada zaten kayıtlı bir
-  kedi var mı" modalını ilk denemede görebilmek için bilinçli bir demo kararı.
+- per `docs/product/trust.md`: a text-only status update, and following a cat, both work without
+  logging in; only adding a photo/video or adding a new cat requires login + phone verification.
+- per `docs/product/alerts.md`: creating a "needs help" alert always requires login, even without a
+  photo — alerts notify followers, so they sit behind a higher trust bar.
+- the wireframe's "continue without media" action was dropped — per the rule above, a text-only update
+  never needed login to begin with, so that shortcut no longer applies. replaced with a generic "cancel".
+- the first submit attempt on a status update is deliberately simulated to fail once, to demonstrate the
+  error + "retry" state; subsequent attempts succeed normally.
+- the "add cat: location" screen starts centered near an existing cat (Portakal) on purpose, so the
+  "is this cat already registered here?" duplicate-check modal is reachable on the very first try.

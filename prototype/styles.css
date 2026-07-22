@@ -171,6 +171,7 @@ button, input, textarea{ color:inherit; }
 
 /* ============================================================ chips */
 .chip{
+  position:relative;
   display:inline-flex; align-items:center; gap:var(--space-1);
   height:32px; padding:0 var(--space-3); border-radius:var(--radius-full);
   border:1px solid var(--color-line-strong); background:var(--color-surface);
@@ -178,11 +179,17 @@ button, input, textarea{ color:inherit; }
   cursor:pointer; user-select:none; -webkit-tap-highlight-color:transparent;
   transition:background .12s var(--ease), color .12s var(--ease), border-color .12s var(--ease);
 }
+/* invisible hit-area expansion to the 44px touch-target minimum; visible chip stays 32px tall */
+.chip::before{
+  content:''; position:absolute; left:0; right:0; top:50%;
+  height:var(--tap-min); transform:translateY(-50%);
+}
 .chip:hover{ border-color:var(--color-line-strong); background:var(--color-surface-alt); }
 .chip.is-on{ background:var(--color-primary-soft); border-color:var(--color-primary); color:var(--color-primary-strong); }
 .chip.is-warm.is-on{ background:var(--color-accent-soft); border-color:var(--color-accent); color:var(--color-accent-ink); }
 .chip:disabled{ opacity:.45; cursor:not-allowed; }
-.chip-row{ display:flex; flex-wrap:wrap; gap:var(--space-2); }
+/* gap matches the chip's 44px hit-area expansion (6px top/bottom) so wrapped rows never overlap */
+.chip-row{ display:flex; flex-wrap:wrap; gap:var(--space-3); }
 
 /* ============================================================ badges */
 .badge{ display:inline-flex; align-items:center; gap:5px; height:24px; padding:0 var(--space-2); border-radius:var(--radius-full); font-size:var(--text-2xs); font-weight:700; letter-spacing:.01em; }
@@ -197,11 +204,20 @@ button, input, textarea{ color:inherit; }
 /* ============================================================ map markers */
 .marker{
   width:40px; height:40px; border-radius:50%; border:2.5px solid #fff;
-  box-shadow:var(--shadow-marker); overflow:hidden; position:relative; background:var(--color-surface-alt);
+  box-shadow:var(--shadow-marker); position:relative; background:var(--color-surface-alt);
   cursor:pointer;
 }
-.marker img{ width:100%; height:100%; object-fit:cover; }
+/* photo is clipped on the img itself (not via overflow:hidden on .marker) so the
+   ::before hit-area below can extend past the visible circle without being clipped */
+.marker img{ width:100%; height:100%; object-fit:cover; border-radius:50%; }
 .marker::after{ content:''; position:absolute; inset:0; border-radius:50%; box-shadow:inset 0 0 0 1px rgba(33,28,41,.06); }
+/* invisible hit-area expansion to the 44px touch-target minimum; follows the larger
+   selected-marker size automatically via max() instead of shrinking it */
+.marker::before{
+  content:''; position:absolute; top:50%; left:50%;
+  width:max(var(--tap-min), 100%); height:max(var(--tap-min), 100%);
+  transform:translate(-50%,-50%);
+}
 .marker.is-selected{
   width:56px; height:56px; border-color:var(--color-primary); box-shadow:0 0 0 4px var(--color-primary-soft), var(--shadow-md);
 }
@@ -212,10 +228,16 @@ button, input, textarea{ color:inherit; }
 }
 .marker-badge svg{ width:9px; height:9px; color:#fff; }
 .marker-cluster{
+  position:relative;
   min-width:42px; height:42px; padding:0 10px; border-radius:var(--radius-full);
   background:var(--color-ink); color:#fff; border:2.5px solid #fff; box-shadow:var(--shadow-marker);
   display:flex; align-items:center; justify-content:center; gap:4px; font-weight:700; font-size:var(--text-sm);
   cursor:pointer;
+}
+.marker-cluster::before{
+  content:''; position:absolute; top:50%; left:50%;
+  width:max(var(--tap-min), 100%); height:max(var(--tap-min), 100%);
+  transform:translate(-50%,-50%);
 }
 .marker-cluster svg{ width:14px; height:14px; opacity:.85; }
 

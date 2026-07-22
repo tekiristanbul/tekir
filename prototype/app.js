@@ -135,6 +135,7 @@ var state = {
   sheetOpen:false,
   discoverTab:'nearby',
   discoverHelpFilter:false,
+  mapHelpFilter:false,    // independent from discoverHelpFilter — the map's own "needs help" chip
   pendingAction:null,      // { type:'submit-update'|'start-add-cat', payload }
   draftUpdate:null,        // in-progress add-update form state
   draftCat:null,           // in-progress add-cat form state
@@ -260,11 +261,12 @@ function markerHTML(cat, selected){
 }
 
 /* ============================================================ SCREEN: map */
-var leafletMap = null, leafletMarkers = {}, leafletFailed = false;
+var leafletMap = null, leafletMarkers = {}, leafletCluster = null, leafletFailed = false;
 
 function renderMap(){
   var el = screenEl('map');
   if(el.dataset.built === '1'){ updateMapMarkersDom(); return; }
+  teardownLeafletMap();
   el.dataset.built = '1';
   el.innerHTML =
     '<div class="map-screen">' +
@@ -275,7 +277,7 @@ function renderMap(){
       '<div class="map-topbar">' +
         '<div class="search-field">'+icon('search',{size:17})+'<input type="text" placeholder="Mahalle veya sokak ara" aria-label="konum ara"></div>' +
         '<div class="chip-row">' +
-          '<button class="chip'+(state.discoverHelpFilter?' is-on is-warm':'')+'" data-action="toggle-map-help-filter">'+icon('alertTriangle',{size:14})+' yardım gerekiyor</button>' +
+          '<button class="chip is-warm'+(state.mapHelpFilter?' is-on':'')+'" data-action="toggle-map-help-filter" aria-pressed="'+state.mapHelpFilter+'">'+icon('alertTriangle',{size:14})+' yardım gerekiyor</button>' +
         '</div>' +
       '</div>' +
       '<button class="fab" data-action="go-add-cat" aria-label="yeni kedi ekle" style="position:absolute;right:'+'20px;bottom:104px;">'+icon('plus',{size:24})+'</button>' +
@@ -293,19 +295,36 @@ function renderMap(){
   updateMapMarkersDom();
 }
 
+/* removes the current leaflet instance (if any) and resets every module-level
+   reference tied to it, so a fresh #leafletMap dom node can be initialized
+   safely afterwards. safe to call when no instance exists (no-op). */
+function teardownLeafletMap(){
+  if(leafletMap){
+    try{ leafletMap.remove(); }catch(e){ /* dom node already gone — nothing to clean up */ }
+  }
+  leafletMap = null;
+  leafletMarkers = {};
+  leafletCluster = null;
+  leafletFailed = false;
+}
+
 function initLeaflet(){
   if(leafletMap || leafletFailed) return;
-  if(typeof L === 'undefined'){ leafletFailed = true; showMapFallback(); return; }
+  if(typeof L === 'undefined'){ leafletFailed = true; activateMapFallback(); return; }
   try{
     leafletMap = L.map('leafletMap', { zoomControl:false, attributionControl:false }).setView([40.9822,29.0288], 15.7);
-    var tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 });
-    tiles.on('tileerror', function(){ if(!leafletFailed){ leafletFailed = true; showMapFallback(); } });
+    L.control.attribution({ prefix:false, position:'bottomright' }).addTo(leafletMap);
+    var tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom:19,
+      attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+    });
+    tiles.on('tileerror', function(){ if(!leafletFailed){ leafletFailed = true; activateMapFallback(); } });
     tiles.addTo(leafletMap);
     L.control.zoom({ position:'bottomright' }).addTo(leafletMap);
     leafletMap.on('click', function(){ closeSheet(); });
     CATS.forEach(addLeafletMarker);
     addLeafletCluster();
-  }catch(e){ leafletFailed = true; showMapFallback(); }
+  }catch(e){ leafletFailed = true; activateMapFallback(); }
 }
 function addLeafletMarker(cat){
   var divIcon = L.divIcon({ className:'', html:markerHTML(cat, cat.id===state.selectedCatId), iconSize:[40,40], iconAnchor:[20,20] });
@@ -316,29 +335,51 @@ function addLeafletMarker(cat){
 function addLeafletCluster(){
   var html = '<div class="marker-cluster" data-action="cluster-tap" role="button" tabindex="0" aria-label="bölgedeki diğer kediler">'+icon('pin',{size:14})+'<span>+4</span></div>';
   var divIcon = L.divIcon({ className:'', html:html, iconSize:[46,42], iconAnchor:[23,21] });
-  var m = L.marker([40.9865,29.0312], { icon:divIcon, keyboard:false }).addTo(leafletMap);
-  m.on('click', function(e){ if(e.originalEvent) e.originalEvent.stopPropagation(); toast('Bu bölgede 4 kedi daha var, yakınlaştırarak görebilirsin.', {icon:'compass'}); });
+  leafletCluster = L.marker([40.9865,29.0312], { icon:divIcon, keyboard:false }).addTo(leafletMap);
+  leafletCluster.on('click', function(e){ if(e.originalEvent) e.originalEvent.stopPropagation(); toast('Bu bölgede 4 kedi daha var, yakınlaştırarak görebilirsin.', {icon:'compass'}); });
 }
-function showMapFallback(){
+
+/* single entry point for entering fallback mode, used by both the synchronous
+   init failure path (leaflet missing / threw) and the async tileerror path.
+   always re-renders the fallback markers so they never render onto an empty grid. */
+function activateMapFallback(){
   var fb = $('#mapFallback'); var lm = $('#leafletMap');
   if(fb){ fb.hidden = false; }
   if(lm){ lm.style.display = 'none'; }
+  renderFallbackMarkers();
 }
+
+/* dispatches to whichever marker renderer matches the current map mode */
 function updateMapMarkersDom(){
-  if(leafletMap && !leafletFailed){
-    CATS.forEach(function(cat){
-      var m = leafletMarkers[cat.id]; if(!m) return;
-      var sel = cat.id === state.selectedCatId;
-      m.setIcon(L.divIcon({ className:'', html:markerHTML(cat, sel), iconSize: sel?[56,56]:[40,40], iconAnchor: sel?[28,28]:[20,20] }));
-    });
-    return;
+  if(leafletMap && !leafletFailed){ renderLeafletMarkers(); return; }
+  renderFallbackMarkers();
+}
+function renderLeafletMarkers(){
+  CATS.forEach(function(cat){
+    var m = leafletMarkers[cat.id]; if(!m) return;
+    var sel = cat.id === state.selectedCatId;
+    m.setIcon(L.divIcon({ className:'', html:markerHTML(cat, sel), iconSize: sel?[56,56]:[40,40], iconAnchor: sel?[28,28]:[20,20] }));
+    var visible = !state.mapHelpFilter || cat.needsHelp.active;
+    var onMap = leafletMap.hasLayer(m);
+    if(visible && !onMap) m.addTo(leafletMap);
+    else if(!visible && onMap) leafletMap.removeLayer(m);
+  });
+  if(leafletCluster){
+    var clusterOnMap = leafletMap.hasLayer(leafletCluster);
+    if(!state.mapHelpFilter && !clusterOnMap) leafletCluster.addTo(leafletMap);
+    else if(state.mapHelpFilter && clusterOnMap) leafletMap.removeLayer(leafletCluster);
   }
+}
+function renderFallbackMarkers(){
   var wrap = $('#mapMarkers'); if(!wrap) return;
-  var html = CATS.map(function(cat){
+  var visibleCats = CATS.filter(function(c){ return !state.mapHelpFilter || c.needsHelp.active; });
+  var html = visibleCats.map(function(cat){
     var sel = cat.id === state.selectedCatId;
     return '<div style="position:absolute;top:'+cat.fallbackPos.top+';left:'+cat.fallbackPos.left+';transform:translate(-50%,-50%);">'+markerHTML(cat, sel)+'</div>';
-  }).join('') +
-  '<div style="position:absolute;top:30%;left:80%;transform:translate(-50%,-50%);"><div class="marker-cluster" data-action="cluster-tap">'+icon('pin',{size:14})+'<span>+4</span></div></div>';
+  }).join('');
+  if(!state.mapHelpFilter){
+    html += '<div style="position:absolute;top:30%;left:80%;transform:translate(-50%,-50%);"><div class="marker-cluster" data-action="cluster-tap" role="button" tabindex="0" aria-label="bölgedeki diğer kediler">'+icon('pin',{size:14})+'<span>+4</span></div></div>';
+  }
   wrap.innerHTML = html;
 }
 
@@ -577,7 +618,11 @@ function initLocationMap(){
   try{
     locMap = L.map('locationMap', { zoomControl:false, attributionControl:false, dragging:true })
       .setView([state.draftCat.lat, state.draftCat.lng], 17);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(locMap);
+    L.control.attribution({ prefix:false, position:'bottomright' }).addTo(locMap);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom:19,
+      attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+    }).addTo(locMap);
     locMap.on('moveend', function(){ var c = locMap.getCenter(); state.draftCat.lat = c.lat; state.draftCat.lng = c.lng; });
   }catch(e){ locMapFailed = true; var fb2=$('#locFallback'); if(fb2) fb2.hidden=false; }
 }
@@ -668,10 +713,11 @@ function saveCat(){
       updates:[{ type:'sighting', comment:'Yeni kedi olarak eklendi.', photo:d.photo, timeText:'az önce' }]
     };
     CATS.push(newCat);
-    if(leafletMap && !leafletFailed) addLeafletMarker(newCat);
     state.draftCat = null;
     state.selectedCatId = newCat.id;
     toast('Kedi eklendi', {icon:'check'});
+    // forces renderMap() to tear down and reinitialize leaflet on a fresh dom node,
+    // which re-adds every cat in CATS (including newCat) via initLeaflet()
     screenEl('map').dataset.built = '';
     navigate('map', { root:true });
     openSheet(newCat.id);
@@ -874,7 +920,12 @@ document.addEventListener('click', function(e){
     case 'save-cat': saveCat(); break;
     case 'discover-tab': state.discoverTab = t.getAttribute('data-tab'); renderDiscover(); break;
     case 'toggle-discover-help-filter': state.discoverHelpFilter = !state.discoverHelpFilter; renderDiscover(); break;
-    case 'toggle-map-help-filter': state.discoverHelpFilter = !state.discoverHelpFilter; toast('Harita filtresi keşfet ekranında da geçerli', {icon:'filter'}); break;
+    case 'toggle-map-help-filter':
+      state.mapHelpFilter = !state.mapHelpFilter;
+      t.classList.toggle('is-on', state.mapHelpFilter);
+      t.setAttribute('aria-pressed', String(state.mapHelpFilter));
+      updateMapMarkersDom();
+      break;
     case 'logout': state.session.loggedIn = false; state.session.phone = null; toast('Çıkış yapıldı', {icon:'logout'}); renderAccount(); break;
     case 'go-login-generic': requireLogin('Hesabına giriş yap', null); break;
     case 'send-code': sendCode(); break;
