@@ -41,6 +41,14 @@
   .icon-tile .box{ width:44px; height:44px; border-radius:var(--radius-md); background:var(--color-surface); border:1px solid var(--color-line); display:flex; align-items:center; justify-content:center; color:var(--color-ink); }
   .icon-tile span{ font-size:9px; color:var(--color-muted); text-align:center; }
   .phone-mock{ width:390px; max-width:100%; border-radius:32px; border:6px solid var(--color-ink); overflow:hidden; box-shadow:var(--shadow-lg); background:var(--color-bg); }
+
+  /* logo proposal — scoped to this documentation page; not part of the shared component
+     system until/unless the product owner approves the direction */
+  .proposal-tag{ display:inline-block; font-family:var(--font-body); font-size:var(--text-xs); font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--color-help-strong); background:var(--color-help-soft); padding:2px 8px; border-radius:var(--radius-full); vertical-align:middle; margin-left:8px; }
+  .logo-wordmark{ font-family:var(--font-display); font-weight:600; color:var(--color-ink); display:inline-flex; align-items:baseline; white-space:nowrap; letter-spacing:-.01em; }
+  .logo-i{ position:relative; display:inline-block; }
+  .logo-i .paw{ position:absolute; left:50%; top:-.48em; width:.44em; height:.44em; transform:translateX(-50%); color:var(--color-primary); }
+  .logo-i .paw svg{ width:100%; height:100%; display:block; }
 </style>
 </head>
 <body>
@@ -49,6 +57,7 @@
   <nav class="ds-rail" aria-label="sections">
     <div class="ds-rail__title">cats istanbul</div>
     <div class="ds-rail__sub">design system</div>
+    <a href="#logo">Logo <span style="opacity:.55;font-weight:600;">(proposal)</span></a>
     <a href="#colors">Colors</a>
     <a href="#type">Typography</a>
     <a href="#spacing">Spacing</a>
@@ -73,14 +82,43 @@
     <p class="eyebrow">component &amp; token catalog</p>
     <h1 class="h-display" style="font-size:var(--text-2xl);margin-bottom:var(--space-8);">Design system</h1>
 
+    <!-- LOGO (proposal, not a locked brand decision) -->
+    <section class="ds-section" id="logo">
+      <h2>Logo <span class="proposal-tag">proposal</span></h2>
+      <p class="ds-desc">A wordmark idea for product-owner review — not a finalized brand decision. The dot on the "i" in
+        "istanbul" is a small paw print (four round toe pads — a <b>paw</b>, deliberately not a chess <b>pawn</b>).
+        The stem below it is a dotless ı so the font's own dot never doubles up underneath.</p>
+      <div class="ds-group">
+        <h3>Default — single color</h3>
+        <div class="demo-surface" style="display:flex;align-items:center;justify-content:center;padding:var(--space-10) var(--space-6);">
+          <span class="logo-wordmark" style="font-size:2.6rem;"></span>
+        </div>
+      </div>
+      <div class="ds-group">
+        <h3>Small scale — legibility check</h3>
+        <div class="demo-surface" style="display:flex;align-items:center;gap:var(--space-8);flex-wrap:wrap;padding:var(--space-6);">
+          <span class="logo-wordmark" style="font-size:1.1rem;"></span>
+          <span class="logo-wordmark" style="font-size:.85rem;"></span>
+          <span class="logo-wordmark" style="font-size:.65rem;"></span>
+        </div>
+      </div>
+      <div class="future-note">
+        <span>If this direction is approved, the same mark could carry into the splash screen
+          (<b>issue #8</b>) — splash animation itself is not addressed in this pass.</span>
+      </div>
+    </section>
+
     <!-- COLORS -->
     <section class="ds-section" id="colors">
       <h2>Colors</h2>
-      <p class="ds-desc">Built on a warm, light surface; pastel purple is the single accent color, with a warm amber — distinct from purple — reserved for help/warning.</p>
+      <p class="ds-desc">Terracotta and clay tones drawn from istanbul's historic rooftops and stonework — terracotta is
+        the single primary accent; a warm clay tone carries freshness/highlight duty; help/alerts get their own red,
+        deliberately not a shade of the other two. Replaces the earlier pastel-purple pass per the 2026-07
+        product-owner review.</p>
       <div class="ds-group"><h3>Foundations</h3><div class="ds-row" id="colorFoundations"></div></div>
-      <div class="ds-group"><h3>Primary — pastel purple</h3><div class="ds-row" id="colorPrimary"></div></div>
-      <div class="ds-group"><h3>Accent — warm amber (help / warning)</h3><div class="ds-row" id="colorAccent"></div></div>
-      <div class="ds-group"><h3>Success</h3><div class="ds-row" id="colorSuccess"></div></div>
+      <div class="ds-group"><h3>Primary — terracotta</h3><div class="ds-row" id="colorPrimary"></div></div>
+      <div class="ds-group"><h3>Accent — warm clay (freshness / highlights, never help)</h3><div class="ds-row" id="colorAccent"></div></div>
+      <div class="ds-group"><h3>Help — needs-help / alerts / errors, its own hue on purpose</h3><div class="ds-row" id="colorHelp"></div></div>
       <div class="ds-group"><h3>Line</h3><div class="ds-row" id="colorLine"></div></div>
     </section>
 
@@ -197,11 +235,16 @@
     <!-- MARKERS -->
     <section class="ds-section" id="markers">
       <h2>Map markers</h2>
+      <p class="ds-desc">Freshness states are provisional pending product-owner sign-off on <b>issue #9</b> — shown here
+        for prototype validation, not as a locked spec. Each state pairs a color with a second, non-color cue
+        (ring weight, opacity) so it doesn't rely on hue perception alone.</p>
       <div class="demo-surface" style="position:relative;height:150px;">
         <div class="ds-row" style="align-items:center;height:100%;">
-          <div style="text-align:center;"><div class="marker" id="markerDefault"></div><div class="swatch-value mt-2">default</div></div>
-          <div style="text-align:center;"><div class="marker is-selected" id="markerSelected"></div><div class="swatch-value mt-2">selected</div></div>
-          <div style="text-align:center;"><div class="marker needs-help" id="markerHelp"></div><div class="swatch-value mt-2">needs-help</div></div>
+          <div style="text-align:center;"><div class="marker freshness-new" id="markerNew"></div><div class="swatch-value mt-2">new · &lt;24h</div></div>
+          <div style="text-align:center;"><div class="marker freshness-normal" id="markerNormal"></div><div class="swatch-value mt-2">normal · 1–7d</div></div>
+          <div style="text-align:center;"><div class="marker freshness-stale" id="markerStale"></div><div class="swatch-value mt-2">stale · &gt;7d</div></div>
+          <div style="text-align:center;"><div class="marker freshness-normal needs-help" id="markerHelp"></div><div class="swatch-value mt-2">needs-help</div></div>
+          <div style="text-align:center;"><div class="marker is-selected freshness-normal" id="markerSelected"></div><div class="swatch-value mt-2">selected</div></div>
           <div style="text-align:center;"><div class="marker-cluster" id="markerCluster"></div><div class="swatch-value mt-2">cluster</div></div>
         </div>
       </div>
@@ -282,12 +325,20 @@
   function el(id){ return document.getElementById(id); }
   function fill(el, html){ el.innerHTML = html; }
 
+  // logo wordmark proposal — dotless-ı stem so the font's own dot never renders underneath
+  // the custom paw glyph; real word exposed via aria-label since "ı" isn't actually an "i"
+  var LOGO_INNER = 'cats of <span class="logo-i"><span class="paw">'+icon('pawprint',{size:24})+'</span>ı</span>stanbul';
+  document.querySelectorAll('.logo-wordmark').forEach(function(node){
+    node.setAttribute('aria-label','cats of istanbul');
+    node.innerHTML = '<span aria-hidden="true">'+LOGO_INNER+'</span>';
+  });
+
   // color foundations
   var groups = {
     colorFoundations:[['--color-bg','bg'],['--color-surface','surface'],['--color-surface-alt','surface-alt'],['--color-ink','ink'],['--color-muted','muted'],['--color-faint','faint']],
     colorPrimary:[['--color-primary','primary'],['--color-primary-strong','primary-strong'],['--color-primary-soft','primary-soft']],
     colorAccent:[['--color-accent','accent'],['--color-accent-strong','accent-strong'],['--color-accent-soft','accent-soft']],
-    colorSuccess:[['--color-success','success'],['--color-success-soft','success-soft']],
+    colorHelp:[['--color-help','help'],['--color-help-strong','help-strong'],['--color-help-soft','help-soft']],
     colorLine:[['--color-line','line'],['--color-line-strong','line-strong']]
   };
   var cs = getComputedStyle(document.documentElement);
@@ -337,7 +388,9 @@
 
   // markers
   var CAT_PHOTO = 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/Cat_near_Kabata%C5%9F_in_Istanbul%2C_20260605_1734_1298.jpg/960px-Cat_near_Kabata%C5%9F_in_Istanbul%2C_20260605_1734_1298.jpg';
-  el('markerDefault').innerHTML = '<img src="'+CAT_PHOTO+'" alt="">';
+  el('markerNew').innerHTML = '<img src="'+CAT_PHOTO+'" alt="">';
+  el('markerNormal').innerHTML = '<img src="'+CAT_PHOTO+'" alt="">';
+  el('markerStale').innerHTML = '<img src="'+CAT_PHOTO+'" alt="">';
   el('markerSelected').innerHTML = '<img src="'+CAT_PHOTO+'" alt="">';
   el('markerHelp').innerHTML = '<img src="'+CAT_PHOTO+'" alt=""><span class="marker-badge">'+icon('alertTriangle',{size:9})+'</span>';
   el('markerCluster').innerHTML = icon('pin',{size:14}) + '<span>+4</span>';

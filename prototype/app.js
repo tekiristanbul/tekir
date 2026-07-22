@@ -173,6 +173,16 @@ var CATS = [
 ];
 var CLUSTER_LATLNG = { lat:40.9865, lng:29.0312 };
 var CLUSTER_ZOOM_THRESHOLD = 17;
+
+// calm, label-light basemap (carto positron) instead of the default osm-standard style, which
+// renders shop/transit icons and road-shield numbers that make the map read as a navigation
+// app rather than a map-first product. plain arrays (not L.latLngBounds/L.tileLayer) on
+// purpose — these are read before we know leaflet's cdn script actually loaded.
+var BASEMAP_TILE_URL = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+var BASEMAP_ATTRIBUTION = '&copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>, &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
+// keeps the zoomed-out view from leaving istanbul's context (product review, "map" section)
+var ISTANBUL_BOUNDS = [[40.80,28.45],[41.25,29.55]];
+var MAP_MIN_ZOOM = 11;
 var DUPLICATE_DEMO_CAT_ID = 'portakal'; // add-cat location picker starts near this cat, to demo the duplicate check
 
 function findCat(id){ for(var i=0;i<CATS.length;i++) if(CATS[i].id===id) return CATS[i]; return null; }
@@ -181,7 +191,7 @@ function statusVocabOf(id){ for(var i=0;i<STATUS_VOCAB.length;i++) if(STATUS_VOC
 
 /* ============================================================ app state */
 var state = {
-  session:{ loggedIn:false, phone:null },
+  session:{ loggedIn:false, phone:null, contributionCount:{ updates:0, catsAdded:0 } },
   screenStack:[],
   currentScreen:'map',
   selectedCatId:null,
@@ -305,9 +315,22 @@ function freshnessBadge(cat){
   var cls = cat.freshness==='fresh' ? 'badge-fresh' : (cat.freshness==='stale' ? 'badge-stale' : 'badge-neutral');
   return '<span class="badge '+cls+'"><span class="badge-dot"></span>'+esc(cat.lastSeenShort)+'</span>';
 }
-function markerHTML(cat, selected){
+var FRESHNESS_MARKER_CLASS = { fresh:'freshness-new', neutral:'freshness-normal', stale:'freshness-stale' };
+// bigger markers as the user zooms in — at the default city-block zoom a 40px photo is fine,
+// but left that size while zoomed in close it's too small to comfortably tap on a real phone.
+// thresholds are integers because leaflet's default zoomSnap:1 only ever settles on whole
+// zoom levels (17, 18, 19...) even though the initial view is set to a fractional 15.7
+function markerSizeForZoom(zoom){
+  if(zoom >= 18) return 56;
+  if(zoom >= 17) return 48;
+  return 40;
+}
+function markerHTML(cat, selected, size){
   var help = cat.needsHelp.active;
-  return '<div class="marker'+(selected?' is-selected':'')+(help?' needs-help':'')+'" data-action="select-marker" data-cat="'+cat.id+'" role="button" tabindex="0" aria-label="'+esc(catDisplayName(cat))+' konumu">'+
+  var freshCls = FRESHNESS_MARKER_CLASS[cat.freshness] || 'freshness-normal';
+  var effSize = size ? (selected ? size + 16 : size) : null;
+  var sizeStyle = effSize ? ' style="width:'+effSize+'px;height:'+effSize+'px;"' : '';
+  return '<div class="marker '+freshCls+(selected?' is-selected':'')+(help?' needs-help':'')+'"'+sizeStyle+' data-action="select-marker" data-cat="'+cat.id+'" role="button" tabindex="0" aria-label="'+esc(catDisplayName(cat))+' konumu">'+
     '<img src="'+cat.photo+'" alt="" onerror="onImgErr(this)">' +
     (help ? '<span class="marker-badge">'+icon('alertTriangle',{size:9})+'</span>' : '') +
   '</div>';
@@ -367,13 +390,13 @@ function initLeaflet(){
   if(typeof L === 'undefined'){ leafletFailed = true; activateMapFallback(); return; }
   try{
     // attributionControl stays off here — the map's own .map-attribution element (in renderMap's
-    // markup) carries the required OSM credit instead, at a z-index above the bottom sheet, so it's
+    // markup) carries the required credit instead, at a z-index above the bottom sheet, so it's
     // never fully hidden while leaflet's own bottomright control would be.
-    leafletMap = L.map('leafletMap', { zoomControl:false, attributionControl:false }).setView([40.9822,29.0288], 15.7);
-    var tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom:19,
-      attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
-    });
+    leafletMap = L.map('leafletMap', {
+      zoomControl:false, attributionControl:false,
+      minZoom:MAP_MIN_ZOOM, maxBounds:ISTANBUL_BOUNDS, maxBoundsViscosity:0.8
+    }).setView([40.9822,29.0288], 15.7);
+    var tiles = L.tileLayer(BASEMAP_TILE_URL, { maxZoom:19, attribution:BASEMAP_ATTRIBUTION });
     tiles.on('tileerror', function(){ if(!leafletFailed){ leafletFailed = true; activateMapFallback(); } });
     tiles.addTo(leafletMap);
     L.control.zoom({ position:'bottomright' }).addTo(leafletMap);
@@ -417,11 +440,14 @@ function updateMapMarkersDom(){
   renderFallbackMarkers();
 }
 function renderLeafletMarkers(){
-  var zoomedIntoCluster = leafletMap.getZoom() >= CLUSTER_ZOOM_THRESHOLD;
+  var zoom = leafletMap.getZoom();
+  var zoomedIntoCluster = zoom >= CLUSTER_ZOOM_THRESHOLD;
+  var baseSize = markerSizeForZoom(zoom);
   CATS.forEach(function(cat){
     var m = leafletMarkers[cat.id]; if(!m) return;
     var sel = cat.id === state.selectedCatId;
-    m.setIcon(L.divIcon({ className:'', html:markerHTML(cat, sel), iconSize: sel?[56,56]:[40,40], iconAnchor: sel?[28,28]:[20,20] }));
+    var effSize = sel ? baseSize + 16 : baseSize;
+    m.setIcon(L.divIcon({ className:'', html:markerHTML(cat, sel, baseSize), iconSize:[effSize,effSize], iconAnchor:[effSize/2,effSize/2] }));
     var passesHelpFilter = !state.mapHelpFilter || cat.needsHelp.active;
     var passesClusterGate = !cat.inCluster || zoomedIntoCluster;
     var visible = passesHelpFilter && passesClusterGate;
@@ -487,12 +513,22 @@ function closeSheet(){
 /* ============================================================ SCREEN: cat detail */
 function renderDetail(){
   var cat = findCat(state.selectedCatId) || CATS[0];
+  if(state._detailPhotoCat !== cat.id){ state._detailPhotoCat = cat.id; state.detailPhotoIndex = 0; }
+  var idx = Math.min(state.detailPhotoIndex || 0, cat.photos.length - 1);
+  // when an update hasn't brought in a genuinely different photo yet, the 2nd dot shows a
+  // closer crop of the same source photo instead of a fake "different" picture — still an
+  // honest photo, and it demonstrates the slide mechanic instead of a no-op swipe
+  var isRepeatCloseup = idx > 0 && cat.photos[idx] === cat.photos[0];
   var el = screenEl('detail');
   el.innerHTML =
     '<div class="screen-scroll-flat">' +
       '<div class="hero-photo">' +
-        '<img src="'+cat.photo+'" alt="'+esc(catDisplayName(cat))+'" onerror="onImgErr(this)">' +
+        '<img src="'+cat.photos[idx]+'" alt="'+esc(catDisplayName(cat))+'"'+(isRepeatCloseup?' class="is-closeup"':'')+' onerror="onImgErr(this)">' +
         '<div class="hero-photo__scrim"></div>' +
+        (cat.photos.length > 1 ? (
+          '<button class="hero-photo__tap hero-photo__tap--prev" data-action="hero-photo-prev" aria-label="önceki fotoğraf"'+(idx===0?' aria-disabled="true"':'')+'></button>' +
+          '<button class="hero-photo__tap hero-photo__tap--next" data-action="hero-photo-next" aria-label="sonraki fotoğraf"'+(idx===cat.photos.length-1?' aria-disabled="true"':'')+'></button>'
+        ) : '') +
         '<div class="hero-photo__topbar">' +
           '<button class="btn-icon on-glass" data-action="back" aria-label="geri">'+icon('chevronLeft',{size:19})+'</button>' +
           '<button class="btn-icon on-glass'+(cat.followed?' filled':'')+'" data-action="toggle-follow" data-cat="'+cat.id+'" aria-label="'+(cat.followed?'takibi bırak':'takip et')+'" aria-pressed="'+cat.followed+'">'+icon('heart',{size:18, filled:cat.followed})+'</button>' +
@@ -501,7 +537,7 @@ function renderDetail(){
           '<div class="hero-photo__name">'+esc(catDisplayName(cat))+'</div>' +
           '<div class="hero-photo__loc">'+icon('pin',{size:13})+esc(cat.areaLabel)+'</div>' +
         '</div>' +
-        '<div class="hero-dots">'+cat.photos.map(function(_,i){ return '<span class="'+(i===0?'is-on':'')+'"></span>'; }).join('')+'</div>' +
+        '<div class="hero-dots">'+cat.photos.map(function(_,i){ return '<span class="'+(i===idx?'is-on':'')+'"></span>'; }).join('')+'</div>' +
       '</div>' +
       '<div class="screen-body mt-4">' +
         '<div class="chip-row mb-4">'+cat.traits.map(function(t){ return '<span class="chip">'+esc(t)+'</span>'; }).join('')+'</div>' +
@@ -527,10 +563,12 @@ function renderDetail(){
 
         '<div class="stack-sm mt-6">' +
           '<button class="btn btn-primary btn-block" data-action="go-add-update" data-cat="'+cat.id+'" data-type="update">'+icon('edit',{size:17})+' Durum güncellemesi ekle</button>' +
-          '<div class="action-row">' +
-            '<button class="btn btn-secondary" data-action="toggle-follow" data-cat="'+cat.id+'">'+icon('heart',{size:16, filled:cat.followed})+' '+(cat.followed?'Takip ediliyor':'Takip et')+'</button>' +
-            '<button class="btn btn-warm" data-action="go-add-update" data-cat="'+cat.id+'" data-type="help">'+icon('alertTriangle',{size:16})+' Yardıma ihtiyacı var</button>' +
-          '</div>' +
+          '<button class="btn btn-secondary btn-block" data-action="toggle-follow" data-cat="'+cat.id+'">'+icon('heart',{size:16, filled:cat.followed})+' '+(cat.followed?'Takip ediliyor':'Takip et')+'</button>' +
+        '</div>' +
+        // kept visually apart from the routine actions above (own row, divider, bolder icon)
+        // so it doesn't blend in with everyday update actions — see the help-action review note
+        '<div class="help-callout mt-4">' +
+          '<button class="btn btn-warm btn-block" data-action="go-add-update" data-cat="'+cat.id+'" data-type="help">'+icon('alertTriangle',{size:19})+' Yardıma ihtiyacı var</button>' +
         '</div>' +
 
         '<h3 class="eyebrow mt-6 mb-2">Son güncellemeler</h3>' +
@@ -643,6 +681,7 @@ function submitUpdate(){
     else if(d.status==='hurt'){ cat.condition = entry.comment || 'Yaralı ya da hasta görünebilir.'; }
 
     state.draftUpdate = null;
+    state.session.contributionCount.updates++;
     toast('Güncelleme paylaşıldı', {icon:'check'});
     replaceScreen('detail');
   }, 700);
@@ -698,12 +737,15 @@ function initLocationMap(){
     locMap = L.map('locationMap', { zoomControl:false, attributionControl:false, dragging:true })
       .setView([state.draftCat.lat, state.draftCat.lng], 17);
     L.control.attribution({ prefix:false, position:'bottomright' }).addTo(locMap);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom:19,
-      attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
-    }).addTo(locMap);
+    L.tileLayer(BASEMAP_TILE_URL, { maxZoom:19, attribution:BASEMAP_ATTRIBUTION }).addTo(locMap);
     locMap.on('moveend', function(){ var c = locMap.getCenter(); state.draftCat.lat = c.lat; state.draftCat.lng = c.lng; });
   }catch(e){ locMapFailed = true; var fb2=$('#locFallback'); if(fb2) fb2.hidden=false; }
+}
+// stand-in for the user's device location — same point the map opens centered on
+var USER_APPROX_LOCATION = { lat:40.9822, lng:29.0288 };
+function formatDistance(meters){
+  if(meters < 1000) return Math.max(10, Math.round(meters/10)*10) + ' m';
+  return (meters/1000).toFixed(1).replace('.', ',') + ' km';
 }
 function distanceMeters(a,b){
   var R=6371000, dLat=(b.lat-a.lat)*Math.PI/180, dLng=(b.lng-a.lng)*Math.PI/180;
@@ -725,21 +767,39 @@ function useCurrentLocation(){
     renderAddLoc();
   }, { timeout:6000 });
 }
+var DUPLICATE_CHECK_RADIUS_M = 80;
 function confirmLocation(){
   var d = state.draftCat;
-  var near = locMapFailed || typeof L === 'undefined' ? findCat(DUPLICATE_DEMO_CAT_ID)
-    : CATS.filter(function(c){ return distanceMeters(c.mapPos, {lat:d.lat,lng:d.lng}) < 80; })[0];
-  if(near){ openDuplicateModal(near); return; }
+  var nearby = (locMapFailed || typeof L === 'undefined')
+    ? [findCat(DUPLICATE_DEMO_CAT_ID)]
+    : CATS.filter(function(c){ return distanceMeters(c.mapPos, {lat:d.lat,lng:d.lng}) < DUPLICATE_CHECK_RADIUS_M; });
+  if(nearby.length){ openDuplicateModal(nearby); return; }
   navigate('add-detail');
 }
-function openDuplicateModal(cat){
+// shows a photo for every cat already registered near the picked spot — not just a name —
+// so the user can visually recognize "is it this one?" instead of guessing from text alone.
+// when more than one cat is nearby, all of them are offered as candidates.
+function openDuplicateModal(cats){
+  var d = state.draftCat;
   var modal = $('#dupModal');
+  var title = cats.length === 1
+    ? 'Bu bölgede zaten kayıtlı bir kedi var. Gördüğün kedi bu mu?'
+    : 'Bu bölgede zaten kayıtlı '+cats.length+' kedi var. Gördüğün kedi bunlardan biri mi?';
   modal.innerHTML = '<div class="modal-card">' +
-    '<div class="modal-card__title">Bu bölgede zaten kayıtlı bir kedi var: '+esc(catDisplayName(cat))+'. Gördüğün kedi bu mu?</div>' +
-    '<div class="modal-card__actions">' +
-      '<button class="btn btn-secondary" data-action="dup-no">Hayır, farklı kedi</button>' +
-      '<button class="btn btn-primary" data-action="dup-yes" data-cat="'+cat.id+'">Evet, bu o</button>' +
-    '</div></div>';
+    '<div class="modal-card__title">'+title+'</div>' +
+    '<div class="dup-candidates">' +
+      cats.map(function(cat){
+        var dist = formatDistance(distanceMeters(cat.mapPos, {lat:d.lat,lng:d.lng}));
+        return '<button class="dup-candidate" data-action="dup-yes" data-cat="'+cat.id+'">' +
+          '<img class="dup-candidate__photo" src="'+cat.photo+'" alt="" onerror="onImgErr(this)">' +
+          '<div class="dup-candidate__body"><div class="dup-candidate__name">'+esc(catDisplayName(cat))+'</div>' +
+          '<div class="dup-candidate__meta">'+esc(cat.traits.join(', '))+' · '+dist+'</div></div>' +
+          icon('chevronRight',{size:16}) +
+        '</button>';
+      }).join('') +
+    '</div>' +
+    '<button class="btn btn-secondary btn-block" data-action="dup-no">Hayır, farklı bir kedi</button>' +
+  '</div>';
   modal.classList.add('is-open');
 }
 function closeDuplicateModal(){ var m=$('#dupModal'); if(m) m.classList.remove('is-open'); }
@@ -765,8 +825,8 @@ function renderAddDetail(){
         TRAIT_OPTIONS.map(function(t){ return '<button class="chip'+(d.traits.indexOf(t)>-1?' is-on':'')+'" data-action="toggle-trait" data-trait="'+t+'">'+esc(t)+'</button>'; }).join('') +
       '</div>' +
       '<div class="field mb-6">' +
-        '<span class="field-label">İsim (opsiyonel)</span>' +
-        '<input class="input" type="text" placeholder="Henüz adı yoksa boş bırakabilirsin" value="'+esc(d.name)+'" data-action="cat-name">' +
+        '<span class="field-label">İsim</span>' +
+        '<input class="input" type="text" placeholder="Örn. Boncuk, Minnoş…" value="'+esc(d.name)+'" data-action="cat-name">' +
       '</div>' +
       '<button class="btn btn-primary btn-block" data-action="save-cat"'+(d.saving?' aria-disabled="true"':'')+'>' +
         (d.saving ? '<span class="spinner"></span>' : 'Kaydet') +
@@ -776,6 +836,7 @@ function renderAddDetail(){
 function saveCat(){
   var d = state.draftCat; if(!d || d.saving) return;
   if(!d.photo){ toast('Kaydetmeden önce bir fotoğraf ekle', {icon:'alertTriangle'}); return; }
+  if(!d.name.trim()){ toast('Kaydetmeden önce bir isim yaz', {icon:'alertTriangle'}); return; }
   if(!state.session.loggedIn){
     requireLogin('Yeni kedi eklemek için giriş yap', { type:'save-cat' });
     return;
@@ -784,7 +845,7 @@ function saveCat(){
   setTimeout(function(){
     var id = 'yeni-kedi-'+(state.newCatSeq++);
     var newCat = {
-      id:id, name: d.name.trim() || null, traits: d.traits.length ? d.traits : ['sokak kedisi'],
+      id:id, name: d.name.trim(), traits: d.traits.length ? d.traits : ['sokak kedisi'],
       photo:d.photo, photos:[d.photo],
       mapPos:{lat:d.lat, lng:d.lng}, fallbackPos:{top:'50%',left:'50%'},
       areaLabel:'Kadıköy çevresi',
@@ -796,6 +857,7 @@ function saveCat(){
     CATS.push(newCat);
     state.draftCat = null;
     state.selectedCatId = newCat.id;
+    state.session.contributionCount.catsAdded++;
     toast('Kedi eklendi', {icon:'check'});
     // forces renderMap() to tear down and reinitialize leaflet on a fresh dom node,
     // which re-adds every cat in CATS (including newCat) via initLeaflet()
@@ -808,9 +870,12 @@ function saveCat(){
 /* ============================================================ SCREEN: discover */
 function renderDiscover(){
   var el = screenEl('discover');
-  var list = CATS.slice();
-  if(state.discoverTab === 'favorites') list = list.filter(function(c){ return c.followed; });
-  if(state.discoverHelpFilter) list = list.filter(function(c){ return c.needsHelp.active; });
+  var list = CATS.map(function(c){
+    return { cat:c, distance: distanceMeters(USER_APPROX_LOCATION, c.mapPos) };
+  });
+  if(state.discoverTab === 'favorites') list = list.filter(function(r){ return r.cat.followed; });
+  if(state.discoverHelpFilter) list = list.filter(function(r){ return r.cat.needsHelp.active; });
+  if(state.discoverTab === 'nearby') list.sort(function(a,b){ return a.distance - b.distance; });
 
   el.innerHTML =
     topbar('Keşfet', {}) +
@@ -823,12 +888,13 @@ function renderDiscover(){
         '<button class="chip is-warm'+(state.discoverHelpFilter?' is-on':'')+'" data-action="toggle-discover-help-filter">'+icon('alertTriangle',{size:14})+' yardım gerekiyor</button>' +
       '</div>' +
       (list.length ?
-        '<div>' + list.map(function(c,i){
+        '<div>' + list.map(function(r,i){
+          var c = r.cat;
           return (i>0?'<div class="list-divider"></div>':'') +
           '<div class="cat-card" data-action="open-detail" data-cat="'+c.id+'">' +
             '<img class="cat-card__photo" src="'+c.photo+'" alt="" onerror="onImgErr(this)">' +
             '<div class="cat-card__body"><div class="cat-card__name">'+esc(catDisplayName(c))+'</div><div class="cat-card__meta">'+esc(c.traits.join(', '))+'</div></div>' +
-            '<div class="cat-card__aside">' + freshnessBadge(c) + '</div>' +
+            '<div class="cat-card__aside">' + freshnessBadge(c) + '<span class="cat-card__distance">'+formatDistance(r.distance)+'</span></div>' +
           '</div>';
         }).join('') + '</div>'
         : emptyState(
@@ -877,30 +943,63 @@ function renderNotif(){
 /* ============================================================ SCREEN: account */
 function renderAccount(){
   var el = screenEl('account');
-  var followed = CATS.filter(function(c){ return c.followed; });
   el.innerHTML =
     topbar('Hesap', {}) +
     '<div class="screen-body">' +
-      (state.session.loggedIn ?
-        '<div class="stack-sm mb-4">' +
-          '<div class="eyebrow">Giriş yapıldı</div>' +
-          '<div class="text-muted" style="font-size:var(--text-sm);">'+esc(state.session.phone||'')+'</div>' +
-        '</div>' +
-        '<div class="eyebrow mb-2">Takip ettiklerin</div>' +
-        (followed.length ?
-          followed.map(function(c){ return '<div class="followed-row" data-action="open-detail" data-cat="'+c.id+'"><img src="'+c.photo+'" alt="" onerror="onImgErr(this)"><span style="font-weight:600;">'+esc(catDisplayName(c))+'</span></div>'; }).join('')
-          : '<p class="text-muted" style="font-size:var(--text-sm);">Henüz kimseyi takip etmiyorsun.</p>') +
-        '<button class="btn btn-secondary btn-block mt-6" data-action="logout">'+icon('logout',{size:16})+' Çıkış yap</button>'
-        :
-        '<div class="state-block" style="padding:var(--space-8) 0;">' +
-          '<div class="state-block__icon">'+icon('user',{size:22})+'</div>' +
-          '<div class="state-block__title">Giriş yapmadın</div>' +
-          '<div class="state-block__body">Fotoğraf eklemek, yeni kedi eklemek ve yardım bildirimi oluşturmak için giriş yapman gerekir. Haritayı ve kedi detaylarını girişsiz gezebilirsin.</div>' +
-          '<button class="btn btn-primary mt-2" data-action="go-login-generic">Giriş yap</button>' +
-        '</div>'
-      ) +
+      (state.session.loggedIn ? accountLoggedInBody() : accountGuestBody()) +
     '</div>' +
     bottomNav('account');
+}
+// followed-cats list intentionally isn't here anymore — it belongs to a discovery/library
+// screen that's out of scope for this pass (see the review notes shared with the product owner)
+function accountLoggedInBody(){
+  var cc = state.session.contributionCount;
+  return (
+    '<div class="row-gap mb-6" style="align-items:flex-start;">' +
+      '<div class="login-hero__icon" style="width:48px;height:48px;flex:none;">'+icon('user',{size:22})+'</div>' +
+      '<div class="stack-sm" style="gap:6px;padding-top:3px;">' +
+        '<div style="font-weight:700;font-size:var(--text-md);line-height:1.2;">'+esc(state.session.phone||'')+'</div>' +
+        '<div class="row-gap" style="gap:4px;color:var(--color-primary-strong);font-size:var(--text-xs);font-weight:700;line-height:1;">'+icon('check',{size:13})+'<span>Telefon doğrulandı</span></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<h3 class="eyebrow mb-2">Katkı özeti · bu oturumda</h3>' +
+    '<div class="info-row">' +
+      '<div class="info-row__icon">'+icon('edit',{size:18})+'</div>' +
+      '<div><div class="info-row__label">Güncelleme</div><div class="info-row__value">'+
+        (cc.updates ? cc.updates+' güncelleme paylaştın' : 'Henüz güncelleme paylaşmadın') +
+      '</div></div>' +
+    '</div>' +
+    '<div class="info-row">' +
+      '<div class="info-row__icon">'+icon('pin',{size:18})+'</div>' +
+      '<div><div class="info-row__label">Yeni kedi</div><div class="info-row__value">'+
+        (cc.catsAdded ? cc.catsAdded+' kedi eklendin' : 'Henüz kedi eklemedin') +
+      '</div></div>' +
+    '</div>' +
+
+    '<h3 class="eyebrow mt-6 mb-2">Ayarlar</h3>' +
+    '<div class="info-row"><div class="info-row__icon">'+icon('bell',{size:18})+'</div><div><div class="info-row__label">Bildirimler</div><div class="info-row__value">Takip ettiğin kediler için açık</div></div></div>' +
+    '<div class="info-row"><div class="info-row__icon">'+icon('compass',{size:18})+'</div><div><div class="info-row__label">Dil</div><div class="info-row__value">Türkçe</div></div></div>' +
+
+    '<h3 class="eyebrow mt-6 mb-2">Güven ve hesap</h3>' +
+    '<div class="info-row"><div class="info-row__icon">'+icon('phone',{size:18})+'</div><div><div class="info-row__label">Doğrulanmış numara</div><div class="info-row__value">'+esc(state.session.phone||'')+'</div></div></div>' +
+
+    '<div class="future-note mt-6">'+icon('compass',{size:15})+
+      '<span><b>Rozet sistemi</b> henüz ürün kararı aşamasında (issue #10) — kötüye kullanım riski netleşmeden eklenmeyecek.</span>' +
+    '</div>' +
+
+    '<button class="btn btn-secondary btn-block mt-6" data-action="logout">'+icon('logout',{size:16})+' Çıkış yap</button>'
+  );
+}
+function accountGuestBody(){
+  return (
+    '<div class="state-block" style="padding:var(--space-8) 0;">' +
+      '<div class="state-block__icon">'+icon('user',{size:22})+'</div>' +
+      '<div class="state-block__title">Giriş yapmadın</div>' +
+      '<div class="state-block__body">Fotoğraf eklemek, yeni kedi eklemek ve yardım bildirimi oluşturmak için giriş yapman gerekir. Haritayı ve kedi detaylarını girişsiz gezebilirsin.</div>' +
+      '<button class="btn btn-primary mt-2" data-action="go-login-generic">Giriş yap</button>' +
+    '</div>'
+  );
 }
 
 /* ============================================================ SCREEN: login */
@@ -911,6 +1010,10 @@ function renderLogin(){
   el.innerHTML =
     topbar('Giriş yap', { close:true, closeAction:'cancel-login' }) +
     '<div class="screen-body">' +
+      '<div class="login-hero">' +
+        '<div class="login-hero__icon">'+icon('phone',{size:24})+'</div>' +
+        '<h2>Telefon ile giriş yap</h2>' +
+      '</div>' +
       (state.loginContext ? '<div class="login-context mb-4">'+icon('phone',{size:16})+'<span>'+esc(state.loginContext)+'</span></div>' : '') +
       '<div class="field mb-4">' +
         '<span class="field-label">Telefon numarası</span>' +
@@ -968,7 +1071,17 @@ document.addEventListener('click', function(e){
     case 'select-marker': selectCat(t.getAttribute('data-cat')); break;
     case 'close-sheet': closeSheet(); break;
     case 'open-detail':
-      state.selectedCatId = t.getAttribute('data-cat'); closeSheet(); navigate('detail'); break;
+      // order matters: closeSheet() itself sets selectedCatId back to null (it's also used to
+      // un-highlight the map marker when the sheet closes), so it has to run before this
+      // assigns the cat we're actually navigating to, not after
+      closeSheet(); state.selectedCatId = t.getAttribute('data-cat'); navigate('detail'); break;
+    case 'hero-photo-prev':
+      state.detailPhotoIndex = Math.max(0, (state.detailPhotoIndex||0) - 1); renderDetail(); break;
+    case 'hero-photo-next': {
+      var dcat = findCat(state.selectedCatId);
+      state.detailPhotoIndex = Math.min(dcat.photos.length - 1, (state.detailPhotoIndex||0) + 1);
+      renderDetail(); break;
+    }
     case 'toggle-follow': {
       var cat = findCat(t.getAttribute('data-cat'));
       cat.followed = !cat.followed;
@@ -1034,6 +1147,19 @@ document.addEventListener('change', function(e){
       else { state.draftCat.photo = ev.target.result; renderAddDetail(); }
     };
     reader.readAsDataURL(t.files[0]);
+  }
+});
+
+// simulated mobile-keyboard-open state for the login screen (see .login-hero in styles.css) —
+// focusin/focusout bubble (unlike focus/blur) so a single delegated listener works here
+document.addEventListener('focusin', function(e){
+  if(e.target.matches && e.target.matches('[data-action=login-phone], [data-action=login-code]')){
+    screenEl('login').classList.add('is-keyboard-open');
+  }
+});
+document.addEventListener('focusout', function(e){
+  if(e.target.matches && e.target.matches('[data-action=login-phone], [data-action=login-code]')){
+    screenEl('login').classList.remove('is-keyboard-open');
   }
 });
 

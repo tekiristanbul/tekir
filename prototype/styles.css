@@ -5,34 +5,41 @@
    ============================================================ */
 
 :root{
-  /* --- color: foundations --- */
-  --color-bg:            #FAF6EF;   /* warm, light background */
+  /* --- color: foundations ---
+     terracotta / kiremit palette — istanbul's historic rooftops and stone, not a generic
+     "app" brand color. see docs/design/visual-direction.md for the direction this replaces
+     (2026-07 product-owner review moved off the pastel-purple pass toward this). */
+  --color-bg:            #F7F1E8;   /* warm parchment background */
   --color-bg-elevated:   #FFFFFF;   /* sheets, modals over bg */
   --color-surface:       #FFFFFF;   /* cards / panels */
-  --color-surface-alt:   #F1EBE0;   /* subtle warm secondary surface, chip bg */
-  --color-surface-sunken:#EFE8DC;   /* input fields, wells */
+  --color-surface-alt:   #EEE6DA;   /* subtle warm secondary surface — same tone as the map's "land" */
+  --color-surface-sunken:#E7DBC8;   /* input fields, wells */
 
-  --color-ink:           #211C29;  /* primary text — dark, warm-tinted, high readability */
-  --color-muted:         #6B6572;  /* secondary text — calm gray */
-  --color-faint:         #A29CAA;  /* tertiary / placeholder text */
+  --color-ink:           #2A1F1B;  /* warm near-black — primary text */
+  --color-muted:         #6E5A4C;  /* secondary text — warm stone gray */
+  --color-faint:         #A5927E;  /* tertiary / placeholder text */
 
-  --color-primary:       #8C7AD1;  /* pastel purple — primary brand */
-  --color-primary-strong:#6650B0;  /* deeper purple — text/icons on light bg needing AA contrast */
-  --color-primary-soft:  #EEEAFA;  /* pale purple tint — selected bg, chip-on bg */
+  --color-primary:       #A44732;  /* terracotta — primary brand / actions */
+  --color-primary-strong:#773225;  /* deep maroon — pressed states, text/icons needing AA contrast */
+  --color-primary-soft:  #F1DCD2;  /* pale terracotta tint — selected bg, chip-on bg */
   --color-primary-ink:   #FFFFFF;  /* text on primary-filled surfaces */
 
-  --color-accent:        #D9862A;  /* warm streetlamp amber — help / attention, never for chrome */
-  --color-accent-strong: #A9631A;
-  --color-accent-soft:   #FBEAD1;  /* pale amber tint — badge bg */
-  --color-accent-ink:    #4A2E0A;
+  --color-accent:        #D88A63;  /* warm clay — freshness / highlights only, never help or errors */
+  --color-accent-strong: #96502F;
+  --color-accent-soft:   #F7E4D7;
+  --color-accent-ink:    #5C2E15;
 
-  --color-success:       #4C8A5E;
-  --color-success-soft:  #E4F1E6;
+  /* needs-help / alert / error — deliberately its own hue, not a shade of accent, so a cat in
+     trouble never reads as just another "highlight". see docs/product/alerts.md. */
+  --color-help:          #C7352B;
+  --color-help-strong:   #97231B;
+  --color-help-soft:     #F7DAD6;
+  --color-help-ink:      #FFFFFF;
 
-  --color-line:          #E6DECD;  /* soft borders */
-  --color-line-strong:   #D4C9AF;
+  --color-line:          #E4D8C4;  /* soft borders */
+  --color-line-strong:   #D2C1A6;
 
-  --color-overlay: rgba(33, 28, 41, .48);
+  --color-overlay: rgba(42, 31, 27, .5);
 
   /* --- typography --- */
   --font-display: 'Fraunces', ui-serif, Georgia, serif;
@@ -66,10 +73,10 @@
   --radius-full: 999px;
 
   /* --- elevation --- */
-  --shadow-sm: 0 1px 2px rgba(33,28,41,.07), 0 1px 1px rgba(33,28,41,.05);
-  --shadow-md: 0 6px 16px -4px rgba(33,28,41,.16), 0 2px 6px -2px rgba(33,28,41,.08);
-  --shadow-lg: 0 18px 38px -12px rgba(33,28,41,.30), 0 6px 16px -6px rgba(33,28,41,.14);
-  --shadow-marker: 0 2px 6px rgba(33,28,41,.28);
+  --shadow-sm: 0 1px 2px rgba(42,31,27,.07), 0 1px 1px rgba(42,31,27,.05);
+  --shadow-md: 0 6px 16px -4px rgba(42,31,27,.16), 0 2px 6px -2px rgba(42,31,27,.08);
+  --shadow-lg: 0 18px 38px -12px rgba(42,31,27,.30), 0 6px 16px -6px rgba(42,31,27,.14);
+  --shadow-marker: 0 2px 6px rgba(42,31,27,.28);
 
   /* --- misc --- */
   --tap-min: 44px;
@@ -80,7 +87,7 @@
 *, *::before, *::after{ box-sizing:border-box; }
 html, body{ margin:0; padding:0; }
 body{
-  background:#E9E2D3;
+  background:#EAD9C2;
   color:var(--color-ink);
   font-family:var(--font-body);
   -webkit-font-smoothing:antialiased;
@@ -125,8 +132,11 @@ button, input, textarea{ color:inherit; }
 .btn-ghost{ background:transparent; border-color:transparent; color:var(--color-primary-strong); }
 .btn-ghost:hover{ background:var(--color-primary-soft); }
 
-.btn-warm{ background:var(--color-accent-soft); border-color:var(--color-accent-soft); color:var(--color-accent-ink); }
-.btn-warm:hover{ background:#F6DBAF; }
+/* help action: its own visual family (not a shade of the primary or freshness accent) so it
+   reads as categorically different from routine update actions — but soft-filled, not a solid
+   alarm block, so it doesn't invite an accidental tap the way a filled danger button would */
+.btn-warm{ background:var(--color-help-soft); border-color:var(--color-help-soft); color:var(--color-help-strong); }
+.btn-warm:hover{ background:#F2C6BF; }
 
 .btn-block{ width:100%; }
 .btn-sm{ min-height:36px; padding:0 var(--space-4); font-size:var(--text-sm); border-radius:var(--radius-sm); }
@@ -156,8 +166,8 @@ button, input, textarea{ color:inherit; }
 .input:focus, .textarea:focus{ border-color:var(--color-primary); }
 .textarea{ padding:var(--space-3) var(--space-4); min-height:88px; resize:none; line-height:1.5; }
 
-.input-error{ border-color:var(--color-accent); }
-.field-error{ font-size:var(--text-xs); color:var(--color-accent-strong); display:flex; align-items:center; gap:var(--space-1); }
+.input-error{ border-color:var(--color-help); }
+.field-error{ font-size:var(--text-xs); color:var(--color-help-strong); display:flex; align-items:center; gap:var(--space-1); }
 
 .search-field{
   display:flex; align-items:center; gap:var(--space-2);
@@ -186,7 +196,10 @@ button, input, textarea{ color:inherit; }
 }
 .chip:hover{ border-color:var(--color-line-strong); background:var(--color-surface-alt); }
 .chip.is-on{ background:var(--color-primary-soft); border-color:var(--color-primary); color:var(--color-primary-strong); }
-.chip.is-warm.is-on{ background:var(--color-accent-soft); border-color:var(--color-accent); color:var(--color-accent-ink); }
+/* help filter: bolder than a regular chip even before it's switched on, so it reads as "the
+   alert filter" at a glance instead of blending into the other chrome on the map */
+.chip.is-warm{ border-color:var(--color-help); color:var(--color-help-strong); font-weight:700; }
+.chip.is-warm.is-on{ background:var(--color-help); border-color:var(--color-help); color:var(--color-help-ink); box-shadow:var(--shadow-sm); }
 .chip:disabled{ opacity:.45; cursor:not-allowed; }
 /* gap matches the chip's 44px hit-area expansion (6px top/bottom) so wrapped rows never overlap */
 .chip-row{ display:flex; flex-wrap:wrap; gap:var(--space-3); }
@@ -194,9 +207,9 @@ button, input, textarea{ color:inherit; }
 /* ============================================================ badges */
 .badge{ display:inline-flex; align-items:center; gap:5px; height:24px; padding:0 var(--space-2); border-radius:var(--radius-full); font-size:var(--text-2xs); font-weight:700; letter-spacing:.01em; }
 .badge svg{ width:13px; height:13px; }
-.badge-help{ background:var(--color-accent); color:#fff; }
-.badge-help.is-soft{ background:var(--color-accent-soft); color:var(--color-accent-ink); }
-.badge-fresh{ background:var(--color-success-soft); color:var(--color-success); }
+.badge-help{ background:var(--color-help); color:var(--color-help-ink); }
+.badge-help.is-soft{ background:var(--color-help-soft); color:var(--color-help-strong); }
+.badge-fresh{ background:var(--color-accent-soft); color:var(--color-accent-strong); font-weight:800; }
 .badge-neutral{ background:var(--color-surface-alt); color:var(--color-muted); }
 .badge-stale{ background:var(--color-surface-alt); color:var(--color-faint); }
 .badge-dot{ width:7px; height:7px; border-radius:50%; background:currentColor; flex:none; }
@@ -214,7 +227,7 @@ button, input, textarea{ color:inherit; }
    and lets the photo size itself from its own intrinsic aspect ratio instead of filling the
    circle — that's what was making cat photos render squashed/oval on the map. */
 .marker img{ width:100% !important; height:100% !important; object-fit:cover; border-radius:50%; }
-.marker::after{ content:''; position:absolute; inset:0; border-radius:50%; box-shadow:inset 0 0 0 1px rgba(33,28,41,.06); }
+.marker::after{ content:''; position:absolute; inset:0; border-radius:50%; box-shadow:inset 0 0 0 1px rgba(42,31,27,.06); }
 /* invisible hit-area expansion to the 44px touch-target minimum; follows the larger
    selected-marker size automatically via max() instead of shrinking it */
 .marker::before{
@@ -222,13 +235,25 @@ button, input, textarea{ color:inherit; }
   width:max(var(--tap-min), 100%); height:max(var(--tap-min), 100%);
   transform:translate(-50%,-50%);
 }
+/* freshness — provisional per issue #9 (thresholds await product-owner validation, not a
+   locked decision). each state is carried by more than hue alone: ring weight and opacity
+   move together with color, so the three stay distinguishable without relying on color
+   perception. mixed freshness within the "+4" cluster is intentionally left unstyled — also
+   an open question in #9. */
+.marker.freshness-new{ border-width:4px; border-color:var(--color-accent-strong); }
+.marker.freshness-normal{ border-color:#fff; }
+.marker.freshness-stale{ opacity:.6; border-color:#fff; }
+
 .marker.is-selected{
   width:56px; height:56px; border-color:var(--color-primary); box-shadow:0 0 0 4px var(--color-primary-soft), var(--shadow-md);
+  opacity:1;
 }
-.marker.needs-help{ border-color:var(--color-accent); }
+/* needs-help is the highest-priority state and always wins over freshness or selection styling */
+.marker.needs-help{ border-color:var(--color-help); border-width:4px; box-shadow:0 0 0 3px var(--color-help-soft), var(--shadow-marker); opacity:1; }
+.marker.is-selected.needs-help{ box-shadow:0 0 0 4px var(--color-help-soft), var(--shadow-md); }
 .marker-badge{
   position:absolute; top:-3px; right:-3px; width:17px; height:17px; border-radius:50%;
-  background:var(--color-accent); border:2px solid #fff; display:flex; align-items:center; justify-content:center;
+  background:var(--color-help); border:2px solid #fff; display:flex; align-items:center; justify-content:center;
 }
 .marker-badge svg{ width:9px; height:9px; color:#fff; }
 .marker-cluster{
@@ -287,13 +312,14 @@ button, input, textarea{ color:inherit; }
 .info-row:last-child{ border-bottom:none; }
 .info-row__icon{ width:36px; height:36px; border-radius:var(--radius-md); background:var(--color-primary-soft); color:var(--color-primary-strong); display:flex; align-items:center; justify-content:center; flex:none; }
 .info-row__icon svg{ width:18px; height:18px; }
-.info-row.is-warm .info-row__icon{ background:var(--color-accent-soft); color:var(--color-accent-strong); }
+.info-row.is-warm .info-row__icon{ background:var(--color-help-soft); color:var(--color-help-strong); }
 .info-row__label{ font-size:var(--text-2xs); font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--color-faint); }
 .info-row__value{ font-size:var(--text-base); color:var(--color-ink); margin-top:2px; line-height:1.4; }
 
 /* ============================================================ action row */
-.action-row{ display:flex; gap:var(--space-2); }
-.action-row .btn{ flex:1; padding:0 var(--space-3); font-size:var(--text-sm); }
+/* help action: its own section (divider + top padding) so it never reads as just another
+   item in the routine follow/update button group above it */
+.help-callout{ border-top:1px solid var(--color-line); padding-top:var(--space-4); }
 
 /* ============================================================ update timeline */
 .timeline{ display:flex; flex-direction:column; }
@@ -301,7 +327,7 @@ button, input, textarea{ color:inherit; }
 .timeline-item:last-child{ border-bottom:none; }
 .timeline-item__rail{ display:flex; flex-direction:column; align-items:center; flex:none; }
 .timeline-item__dot{ width:9px; height:9px; border-radius:50%; background:var(--color-primary); margin-top:6px; }
-.timeline-item.is-help .timeline-item__dot{ background:var(--color-accent); }
+.timeline-item.is-help .timeline-item__dot{ background:var(--color-help); }
 .timeline-item__line{ flex:1; width:1.5px; background:var(--color-line); margin-top:4px; }
 .timeline-item__body{ flex:1; padding-bottom:2px; }
 .timeline-item__head{ display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-2); }
@@ -321,8 +347,8 @@ button, input, textarea{ color:inherit; }
 .type-card__label{ font-size:var(--text-sm); font-weight:700; color:var(--color-ink); }
 .type-card.is-on{ border-color:var(--color-primary); background:var(--color-primary-soft); }
 .type-card.is-on svg{ color:var(--color-primary-strong); }
-.type-card.is-warm.is-on{ border-color:var(--color-accent); background:var(--color-accent-soft); }
-.type-card.is-warm.is-on svg{ color:var(--color-accent-strong); }
+.type-card.is-warm.is-on{ border-color:var(--color-help); background:var(--color-help-soft); }
+.type-card.is-warm.is-on svg{ color:var(--color-help-strong); }
 
 /* status vocabulary picker */
 .status-grid{ display:flex; flex-direction:column; gap:var(--space-2); }
@@ -361,11 +387,11 @@ button, input, textarea{ color:inherit; }
   display:flex; align-items:center; justify-content:center; flex:none;
 }
 .state-block__icon svg{ width:26px; height:26px; }
-.state-block.is-error .state-block__icon{ background:var(--color-accent-soft); color:var(--color-accent-strong); }
+.state-block.is-error .state-block__icon{ background:var(--color-help-soft); color:var(--color-help-strong); }
 .state-block__title{ font-family:var(--font-display); font-weight:600; font-size:var(--text-md); color:var(--color-ink); }
 .state-block__body{ font-size:var(--text-sm); color:var(--color-muted); line-height:1.5; max-width:26em; }
 
-.skeleton{ background:linear-gradient(100deg, var(--color-surface-alt) 30%, #E4DCCB 50%, var(--color-surface-alt) 70%); background-size:200% 100%; animation:shimmer 1.3s ease-in-out infinite; border-radius:var(--radius-md); }
+.skeleton{ background:linear-gradient(100deg, var(--color-surface-alt) 30%, var(--color-line-strong) 50%, var(--color-surface-alt) 70%); background-size:200% 100%; animation:shimmer 1.3s ease-in-out infinite; border-radius:var(--radius-md); }
 @keyframes shimmer{ 0%{ background-position:150% 0; } 100%{ background-position:-50% 0; } }
 .spinner{ width:16px; height:16px; border-radius:50%; border:2px solid rgba(255,255,255,.5); border-top-color:#fff; animation:spin .7s linear infinite; }
 .spinner.is-dark{ border-color:var(--color-line-strong); border-top-color:var(--color-primary-strong); }
@@ -383,6 +409,22 @@ button, input, textarea{ color:inherit; }
 .modal-card__title{ font-family:var(--font-display); font-weight:600; font-size:var(--text-md); line-height:1.4; }
 .modal-card__actions{ display:flex; gap:var(--space-2); }
 .modal-card__actions .btn{ flex:1; }
+
+/* duplicate-cat check: photo candidates, not just a name, so the user can recognize the
+   cat on sight instead of guessing from text */
+.dup-candidates{ display:flex; flex-direction:column; gap:var(--space-2); max-height:260px; overflow-y:auto; }
+.dup-candidate{
+  display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) var(--space-3);
+  border:1.5px solid var(--color-line-strong); border-radius:var(--radius-md); background:var(--color-surface);
+  cursor:pointer; text-align:left; color:var(--color-ink); font-family:var(--font-body);
+  -webkit-tap-highlight-color:transparent; min-height:var(--tap-min);
+}
+.dup-candidate:active{ background:var(--color-surface-alt); }
+.dup-candidate__photo{ width:44px; height:44px; border-radius:50%; object-fit:cover; flex:none; background:var(--color-surface-alt); }
+.dup-candidate__body{ flex:1; min-width:0; }
+.dup-candidate__name{ font-weight:700; font-size:var(--text-sm); }
+.dup-candidate__meta{ font-size:var(--text-xs); color:var(--color-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dup-candidate svg{ flex:none; color:var(--color-faint); }
 
 /* ============================================================ toast */
 .toast{
@@ -424,12 +466,18 @@ button, input, textarea{ color:inherit; }
 /* map screen */
 .map-screen{ position:relative; flex:1; background:var(--color-surface-alt); }
 #leafletMap{ position:absolute; inset:0; z-index:1; }
+/* nudges the carto positron basemap's neutral grays toward the warm palette instead of
+   sitting as a cool gray rectangle next to terracotta chrome. a fully custom-colored vector
+   basemap (matching the map-land/map-roads hexes exactly) is follow-up work, not this pass */
+#leafletMap .leaflet-tile-pane, #locationMap .leaflet-tile-pane{ filter:sepia(.2) saturate(1.15) brightness(1.01); }
+/* "map land" / "map roads" tones per the palette brief — grid lines stand in for streets
+   when there's no real tile data to show */
 .map-fallback{
   position:absolute; inset:0;
   background-image:
-    linear-gradient(var(--color-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
-  background-size:36px 36px; background-color:#EFE8D8;
+    linear-gradient(#fff 1.5px, transparent 1.5px),
+    linear-gradient(90deg, #fff 1.5px, transparent 1.5px);
+  background-size:36px 36px; background-color:var(--color-surface-alt);
 }
 .map-fallback .marker, .map-fallback .marker-cluster{ position:absolute; transform:translate(-50%,-100%); }
 .map-topbar{ position:absolute; top:var(--space-4); left:var(--space-4); right:var(--space-4); z-index:10; display:flex; flex-direction:column; gap:var(--space-2); }
@@ -492,13 +540,27 @@ button, input, textarea{ color:inherit; }
 .notif-item.is-unread .notif-item__title::before{ content:''; display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--color-primary); margin-right:6px; vertical-align:middle; }
 
 /* account */
-.followed-row{ display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) 0; }
-.followed-row img{ width:32px; height:32px; border-radius:50%; object-fit:cover; }
+.future-note{
+  border:1.5px dashed var(--color-line-strong); border-radius:var(--radius-md);
+  padding:var(--space-3) var(--space-4); font-size:var(--text-xs); color:var(--color-muted);
+  display:flex; gap:var(--space-2); align-items:flex-start; line-height:1.5;
+}
+.future-note svg{ flex:none; margin-top:1px; color:var(--color-faint); }
+.future-note b{ color:var(--color-ink); }
 
 /* photo hero (cat detail) */
-.hero-photo{ position:relative; height:280px; flex:none; background:var(--color-surface-alt); }
-.hero-photo img{ width:100%; height:100%; object-fit:cover; }
-.hero-photo__scrim{ position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,.35) 0%, transparent 26%, transparent 74%, rgba(0,0,0,.28) 100%); }
+.hero-photo{ position:relative; height:280px; flex:none; background:var(--color-surface-alt); overflow:hidden; }
+.hero-photo img{ width:100%; height:100%; object-fit:cover; transition:transform .2s var(--ease); }
+/* 2nd+ photo slide, when it's the same source image as the 1st: presented as a closer crop
+   rather than a fake "different" picture — still demonstrates the slide changing something */
+.hero-photo img.is-closeup{ object-position:center 15%; transform:scale(1.45); transform-origin:center 15%; }
+.hero-photo__scrim{ position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,.35) 0%, transparent 26%, transparent 74%, rgba(0,0,0,.28) 100%); pointer-events:none; }
+/* left/right tap zones to move through hero-dots; kept clear of the topbar buttons above and
+   the caption/dots below so neither interaction zone steals the other's taps */
+.hero-photo__tap{ position:absolute; top:56px; bottom:34px; width:50%; background:none; border:none; padding:0; margin:0; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+.hero-photo__tap--prev{ left:0; }
+.hero-photo__tap--next{ right:0; }
+.hero-photo__tap[aria-disabled="true"]{ cursor:default; }
 .hero-photo__topbar{ position:absolute; top:0; left:0; right:0; display:flex; justify-content:space-between; padding:var(--space-3) var(--space-4); }
 .hero-photo__caption{ position:absolute; left:var(--space-5); right:var(--space-5); bottom:var(--space-4); color:#fff; }
 .hero-photo__name{ font-family:var(--font-display); font-weight:600; font-size:var(--text-xl); text-shadow:0 1px 6px rgba(0,0,0,.35); }
@@ -512,9 +574,27 @@ button, input, textarea{ color:inherit; }
 .location-picker{ position:relative; height:260px; margin:0 var(--space-5); border-radius:var(--radius-lg); overflow:hidden; box-shadow:var(--shadow-sm); }
 .location-picker .map-fallback, .location-picker #locationMap{ position:absolute; inset:0; z-index:1; }
 .location-picker__center{ position:absolute; top:50%; left:50%; transform:translate(-50%,-100%); z-index:5; display:flex; flex-direction:column; align-items:center; pointer-events:none; }
-.location-picker__radius{ position:absolute; top:50%; left:50%; width:96px; height:96px; transform:translate(-50%,-50%); border-radius:50%; border:1.5px dashed var(--color-primary); background:rgba(140,122,209,.1); z-index:4; }
+.location-picker__radius{ position:absolute; top:50%; left:50%; width:96px; height:96px; transform:translate(-50%,-50%); border-radius:50%; border:1.5px dashed var(--color-primary); background:rgba(164,71,50,.1); z-index:4; }
 
-/* login */
+/* login: centers the short form vertically instead of leaving a dead gap below it,
+   and re-centers smoothly as .login-hero collapses in the simulated keyboard-open state */
+#screen-login .screen-body{ display:flex; flex-direction:column; justify-content:center; }
+.login-hero{
+  display:flex; flex-direction:column; align-items:center; text-align:center; gap:var(--space-3);
+  padding:var(--space-6) 0 var(--space-8); overflow:hidden;
+  max-height:220px; opacity:1;
+  transition:max-height .18s var(--ease), opacity .18s var(--ease), padding .18s var(--ease);
+}
+.login-hero__icon{
+  width:56px; height:56px; border-radius:50%; background:var(--color-primary-soft); color:var(--color-primary-strong);
+  display:flex; align-items:center; justify-content:center; flex:none;
+}
+.login-hero h2{ font-family:var(--font-display); font-weight:600; font-size:var(--text-lg); }
+/* simulated mobile-keyboard-open state: the hero collapses so the field, error message, and
+   primary action all stay reachable above an on-screen keyboard. toggled by focusin/focusout
+   on the phone/code inputs — see the event listeners near the bottom of app.js. */
+#screen-login.is-keyboard-open .login-hero{ max-height:0; opacity:0; padding-top:0; padding-bottom:0; }
+
 .login-context{ background:var(--color-primary-soft); color:var(--color-primary-strong); border-radius:var(--radius-md); padding:var(--space-3) var(--space-4); font-size:var(--text-sm); font-weight:600; display:flex; gap:var(--space-2); align-items:flex-start; }
 .login-context svg{ flex:none; margin-top:1px; }
 .code-boxes{ display:flex; gap:var(--space-2); }
