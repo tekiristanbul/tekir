@@ -8,20 +8,32 @@ define the mvp schema backing [[api]], on postgres + postgis.
 
 ```sql
 create extension if not exists postgis;
-
-create table devices (
-  id               uuid primary key,
-  push_token       text,
-  platform         text check (platform in ('ios','android')),
-  user_id          uuid references users(id),
-  created_at       timestamptz not null default now()
-);
+create extension if not exists pgcrypto; -- gen_random_uuid()
 
 create table users (
   id                 uuid primary key default gen_random_uuid(),
   phone              text unique not null,
   phone_verified_at  timestamptz not null,
   created_at         timestamptz not null default now()
+);
+
+create table devices (
+  id               uuid primary key default gen_random_uuid(),
+  token_hash       text unique not null,  -- sha-256 of the device_token; the raw token is never stored
+  push_token       text,
+  platform         text check (platform in ('ios','android')),
+  user_id          uuid references users(id),
+  revoked_at       timestamptz,
+  created_at       timestamptz not null default now()
+);
+
+create table refresh_tokens (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references users(id),
+  token_hash   text unique not null,
+  expires_at   timestamptz not null,
+  revoked_at   timestamptz,
+  created_at   timestamptz not null default now()
 );
 
 create table media (
@@ -62,6 +74,30 @@ create table updates (
 );
 create index updates_cat_created_idx on updates (cat_id, created_at desc);
 
+-- outbox: the worker (see [[backend]]) polls unprocessed rows, fans each
+-- one out to the cat's followers (one `notifications` row + one push per
+-- follower), then sets processed_at. decoupled from `notifications` itself
+-- because one update can produce many notification rows.
+create table notification_outbox (
+  id           uuid primary key default gen_random_uuid(),
+  update_id    uuid not null references updates(id),
+  cat_id       uuid not null references cats(id),
+  processed_at timestamptz,
+  created_at   timestamptz not null default now()
+);
+create index outbox_unprocessed_idx on notification_outbox (created_at) where processed_at is null;
+
+create function enqueue_notification_outbox() returns trigger as $$
+begin
+  insert into notification_outbox (update_id, cat_id) values (new.id, new.cat_id);
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger updates_enqueue_outbox
+  after insert on updates
+  for each row execute function enqueue_notification_outbox();
+
 create table follows (
   device_id  uuid not null references devices(id),
   cat_id     uuid not null references cats(id),
@@ -83,6 +119,10 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 
 ### design notes
 
+- `devices.token_hash`: the client never sends a self-chosen identifier. `POST /v1/devices` (see [[api]]) generates the token server-side and returns it once; only its hash is stored, the same way a password would be. `devices.revoked_at` lets a moderator kill an abusive anonymous device without the client being able to mint a replacement identity.
+- `refresh_tokens`: backs the `access_token`/`refresh_token` pair in [[api]] — short-lived jwts plus a revocable, hashed refresh token, so login doesn't require a fresh otp on every app open.
+- `notification_outbox` + the `updates_enqueue_outbox` trigger: this is what the notification worker in [[backend]] actually polls. it exists separately from `notifications` because one update fans out to N follower rows, and the trigger guarantees every update gets enqueued exactly once, at the database level, regardless of which code path inserted it.
+- ⚠ `updates.type`/`updates.comment` are a **provisional contract** — see the callout in [[api]]. no minimum status vocabulary is decided, so `comment` is free text and nothing should be built that depends on parsing it.
 - `cats.area` is a point; the ~50m "area" concept from [[cats]] is expressed at query time via `st_dwithin(area, point, 50)` rather than a separate area table — that table would add complexity with no behavior it doesn't already give.
 - `cats.needs_help_until`: set to `now() + <duration>` whenever a new `help_request` update lands. the duration is a config value — [[alerts]] never settled on one.
 - `cats.last_update_at`: refreshed on every new update, so the map's "recently updated" highlight ([[map]]) needs no join.
