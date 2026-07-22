@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # enforces commit message conventions documented in CONTRIBUTING.md:
 #   - english only (no turkish-specific characters)
+#   - no ai tool authorship trailers
 #   - subject: "<type>: description", <= 50 chars
 #   - blank line between subject and body
 #   - body lines <= 72 chars (trailers like "Co-Authored-By:" are exempt)
@@ -9,6 +10,7 @@ set -euo pipefail
 msg_file="$1"
 allowed_types="feat|fix|docs|chore|refactor|test|style|perf|build|ci|revert"
 turkish_chars='[çÇğĞıİöÖşŞüÜ]'
+ai_authors='(claude|anthropic|copilot|chatgpt|openai|gpt-[0-9])'
 
 # strip comment lines git may add (interactive commits)
 mapfile -t lines < <(grep -v '^#' "$msg_file")
@@ -23,6 +25,12 @@ fi
 if grep -qE "$turkish_chars" "$msg_file"; then
   echo "commit-msg: write commit messages in english" >&2
   echo "  found a turkish-specific character (ç ğ ı ö ş ü)" >&2
+  exit 1
+fi
+
+if grep -qiE "^(co-authored-by|author):.*${ai_authors}" "$msg_file"; then
+  echo "commit-msg: ai tools must not appear as a commit author or co-author" >&2
+  echo "  the human contributor is solely responsible for this commit" >&2
   exit 1
 fi
 

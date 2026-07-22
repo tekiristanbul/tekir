@@ -9,6 +9,10 @@
 - if a body is needed, leave a blank line after the subject, then wrap body lines at 72 characters.
 - trailers (`Co-Authored-By:`, `Signed-off-by:`) are exempt from the wrap limit.
 
+## authorship
+
+- ai tools (including claude code, used to draft parts of this project) must never appear as a commit author, committer, or `Co-Authored-By:` trailer. the human contributor who made the commit is solely responsible for its content, regardless of what tooling helped produce it.
+
 these are enforced by a `commit-msg` hook in `.githooks/`. enable it once per clone:
 
 ```sh
