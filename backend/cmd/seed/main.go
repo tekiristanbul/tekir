@@ -55,6 +55,53 @@ var seedCats = []struct {
 	{"00000000-0000-4000-8000-000000000019", "kadıköy kedisi", 40.99110, 29.02690, true},
 }
 
+// seedTraitVocabulary is the initial proposed vocabulary from the issue #21
+// product clarification — the product owner still needs to review the
+// labels and grouping before merge, but the model (controlled, extensible,
+// keyed) is what's implemented here. sort_order preserves proposal order.
+var seedTraitVocabulary = []struct {
+	key         string
+	displayName string
+}{
+	{"friendly", "Friendly"},
+	{"shy", "Shy"},
+	{"cautious", "Cautious"},
+	{"playful", "Playful"},
+	{"calm", "Calm"},
+	{"curious", "Curious"},
+	{"affectionate", "Affectionate"},
+	{"independent", "Independent"},
+	{"vocal", "Vocal"},
+	{"energetic", "Energetic"},
+	{"territorial", "Territorial"},
+	{"does_not_like_touch", "Does Not Like Touch"},
+}
+
+// seedCatTraits assigns a couple of vocabulary keys to a couple of cats —
+// just enough for the cat-detail demo to show traits are present, absent,
+// and (via pamuk) more than one at once.
+var seedCatTraits = map[string][]string{
+	"00000000-0000-4000-8000-000000000010": {"friendly"},
+	"00000000-0000-4000-8000-000000000013": {"friendly", "playful"},
+}
+
+// tekir gets a multi-update timeline for the map-to-detail demo: newest
+// first, a mix of single/multiple structured statuses, and both a commented
+// and a comment-less update. boncuk gets a single update. sarman is left
+// with no updates at all, so it demonstrates the empty-history state.
+var seedUpdates = []struct {
+	id, catID string
+	hoursAgo  int
+	statuses  []string
+	comment   string
+}{
+	{"00000000-0000-4000-8000-000000000020", "00000000-0000-4000-8000-000000000010", 4, []string{"seen"}, ""},
+	{"00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000010", 3, []string{"fed"}, "left some food by the wall"},
+	{"00000000-0000-4000-8000-000000000022", "00000000-0000-4000-8000-000000000010", 2, []string{"seen", "water_provided"}, ""},
+	{"00000000-0000-4000-8000-000000000023", "00000000-0000-4000-8000-000000000010", 1, []string{"seen"}, "still hanging around the tower"},
+	{"00000000-0000-4000-8000-000000000024", "00000000-0000-4000-8000-000000000011", 1, []string{"seen"}, "spotted near the cluster"},
+}
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -109,6 +156,55 @@ func run() error {
 			return err
 		}
 		log.Printf("seeded cat %s: %q", cat, c.name)
+	}
+
+	for i, t := range seedTraitVocabulary {
+		if _, err := store.UpsertTrait(ctx, repository.UpsertTraitParams{
+			Key:         t.key,
+			DisplayName: t.displayName,
+			Active:      true,
+			SortOrder:   int32(i),
+		}); err != nil {
+			return err
+		}
+	}
+	log.Printf("seeded %d trait vocabulary entries", len(seedTraitVocabulary))
+
+	for catID, traits := range seedCatTraits {
+		for _, traitKey := range traits {
+			if err := store.CreateCatTrait(ctx, repository.CreateCatTraitParams{
+				CatID:    pgtype.UUID{Bytes: uuid.MustParse(catID), Valid: true},
+				TraitKey: traitKey,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, u := range seedUpdates {
+		var comment pgtype.Text
+		if u.comment != "" {
+			comment = pgtype.Text{String: u.comment, Valid: true}
+		}
+
+		update, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+			ID:        pgtype.UUID{Bytes: uuid.MustParse(u.id), Valid: true},
+			CatID:     pgtype.UUID{Bytes: uuid.MustParse(u.catID), Valid: true},
+			Comment:   comment,
+			CreatedAt: pgtype.Timestamptz{Time: now.Add(-time.Duration(u.hoursAgo) * time.Hour), Valid: true},
+		})
+		if err != nil {
+			return err
+		}
+		for _, status := range u.statuses {
+			if err := store.CreateUpdateStatus(ctx, repository.CreateUpdateStatusParams{
+				UpdateID: update.ID,
+				Status:   status,
+			}); err != nil {
+				return err
+			}
+		}
+		log.Printf("seeded update %s for cat %s: %v", update.ID, u.catID, u.statuses)
 	}
 
 	return nil
