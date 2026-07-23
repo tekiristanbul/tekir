@@ -11,7 +11,7 @@ define the mobile app architecture consuming [[api]], scoped to mvp — no more 
 - **state/di**: `flutter_riverpod`, plain `Notifier`/`AsyncNotifier` (no codegen). there's one data source (the backend), so a separate domain/repository-interface layer isn't earning its keep yet.
 - **routing**: `go_router` — tabs (map / discover / notifications / account) plus modal routes (add update, add cat, login).
 - **network**: `dio` behind a single `ApiClient`; an interceptor attaches `X-Device-Token: <device_token>` (and `Authorization: Bearer <access_token>` when logged in) to every request, matching [[api]]'s auth model — two separate headers, since `Authorization` can't unambiguously carry both schemes at once.
-- **map**: `google_maps_flutter` + `google_maps_cluster_manager` for pin clustering.
+- **map**: `flutter_map` + `flutter_map_marker_cluster` for pin clustering, on OpenStreetMap tiles (revised from the original `google_maps_flutter` pick during issue #7: fully open-source, no api key or billing account needed. the public OSM tile server used for local dev/demo isn't meant for production traffic — see the OSM tile usage policy — so production needs a paid or self-hosted tile provider before real users show up).
 - **push**: `firebase_messaging`; token refreshes call `PUT /v1/devices/me`.
 - **secure storage**: `flutter_secure_storage` for `device_token`, `access_token`, and `refresh_token`.
 - **media**: `image_picker` for capture/selection, `cached_network_image` for display.
