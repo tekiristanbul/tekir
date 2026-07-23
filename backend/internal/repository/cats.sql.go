@@ -11,12 +11,71 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const catExists = `-- name: CatExists :one
+select exists(select 1 from cats where id = $1) as exists
+`
+
+// lets the updates-history endpoint 404 on an unknown cat instead of
+// silently returning an empty page indistinguishable from "no history yet".
+func (q *Queries) CatExists(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, catExists, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const getCatByID = `-- name: GetCatByID :one
+select
+  c.id,
+  c.name,
+  st_x(c.area::geometry)::float8 as lng,
+  st_y(c.area::geometry)::float8 as lat,
+  c.area_label,
+  c.photo_url,
+  c.created_at,
+  c.last_update_at
+from cats c
+where c.id = $1
+`
+
+type GetCatByIDRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	Name         pgtype.Text        `json:"name"`
+	Lng          float64            `json:"lng"`
+	Lat          float64            `json:"lat"`
+	AreaLabel    pgtype.Text        `json:"area_label"`
+	PhotoUrl     pgtype.Text        `json:"photo_url"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	LastUpdateAt pgtype.Timestamptz `json:"last_update_at"`
+}
+
+// traits are fetched separately via ListCatTraits (join against the traits
+// vocabulary) rather than aggregated in here, so each trait can carry its
+// display_name without hand-rolling composite-type aggregation in sql.
+func (q *Queries) GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error) {
+	row := q.db.QueryRow(ctx, getCatByID, id)
+	var i GetCatByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Lng,
+		&i.Lat,
+		&i.AreaLabel,
+		&i.PhotoUrl,
+		&i.CreatedAt,
+		&i.LastUpdateAt,
+	)
+	return i, err
+}
+
 const listCatsInBounds = `-- name: ListCatsInBounds :many
 select
   id,
+  name,
   photo_url,
   st_x(area::geometry)::float8 as lng,
   st_y(area::geometry)::float8 as lat,
+  area_label,
   (needs_help_until is not null and needs_help_until > now()) as needs_help,
   last_update_at
 from cats
@@ -37,15 +96,20 @@ type ListCatsInBoundsParams struct {
 
 type ListCatsInBoundsRow struct {
 	ID           pgtype.UUID        `json:"id"`
+	Name         pgtype.Text        `json:"name"`
 	PhotoUrl     pgtype.Text        `json:"photo_url"`
 	Lng          float64            `json:"lng"`
 	Lat          float64            `json:"lat"`
+	AreaLabel    pgtype.Text        `json:"area_label"`
 	NeedsHelp    pgtype.Bool        `json:"needs_help"`
 	LastUpdateAt pgtype.Timestamptz `json:"last_update_at"`
 }
 
 // area && envelope::geography uses cats_area_gix (gist on geography supports
 // the && bounding-box operator); st_makeenvelope builds the requested viewport.
+// name/area_label are the minimum extra fields the map-marker preview sheet
+// needs (issue #21 prototype-parity correction) — no second full-detail
+// fetch on marker tap.
 func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error) {
 	rows, err := q.db.Query(ctx, listCatsInBounds,
 		arg.MinLng,
@@ -62,9 +126,11 @@ func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsPara
 		var i ListCatsInBoundsRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Name,
 			&i.PhotoUrl,
 			&i.Lng,
 			&i.Lat,
+			&i.AreaLabel,
 			&i.NeedsHelp,
 			&i.LastUpdateAt,
 		); err != nil {
@@ -79,7 +145,7 @@ func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsPara
 }
 
 const upsertCat = `-- name: UpsertCat :one
-insert into cats (id, name, area, photo_url, status, last_update_at, needs_help_until)
+insert into cats (id, name, area, area_label, photo_url, status, last_update_at, needs_help_until)
 values (
   $1,
   $2,
@@ -87,11 +153,13 @@ values (
   $5,
   $6,
   $7,
-  $8
+  $8,
+  $9
 )
 on conflict (id) do update set
   name = excluded.name,
   area = excluded.area,
+  area_label = excluded.area_label,
   photo_url = excluded.photo_url,
   status = excluded.status,
   last_update_at = excluded.last_update_at,
@@ -104,6 +172,7 @@ type UpsertCatParams struct {
 	Name           pgtype.Text        `json:"name"`
 	Lng            float64            `json:"lng"`
 	Lat            float64            `json:"lat"`
+	AreaLabel      pgtype.Text        `json:"area_label"`
 	PhotoUrl       pgtype.Text        `json:"photo_url"`
 	Status         string             `json:"status"`
 	LastUpdateAt   pgtype.Timestamptz `json:"last_update_at"`
@@ -116,6 +185,7 @@ func (q *Queries) UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UU
 		arg.Name,
 		arg.Lng,
 		arg.Lat,
+		arg.AreaLabel,
 		arg.PhotoUrl,
 		arg.Status,
 		arg.LastUpdateAt,

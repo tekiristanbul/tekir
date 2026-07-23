@@ -50,7 +50,9 @@ func run() error {
 	healthHandler := handler.NewHealthHandler(healthSvc)
 	catsSvc := service.NewCatsService(store)
 	catsHandler := handler.NewCatsHandler(catsSvc)
-	router := server.NewRouter(logger, healthHandler, catsHandler, cfg.CORSOrigins)
+	traitsSvc := service.NewTraitsService(store)
+	traitsHandler := handler.NewTraitsHandler(traitsSvc)
+	router := server.NewRouter(logger, healthHandler, catsHandler, traitsHandler, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

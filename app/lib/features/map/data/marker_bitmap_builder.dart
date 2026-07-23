@@ -18,31 +18,45 @@ class MarkerBitmapBuilder {
   MarkerBitmapBuilder({Dio? photoClient}) : _photoClient = photoClient ?? Dio();
 
   static const _displaySize = 44.0;
+  // matches prototype/styles.css .marker.is-selected (56px vs 40px base) —
+  // proportionally, a selected pin renders about a third larger.
+  static const _selectedDisplaySize = 58.0;
   static const _renderScale = 3.0; // crisp on high-dpi screens
 
   final Dio _photoClient;
   final _pinCache = <String, Future<BitmapDescriptor>>{};
+  // decoded photo bytes are cached independently of the rendered pin, so
+  // selecting/deselecting a marker (which re-renders the pin at a different
+  // size/ring) never re-fetches the same photo over the network.
+  final _photoCache = <String, Future<ui.Image?>>{};
 
   Future<BitmapDescriptor> pin({
     required String cacheKey,
     required String photoUrl,
     required bool needsHelp,
+    bool selected = false,
   }) {
     return _pinCache.putIfAbsent(
-      '$cacheKey:$needsHelp',
-      () => _renderPin(photoUrl: photoUrl, needsHelp: needsHelp),
+      '$cacheKey:$needsHelp:$selected',
+      () => _renderPin(
+        photoUrl: photoUrl,
+        needsHelp: needsHelp,
+        selected: selected,
+      ),
     );
   }
 
   Future<BitmapDescriptor> _renderPin({
     required String photoUrl,
     required bool needsHelp,
+    required bool selected,
   }) async {
-    final px = (_displaySize * _renderScale).round();
+    final displaySize = selected ? _selectedDisplaySize : _displaySize;
+    final px = (displaySize * _renderScale).round();
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     final center = Offset(px / 2, px / 2);
-    final ringWidth = (needsHelp ? 3.0 : 2.0) * _renderScale;
+    final ringWidth = (needsHelp ? 4.0 : (selected ? 3.0 : 2.0)) * _renderScale;
     final radius = px / 2 - ringWidth;
 
     final image = await _decodePhoto(photoUrl);
@@ -58,7 +72,7 @@ class MarkerBitmapBuilder {
         fit: BoxFit.cover,
       );
     } else {
-      canvas.drawCircle(center, radius, Paint()..color = AppColors.panel);
+      canvas.drawCircle(center, radius, Paint()..color = AppColors.surface);
       _drawGlyph(canvas, center, Icons.pets, radius);
     }
     canvas.restore();
@@ -69,10 +83,12 @@ class MarkerBitmapBuilder {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = ringWidth
-        ..color = needsHelp ? Colors.red : AppColors.accent,
+        ..color = needsHelp
+            ? AppColors.help
+            : (selected ? AppColors.primaryStrong : AppColors.primary),
     );
 
-    return _finish(recorder, px);
+    return _finish(recorder, px, displaySize);
   }
 
   void _drawGlyph(Canvas canvas, Offset center, IconData icon, double radius) {
@@ -93,8 +109,12 @@ class MarkerBitmapBuilder {
     );
   }
 
-  Future<ui.Image?> _decodePhoto(String url) async {
-    if (url.isEmpty) return null;
+  Future<ui.Image?> _decodePhoto(String url) {
+    if (url.isEmpty) return Future.value(null);
+    return _photoCache.putIfAbsent(url, () => _fetchAndDecode(url));
+  }
+
+  Future<ui.Image?> _fetchAndDecode(String url) async {
     try {
       final response = await _photoClient.get<List<int>>(
         url,
@@ -109,13 +129,17 @@ class MarkerBitmapBuilder {
     }
   }
 
-  Future<BitmapDescriptor> _finish(ui.PictureRecorder recorder, int px) async {
+  Future<BitmapDescriptor> _finish(
+    ui.PictureRecorder recorder,
+    int px,
+    double displaySize,
+  ) async {
     final image = await recorder.endRecording().toImage(px, px);
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
     return BitmapDescriptor.bytes(
       bytes!.buffer.asUint8List(),
-      width: _displaySize,
-      height: _displaySize,
+      width: displaySize,
+      height: displaySize,
     );
   }
 }

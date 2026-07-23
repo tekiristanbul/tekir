@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
@@ -11,6 +12,7 @@ import '../data/cat_marker.dart';
 import '../data/location_service.dart';
 import '../data/map_style.dart';
 import '../data/marker_bitmap_builder.dart';
+import 'cat_preview_sheet.dart';
 import 'cats_map_notifier.dart';
 
 /// istanbul street-level: about 2-3 streets, per docs/product/map.md.
@@ -62,10 +64,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   // rebuilds the marker set (fetching/decoding each cat's photo into a
-  // BitmapDescriptor) whenever the fetched cat list changes. guarded by a
-  // generation counter so a slow rebuild from an older cat list can't
-  // clobber a newer one that finished first.
-  Future<void> _rebuildMarkers(List<CatMarker> cats) async {
+  // BitmapDescriptor) whenever the fetched cat list or the selected marker
+  // changes — selection re-renders that one pin larger/ringed (prototype's
+  // .marker.is-selected). guarded by a generation counter so a slow rebuild
+  // from stale inputs can't clobber a newer one that finished first.
+  Future<void> _rebuildMarkers(List<CatMarker> cats, String? selectedId) async {
     final generation = ++_markerBuildGeneration;
     final bitmaps = ref.read(markerBitmapBuilderProvider);
 
@@ -75,6 +78,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           cacheKey: cat.id,
           photoUrl: cat.primaryPhoto,
           needsHelp: cat.needsHelp,
+          selected: cat.id == selectedId,
         );
         return Marker(
           markerId: MarkerId(cat.id),
@@ -100,12 +104,33 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
+  // Selecting a marker highlights it and opens the preview sheet — it never
+  // navigates directly (prototype/app.js's selectCat -> openSheet). Only
+  // the sheet's "Detaya git" action opens the cat-detail route.
   void _onCatSelected(CatMarker cat) {
-    // cat-detail is a separate slice (issue #7 scope); surface the id so
-    // that flow has something to receive.
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('selected cat: ${cat.id}')));
+    ref.read(catsMapProvider.notifier).selectCat(cat);
+  }
+
+  Future<void> _openPreviewSheet(CatMarker cat) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => PointerInterceptor(
+        child: CatPreviewSheet(
+          cat: cat,
+          onOpenDetail: () {
+            Navigator.of(sheetContext).pop();
+            context.push('/cats/${cat.id}');
+          },
+        ),
+      ),
+    );
+    // reached on every dismissal path — swipe-down, scrim tap, or the
+    // explicit pop() above — so the selection (and marker highlight)
+    // always clears and the user is left on the map, per issue #21.
+    if (!mounted) return;
+    ref.read(catsMapProvider.notifier).clearSelection();
   }
 
   void _onMapCreated(GoogleMapController controller) {
@@ -132,8 +157,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final initialLocation = ref.watch(initialLocationProvider);
 
     ref.listen(catsMapProvider, (previous, next) {
-      if (previous?.markers != next.markers) {
-        _rebuildMarkers(next.markers);
+      final selectionChanged =
+          previous?.selectedMarker?.id != next.selectedMarker?.id;
+      if (previous?.markers != next.markers || selectionChanged) {
+        _rebuildMarkers(next.markers, next.selectedMarker?.id);
+      }
+      if (selectionChanged && next.selectedMarker != null) {
+        _openPreviewSheet(next.selectedMarker!);
       }
     });
 
@@ -230,7 +260,7 @@ class _ErrorBanner extends StatelessWidget {
       // underneath instead of registering on the widget itself.
       child: PointerInterceptor(
         child: Material(
-          color: AppColors.panel,
+          color: AppColors.surface,
           elevation: 2,
           borderRadius: BorderRadius.circular(8),
           child: Padding(
@@ -277,7 +307,7 @@ class _TopBanner extends StatelessWidget {
       left: 12,
       right: 12,
       child: Material(
-        color: AppColors.panel,
+        color: AppColors.surface,
         elevation: 2,
         borderRadius: BorderRadius.circular(8),
         child: Padding(

@@ -7,14 +7,14 @@ define the product's lasting priorities and boundaries.
 ## decisions
 
 - the product will not build a rescue/help team and is not a charity. this is explicitly ruled out.
-- the most important features for the first year: photos, the map, updates, and cats that need help. "needs help" may end up being a special type of update, not a fully separate thing.
+- the most important features for the first year: photos, the map, updates, and cats that need help. "needs help" is a special type of update, not a fully separate thing — confirmed by the issue #4 product-owner decision (see [[alerts]]).
 - there is no direct competitor. no similar product exists today.
 - if the team could build only one feature, it would be updates.
 - if the team started over today, they would build the same product again.
 
 ## open questions
 
-- should "needs help" stay a separate alert, or become a special type of update? this is not settled, and it conflicts a bit with the decision in [[alerts]].
+- none currently open — the "needs help" alert-vs-update question was resolved by the issue #4 product-owner decision (see [[alerts]]).
 
 ## out of scope
 

@@ -17,6 +17,33 @@ type Cat struct {
 	LastUpdateAt   pgtype.Timestamptz `json:"last_update_at"`
 	NeedsHelpUntil pgtype.Timestamptz `json:"needs_help_until"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	AreaLabel      pgtype.Text        `json:"area_label"`
+}
+
+type CatTrait struct {
+	CatID    pgtype.UUID `json:"cat_id"`
+	TraitKey string      `json:"trait_key"`
+}
+
+type Trait struct {
+	Key         string             `json:"key"`
+	DisplayName string             `json:"display_name"`
+	Active      bool               `json:"active"`
+	SortOrder   int32              `json:"sort_order"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type Update struct {
+	ID        pgtype.UUID        `json:"id"`
+	CatID     pgtype.UUID        `json:"cat_id"`
+	Comment   pgtype.Text        `json:"comment"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Seq       pgtype.Int8        `json:"seq"`
+}
+
+type UpdateStatus struct {
+	UpdateID pgtype.UUID `json:"update_id"`
+	Status   string      `json:"status"`
 }
 
 type WorkspacePing struct {
