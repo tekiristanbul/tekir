@@ -78,7 +78,7 @@ func run() error {
 
 	row, err := store.UpsertWorkspacePing(ctx, repository.UpsertWorkspacePingParams{
 		ID:      seedPingID,
-		Message: "cats of istanbul workspace seeded",
+		Message: "tekir workspace seeded",
 		Lng:     28.9784, // istanbul
 		Lat:     41.0082,
 	})

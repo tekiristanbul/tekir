@@ -1,11 +1,11 @@
 {
-    "name": "app",
-    "short_name": "app",
+    "name": "tekir",
+    "short_name": "tekir",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "cats of istanbul mobile app",
+    "description": "tekir mobile app — cats of istanbul",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

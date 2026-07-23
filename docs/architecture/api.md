@@ -2,7 +2,7 @@
 
 ## goal
 
-define the http api surface for the cats istanbul mvp backend, matching the product decisions in `docs/product/*.md` and the schema in [[db]].
+define the http api surface for the tekir mvp backend, matching the product decisions in `docs/product/*.md` and the schema in [[db]].
 
 ## decisions
 

@@ -1,4 +1,4 @@
-# cats istanbul — hi-fi prototype
+# tekir — hi-fi prototype
 
 Built for issue #5: a locally browsable, visually complete pass over the screens and flows in
 `docs/design/wireframes.html`. Not Figma — no build step or framework, opens directly as `index.html`

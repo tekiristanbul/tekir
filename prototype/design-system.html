@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>cats istanbul — design system</title>
+<title>tekir — design system</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -42,22 +42,20 @@
   .icon-tile span{ font-size:9px; color:var(--color-muted); text-align:center; }
   .phone-mock{ width:390px; max-width:100%; border-radius:32px; border:6px solid var(--color-ink); overflow:hidden; box-shadow:var(--shadow-lg); background:var(--color-bg); }
 
-  /* logo proposal — scoped to this documentation page; not part of the shared component
-     system until/unless the product owner approves the direction */
+  /* logo proposal — retired: predates the tekir rename, wordmark text ("cats of
+     istanbul") conflicts with the canonical naming in docs/brand.md. kept as a
+     historical record only, not part of the shared component system, and not
+     linked from active navigation. a tekir-aligned wordmark is a separate,
+     future product-owner decision. */
   .proposal-tag{ display:inline-block; font-family:var(--font-body); font-size:var(--text-xs); font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--color-help-strong); background:var(--color-help-soft); padding:2px 8px; border-radius:var(--radius-full); vertical-align:middle; margin-left:8px; }
-  .logo-wordmark{ font-family:var(--font-display); font-weight:600; color:var(--color-ink); display:inline-flex; align-items:baseline; white-space:nowrap; letter-spacing:-.01em; }
-  .logo-i{ position:relative; display:inline-block; }
-  .logo-i .paw{ position:absolute; left:50%; top:-.48em; width:.44em; height:.44em; transform:translateX(-50%); color:var(--color-primary); }
-  .logo-i .paw svg{ width:100%; height:100%; display:block; }
 </style>
 </head>
 <body>
 
 <div class="ds-app">
   <nav class="ds-rail" aria-label="sections">
-    <div class="ds-rail__title">cats istanbul</div>
+    <div class="ds-rail__title">tekir</div>
     <div class="ds-rail__sub">design system</div>
-    <a href="#logo">Logo <span style="opacity:.55;font-weight:600;">(proposal)</span></a>
     <a href="#colors">Colors</a>
     <a href="#type">Typography</a>
     <a href="#spacing">Spacing</a>
@@ -82,30 +80,13 @@
     <p class="eyebrow">component &amp; token catalog</p>
     <h1 class="h-display" style="font-size:var(--text-2xl);margin-bottom:var(--space-8);">Design system</h1>
 
-    <!-- LOGO (proposal, not a locked brand decision) -->
+    <!-- LOGO (retired: pre-rename proposal, kept for historical record only — see docs/brand.md) -->
     <section class="ds-section" id="logo">
-      <h2>Logo <span class="proposal-tag">proposal</span></h2>
-      <p class="ds-desc">A wordmark idea for product-owner review — not a finalized brand decision. The dot on the "i" in
-        "istanbul" is a small paw print (four round toe pads — a <b>paw</b>, deliberately not a chess <b>pawn</b>).
-        The stem below it is a dotless ı so the font's own dot never doubles up underneath.</p>
-      <div class="ds-group">
-        <h3>Default — single color</h3>
-        <div class="demo-surface" style="display:flex;align-items:center;justify-content:center;padding:var(--space-10) var(--space-6);">
-          <span class="logo-wordmark" style="font-size:2.6rem;"></span>
-        </div>
-      </div>
-      <div class="ds-group">
-        <h3>Small scale — legibility check</h3>
-        <div class="demo-surface" style="display:flex;align-items:center;gap:var(--space-8);flex-wrap:wrap;padding:var(--space-6);">
-          <span class="logo-wordmark" style="font-size:1.1rem;"></span>
-          <span class="logo-wordmark" style="font-size:.85rem;"></span>
-          <span class="logo-wordmark" style="font-size:.65rem;"></span>
-        </div>
-      </div>
-      <div class="future-note">
-        <span>If this direction is approved, the same mark could carry into the splash screen
-          (<b>issue #8</b>) — splash animation itself is not addressed in this pass.</span>
-      </div>
+      <h2>Logo <span class="proposal-tag">retired — pre-rename</span></h2>
+      <p class="ds-desc">Retired. This wordmark idea predates the tekir rename: it renders "cats of istanbul" as
+        the product name, which conflicts with the canonical naming in <a href="../docs/brand.md">docs/brand.md</a>
+        ("cats of istanbul" is a descriptor, never a product-name substitute). Removed from active use and from
+        the section nav; not rendered below. A tekir-aligned wordmark is a separate, future product-owner decision.</p>
     </section>
 
     <!-- COLORS -->
@@ -324,14 +305,6 @@
 (function(){
   function el(id){ return document.getElementById(id); }
   function fill(el, html){ el.innerHTML = html; }
-
-  // logo wordmark proposal — dotless-ı stem so the font's own dot never renders underneath
-  // the custom paw glyph; real word exposed via aria-label since "ı" isn't actually an "i"
-  var LOGO_INNER = 'cats of <span class="logo-i"><span class="paw">'+icon('pawprint',{size:24})+'</span>ı</span>stanbul';
-  document.querySelectorAll('.logo-wordmark').forEach(function(node){
-    node.setAttribute('aria-label','cats of istanbul');
-    node.innerHTML = '<span aria-hidden="true">'+LOGO_INNER+'</span>';
-  });
 
   // color foundations
   var groups = {
