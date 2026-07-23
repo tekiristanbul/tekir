@@ -35,3 +35,23 @@ where status = 'active'
     4326
   )::geography
 order by created_at desc;
+
+-- name: GetCatByID :one
+-- traits are fetched separately via ListCatTraits (join against the traits
+-- vocabulary) rather than aggregated in here, so each trait can carry its
+-- display_name without hand-rolling composite-type aggregation in sql.
+select
+  c.id,
+  c.name,
+  st_x(c.area::geometry)::float8 as lng,
+  st_y(c.area::geometry)::float8 as lat,
+  c.photo_url,
+  c.created_at,
+  c.last_update_at
+from cats c
+where c.id = sqlc.arg(id);
+
+-- name: CatExists :one
+-- lets the updates-history endpoint 404 on an unknown cat instead of
+-- silently returning an empty page indistinguishable from "no history yet".
+select exists(select 1 from cats where id = sqlc.arg(id)) as exists;

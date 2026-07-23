@@ -11,11 +11,46 @@ import (
 )
 
 type Querier interface {
+	// lets the updates-history endpoint 404 on an unknown cat instead of
+	// silently returning an empty page indistinguishable from "no history yet".
+	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
+	// no endpoint sets this yet — trait selection is out of scope for issue #21
+	// and belongs to the future add/edit-cat flow. used by seed data only.
+	CreateCatTrait(ctx context.Context, arg CreateCatTraitParams) error
+	// created_at is caller-supplied (not now()) so seed data and tests can
+	// construct deterministic, repeatable timelines and tie-breaker scenarios.
+	// upserts on id (like UpsertCat) so re-running the seed script with fixed
+	// ids stays idempotent instead of erroring on a duplicate key; seq is never
+	// touched by the update branch, so a row's tie-breaker position is stable.
+	CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error)
+	CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatusParams) error
+	// traits are fetched separately via ListCatTraits (join against the traits
+	// vocabulary) rather than aggregated in here, so each trait can carry its
+	// display_name without hand-rolling composite-type aggregation in sql.
+	GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error)
+	// the selectable vocabulary: what a future add/edit-cat flow renders as
+	// options. retired (active=false) traits are excluded here but not from
+	// ListCatTraits, so a cat that already carries a retired trait keeps
+	// showing it.
+	ListActiveTraits(ctx context.Context) ([]ListActiveTraitsRow, error)
+	// joins the vocabulary so cat detail can render a display label without a
+	// separate vocabulary fetch. intentionally not filtered by traits.active:
+	// retiring a trait must not erase a cat's existing, historical association.
+	ListCatTraits(ctx context.Context, catID pgtype.UUID) ([]ListCatTraitsRow, error)
+	// newest-first keyset pagination: (created_at, seq) both descending, seq
+	// breaking ties deterministically when created_at collides. before_created_at
+	// is null on the first page; the caller fetches row_limit+1 rows to detect
+	// whether a next page exists, then trims the extra row before responding.
+	ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) ([]ListCatUpdatesRow, error)
 	// area && envelope::geography uses cats_area_gix (gist on geography supports
 	// the && bounding-box operator); st_makeenvelope builds the requested viewport.
 	ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
 	UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UUID, error)
+	// loads/updates the vocabulary itself (seed data only for now — there's no
+	// admin endpoint). upserting on key lets seed re-runs adjust display_name/
+	// sort_order/active in place instead of erroring on a duplicate key.
+	UpsertTrait(ctx context.Context, arg UpsertTraitParams) (string, error)
 	UpsertWorkspacePing(ctx context.Context, arg UpsertWorkspacePingParams) (UpsertWorkspacePingRow, error)
 }
 
