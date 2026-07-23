@@ -50,6 +50,7 @@ each feature's `data/` holds json↔model mapping and api calls; `ui/` holds wid
 
 - final visual design / `app_theme.dart` contents — depends on the design pass, not yet finalized to real tokens.
 - pin-clustering behavior once colony vs. individual cat ([[cats]]) is resolved.
+- production maps api key injection: needs a ci/deployment pipeline to inject it and restrict it to the production domain (separate from the dev key, separate quota/budget alert, never reused for android/ios) — no such pipeline exists yet ([[backend]] leaves deployment provider/target open), so this is a placeholder key locally via `scripts/run_web.sh` until one does.
 
 ## out of scope
 

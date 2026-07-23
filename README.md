@@ -67,13 +67,20 @@ migrations live in `backend/db/migrations`, queries in `backend/db/queries`. the
 
 ## flutter app
 
+the map screen needs a google maps javascript api key (`google_maps_flutter`, see [`docs/architecture/flutter.md`](docs/architecture/flutter.md)). it's never committed — `web/index.html` carries a placeholder token that `scripts/run_web.sh` substitutes at run time, restoring the placeholder on exit:
+
 ```bash
 cd app
 flutter pub get
-flutter run -d web-server   # or -d chrome if you have it installed
+cp .env.local.example .env.local   # once — fill in GOOGLE_MAPS_API_KEY
+./scripts/run_web.sh
 ```
 
-the app points at `http://localhost:8080` by default; override with `--dart-define=API_BASE_URL=...` if the api runs elsewhere.
+this always runs on a fixed port (`http://localhost:5050`), so the dev key can be restricted in the google cloud console to exactly that origin — restrict it to the "maps javascript api" only, and use a separate key for production (restricted to the real domain, with its own quota/billing alert). without a key, `GoogleMap` won't render (only the web target is set up — see below).
+
+running some other way (`flutter run -d chrome` directly, `flutter build web`) still needs the key injected into `web/index.html` first, by hand or by adapting the script.
+
+the app points at `http://localhost:8080` by default; override with `--dart-define=API_BASE_URL=...` if the api runs elsewhere (`run_web.sh` forwards extra args to `flutter run`, so `./scripts/run_web.sh --dart-define=API_BASE_URL=...` works).
 
 ```bash
 cd app

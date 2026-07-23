@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# local secrets (google maps api key) — see scripts/run_web.sh
+.env.local
