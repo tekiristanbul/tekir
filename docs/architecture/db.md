@@ -47,6 +47,12 @@ create table cats (
   id                 uuid primary key default gen_random_uuid(),
   name               text,
   area               geography(point, 4326) not null,
+  -- human-readable, display-only location label (issue #21 prototype-parity
+  -- correction), e.g. "Moda Sahili, Kadıköy". nullable free text, set once
+  -- at cat-creation/seed time — there is no runtime reverse-geocoding
+  -- service, so this is never derived from `area` on read, and `area`
+  -- itself remains the only source of truth for actual coordinates.
+  area_label         text,
   primary_photo_id   uuid references media(id),
   status             text not null default 'active' check (status in ('active','inactive')),
   last_update_at     timestamptz,

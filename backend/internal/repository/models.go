@@ -17,6 +17,7 @@ type Cat struct {
 	LastUpdateAt   pgtype.Timestamptz `json:"last_update_at"`
 	NeedsHelpUntil pgtype.Timestamptz `json:"needs_help_until"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	AreaLabel      pgtype.Text        `json:"area_label"`
 }
 
 type CatTrait struct {

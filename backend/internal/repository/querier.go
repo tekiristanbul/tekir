@@ -44,6 +44,9 @@ type Querier interface {
 	ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) ([]ListCatUpdatesRow, error)
 	// area && envelope::geography uses cats_area_gix (gist on geography supports
 	// the && bounding-box operator); st_makeenvelope builds the requested viewport.
+	// name/area_label are the minimum extra fields the map-marker preview sheet
+	// needs (issue #21 prototype-parity correction) — no second full-detail
+	// fetch on marker tap.
 	ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
 	UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UUID, error)

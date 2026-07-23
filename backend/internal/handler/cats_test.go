@@ -68,9 +68,11 @@ func TestCatsHandler_Nearby(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{rows: []repository.ListCatsInBoundsRow{
 		{
 			ID:        id,
+			Name:      pgtype.Text{String: "tekir", Valid: true},
 			PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
 			Lng:       28.9744,
 			Lat:       41.0256,
+			AreaLabel: pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
 			NeedsHelp: pgtype.Bool{Bool: false, Valid: true},
 		},
 	}}))
@@ -92,6 +94,12 @@ func TestCatsHandler_Nearby(t *testing.T) {
 	}
 	if body[0].PrimaryPhoto != "https://placecats.com/millie/300/200" {
 		t.Errorf("unexpected primary_photo: %q", body[0].PrimaryPhoto)
+	}
+	if body[0].Name != "tekir" {
+		t.Errorf("unexpected name: %q", body[0].Name)
+	}
+	if body[0].AreaLabel == nil || *body[0].AreaLabel != "Galata Kulesi çevresi, Beyoğlu" {
+		t.Errorf("unexpected area_label: %v", body[0].AreaLabel)
 	}
 }
 
@@ -157,6 +165,7 @@ func TestCatsHandler_Detail(t *testing.T) {
 			Name:      pgtype.Text{String: "tekir", Valid: true},
 			Lng:       28.9744,
 			Lat:       41.0256,
+			AreaLabel: pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
 			PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
 			CreatedAt: pgtype.Timestamptz{Time: created, Valid: true},
 		},
@@ -183,6 +192,9 @@ func TestCatsHandler_Detail(t *testing.T) {
 	}
 	if len(body.Traits) != 1 || body.Traits[0].Key != "friendly" || body.Traits[0].Label != "Friendly" {
 		t.Errorf("unexpected traits: %v", body.Traits)
+	}
+	if body.AreaLabel == nil || *body.AreaLabel != "Galata Kulesi çevresi, Beyoğlu" {
+		t.Errorf("unexpected area_label: %v", body.AreaLabel)
 	}
 }
 

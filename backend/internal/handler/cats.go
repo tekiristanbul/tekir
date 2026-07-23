@@ -22,8 +22,10 @@ func NewCatsHandler(cats *service.CatsService) *CatsHandler {
 
 type catMarkerResponse struct {
 	ID           string     `json:"id"`
+	Name         string     `json:"name"`
 	PrimaryPhoto string     `json:"primary_photo"`
 	Area         areaLatLng `json:"area"`
+	AreaLabel    *string    `json:"area_label"`
 	NeedsHelp    bool       `json:"needs_help"`
 	LastUpdateAt *time.Time `json:"last_update_at"`
 }
@@ -37,6 +39,7 @@ type catDetailResponse struct {
 	ID           string          `json:"id"`
 	Name         string          `json:"name"`
 	Area         areaLatLng      `json:"area"`
+	AreaLabel    *string         `json:"area_label"`
 	PrimaryPhoto *string         `json:"primary_photo"`
 	Traits       []traitResponse `json:"traits"`
 	CreatedAt    time.Time       `json:"created_at"`
@@ -86,8 +89,10 @@ func (h *CatsHandler) Nearby(w http.ResponseWriter, r *http.Request) {
 	for _, m := range markers {
 		resp = append(resp, catMarkerResponse{
 			ID:           m.ID,
+			Name:         m.Name,
 			PrimaryPhoto: m.PrimaryPhoto,
 			Area:         areaLatLng{Lat: m.Lat, Lng: m.Lng},
+			AreaLabel:    m.AreaLabel,
 			NeedsHelp:    m.NeedsHelp,
 			LastUpdateAt: m.LastUpdateAt,
 		})
@@ -112,6 +117,7 @@ func (h *CatsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		ID:           detail.ID,
 		Name:         detail.Name,
 		Area:         areaLatLng{Lat: detail.Lat, Lng: detail.Lng},
+		AreaLabel:    detail.AreaLabel,
 		PrimaryPhoto: detail.PrimaryPhoto,
 		Traits:       traits,
 		CreatedAt:    detail.CreatedAt,

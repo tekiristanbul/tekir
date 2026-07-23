@@ -1,9 +1,10 @@
 -- name: UpsertCat :one
-insert into cats (id, name, area, photo_url, status, last_update_at, needs_help_until)
+insert into cats (id, name, area, area_label, photo_url, status, last_update_at, needs_help_until)
 values (
   sqlc.arg(id),
   sqlc.arg(name),
   st_setsrid(st_makepoint(sqlc.arg(lng)::float8, sqlc.arg(lat)::float8), 4326)::geography,
+  sqlc.arg(area_label),
   sqlc.arg(photo_url),
   sqlc.arg(status),
   sqlc.arg(last_update_at),
@@ -12,6 +13,7 @@ values (
 on conflict (id) do update set
   name = excluded.name,
   area = excluded.area,
+  area_label = excluded.area_label,
   photo_url = excluded.photo_url,
   status = excluded.status,
   last_update_at = excluded.last_update_at,
@@ -21,11 +23,16 @@ returning id;
 -- name: ListCatsInBounds :many
 -- area && envelope::geography uses cats_area_gix (gist on geography supports
 -- the && bounding-box operator); st_makeenvelope builds the requested viewport.
+-- name/area_label are the minimum extra fields the map-marker preview sheet
+-- needs (issue #21 prototype-parity correction) — no second full-detail
+-- fetch on marker tap.
 select
   id,
+  name,
   photo_url,
   st_x(area::geometry)::float8 as lng,
   st_y(area::geometry)::float8 as lat,
+  area_label,
   (needs_help_until is not null and needs_help_until > now()) as needs_help,
   last_update_at
 from cats
@@ -45,6 +52,7 @@ select
   c.name,
   st_x(c.area::geometry)::float8 as lng,
   st_y(c.area::geometry)::float8 as lat,
+  c.area_label,
   c.photo_url,
   c.created_at,
   c.last_update_at

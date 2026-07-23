@@ -65,12 +65,17 @@ func (b Bounds) validate() error {
 	return nil
 }
 
-// CatMarker is the minimal shape a map marker needs.
+// CatMarker is the minimal shape a map marker needs — plus Name and
+// AreaLabel, the minimum extra fields the map's marker-preview sheet needs
+// (issue #21 prototype-parity correction) so selecting a marker never has
+// to fire a second full-detail fetch.
 type CatMarker struct {
 	ID           string
+	Name         string
 	PrimaryPhoto string
 	Lat          float64
 	Lng          float64
+	AreaLabel    *string
 	NeedsHelp    bool
 	LastUpdateAt *time.Time
 }
@@ -83,6 +88,7 @@ type CatDetail struct {
 	Name         string
 	Lat          float64
 	Lng          float64
+	AreaLabel    *string
 	PrimaryPhoto *string
 	Traits       []Trait
 	CreatedAt    time.Time
@@ -150,9 +156,11 @@ func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds) ([]CatMarke
 	for _, r := range rows {
 		markers = append(markers, CatMarker{
 			ID:           uuid.UUID(r.ID.Bytes).String(),
+			Name:         r.Name.String,
 			PrimaryPhoto: r.PhotoUrl.String,
 			Lat:          r.Lat,
 			Lng:          r.Lng,
+			AreaLabel:    textPtr(r.AreaLabel),
 			NeedsHelp:    r.NeedsHelp.Bool,
 			LastUpdateAt: timestamptzPtr(r.LastUpdateAt),
 		})
@@ -215,6 +223,7 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		Name:         row.Name.String,
 		Lat:          row.Lat,
 		Lng:          row.Lng,
+		AreaLabel:    textPtr(row.AreaLabel),
 		PrimaryPhoto: textPtr(row.PhotoUrl),
 		Traits:       traits,
 		CreatedAt:    row.CreatedAt.Time,

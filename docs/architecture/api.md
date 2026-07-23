@@ -27,14 +27,16 @@ GET  /v1/me               (X-Device-Token, optional Bearer)                     
 ### cats
 
 ```
-GET  /v1/cats?bbox=...                                    → [{ id, primary_photo, area{lat,lng}, needs_help, last_update_at }]
+GET  /v1/cats?bbox=...                                    → [{ id, name, primary_photo, area{lat,lng}, area_label|null, needs_help, last_update_at }]
 GET  /v1/cats/nearby?lat&lng&radius=50                     → [{ id, primary_photo, name }]   (duplicate check in the add-cat flow — not yet implemented)
-GET  /v1/cats/{cat_id}                                     → { id, name, area{lat,lng}, primary_photo|null, traits[{key,label}], created_at, last_update_at|null }
+GET  /v1/cats/{cat_id}                                     → { id, name, area{lat,lng}, area_label|null, primary_photo|null, traits[{key,label}], created_at, last_update_at|null }
 POST /v1/cats            (Bearer required)  { area, photo(multipart), traits[], name?, confirmed_new? }
                                              → 201 { cat }  or  409 { candidates:[...] } (when confirmed_new is absent and nearby matches exist — not yet implemented)
 ```
 
 `GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it deliberately omits `needs_help` and `followed_by_me` from the earlier sketch above: active-needs-help rendering is still blocked on [[alerts]] (issue #4), and there's no follow/account feature yet. `photos[]` is `primary_photo` (nullable) for now — there's no `media` table yet (see [[db]]), so a cat has exactly one photo column. unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
+
+`area_label` (both endpoints) is a nullable, human-readable location string (e.g. "Moda Sahili, Kadıköy") — display-only, never parsed back into coordinates. added for the issue #21 prototype-parity correction: the map's marker-preview sheet and the cat-detail screen show it in place of raw lat/lng. there is no runtime reverse-geocoding service; it's set once at cat-creation/seed time (see [[db]]). `GET /v1/cats?bbox=` also now returns `name`, alongside `area_label` — the minimum fields the marker-preview sheet needs, so selecting a marker never triggers a second full-detail fetch.
 
 ### traits
 

@@ -42,17 +42,18 @@ var seedCats = []struct {
 	name      string
 	lat, lng  float64
 	needsHelp bool
+	areaLabel string
 }{
-	{"00000000-0000-4000-8000-000000000010", "tekir", 41.02561, 28.97440, false},
-	{"00000000-0000-4000-8000-000000000011", "boncuk", 41.02575, 28.97455, false},
-	{"00000000-0000-4000-8000-000000000012", "duman", 41.02548, 28.97430, true},
-	{"00000000-0000-4000-8000-000000000013", "pamuk", 41.02590, 28.97465, false},
-	{"00000000-0000-4000-8000-000000000014", "sarman", 41.02530, 28.97410, false},
-	{"00000000-0000-4000-8000-000000000015", "minnoş", 41.02605, 28.97480, false},
-	{"00000000-0000-4000-8000-000000000016", "zeytin", 41.02515, 28.97395, false},
-	{"00000000-0000-4000-8000-000000000017", "taksim kedisi", 41.03700, 28.98500, false},
-	{"00000000-0000-4000-8000-000000000018", "cihangir kedisi", 41.03160, 28.98360, false},
-	{"00000000-0000-4000-8000-000000000019", "kadıköy kedisi", 40.99110, 29.02690, true},
+	{"00000000-0000-4000-8000-000000000010", "tekir", 41.02561, 28.97440, false, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000011", "boncuk", 41.02575, 28.97455, false, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000012", "duman", 41.02548, 28.97430, true, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000013", "pamuk", 41.02590, 28.97465, false, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000014", "sarman", 41.02530, 28.97410, false, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000015", "minnoş", 41.02605, 28.97480, false, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000016", "zeytin", 41.02515, 28.97395, false, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000017", "taksim kedisi", 41.03700, 28.98500, false, "Taksim Meydanı, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000018", "cihangir kedisi", 41.03160, 28.98360, false, "Cihangir, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000019", "kadıköy kedisi", 40.99110, 29.02690, true, "Moda Sahili, Kadıköy"},
 }
 
 // seedTraitVocabulary is the initial proposed vocabulary from the issue #21
@@ -147,6 +148,7 @@ func run() error {
 			Name:           pgtype.Text{String: c.name, Valid: true},
 			Lng:            c.lng,
 			Lat:            c.lat,
+			AreaLabel:      pgtype.Text{String: c.areaLabel, Valid: true},
 			PhotoUrl:       pgtype.Text{String: seedPhotos[i%len(seedPhotos)], Valid: true},
 			Status:         "active",
 			LastUpdateAt:   pgtype.Timestamptz{Time: now.Add(-time.Duration(i) * time.Hour), Valid: true},

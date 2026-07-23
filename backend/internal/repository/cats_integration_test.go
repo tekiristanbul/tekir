@@ -39,6 +39,7 @@ func TestStore_ListCatsInBounds(t *testing.T) {
 		Name:         pgtype.Text{String: "inside cat", Valid: true},
 		Lng:          centerLng,
 		Lat:          centerLat,
+		AreaLabel:    pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
 		PhotoUrl:     pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
 		Status:       "active",
 		LastUpdateAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
@@ -85,12 +86,22 @@ func TestStore_ListCatsInBounds(t *testing.T) {
 	}
 
 	seen := make(map[pgtype.UUID]bool, len(rows))
+	byID := make(map[pgtype.UUID]repository.ListCatsInBoundsRow, len(rows))
 	for _, r := range rows {
 		seen[r.ID] = true
+		byID[r.ID] = r
 	}
 
 	if !seen[insideID] {
 		t.Error("expected cat inside the bounds to be returned")
+	}
+	if row, ok := byID[insideID]; ok {
+		if row.Name.String != "inside cat" {
+			t.Errorf("expected name %q, got %q", "inside cat", row.Name.String)
+		}
+		if !row.AreaLabel.Valid || row.AreaLabel.String != "Galata Kulesi çevresi, Beyoğlu" {
+			t.Errorf("unexpected area_label: %v", row.AreaLabel)
+		}
 	}
 	if seen[outsideID] {
 		t.Error("expected cat outside the bounds not to be returned")
