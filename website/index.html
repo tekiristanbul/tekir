@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tekir — cats of istanbul</title>
+  <meta name="description" content="tekir is an open-source, map-first app for Istanbul's street cats, in active development.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap site-header__inner">
+      <p class="wordmark">tekir<span class="descriptor">cats of istanbul</span></p>
+      <nav aria-label="primary">
+        <a class="header-link" href="https://github.com/tekiristanbul/tekir">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="wrap">
+        <h1>tekir is an open-source map for Istanbul's street cats.</h1>
+        <p class="lede">
+          It's early, and still being built in the open. The idea: a map-first way
+          to know where a cat usually is, what its latest status is, and how you
+          can help — instead of that living only in one person's memory.
+        </p>
+
+        <ul class="questions">
+          <li>Where is this cat?</li>
+          <li>What is its latest status?</li>
+          <li>How can I help?</li>
+        </ul>
+
+        <p class="hero-cta">
+          <a class="button" href="https://github.com/tekiristanbul/tekir">View the code on GitHub</a>
+        </p>
+      </div>
+    </section>
+
+    <section class="preview" aria-labelledby="preview-heading">
+      <div class="wrap">
+        <h2 id="preview-heading">the map, right now</h2>
+        <p>
+          A real screenshot of the current Flutter app — not a mockup. Cat
+          photos are pinned to where they were last seen; the ring around a
+          marker shows whether that cat currently needs help.
+        </p>
+        <img
+          class="preview-image"
+          src="assets/map-preview.webp"
+          width="430"
+          height="660"
+          alt="Screenshot of the tekir map screen showing a cluster of street cat photo markers along a street near Galata, Istanbul, with one marker outlined to flag a cat that needs help."
+        >
+      </div>
+    </section>
+
+    <section class="why" aria-labelledby="why-heading">
+      <div class="wrap">
+        <h2 id="why-heading">why tekir?</h2>
+        <p>
+          Istanbul has a lot of street cats, and the people who look after them
+          usually carry the details in their head: which corner a cat is
+          usually at, whether someone already fed it today, whether it looked
+          hurt last time. tekir puts that on a map instead, so it doesn't
+          depend on one person remembering.
+        </p>
+        <p>
+          It isn't a place to organize rescues or volunteers — just a shared,
+          current picture of where a cat is and how it's doing, kept up to
+          date by whoever's nearby.
+        </p>
+      </div>
+    </section>
+
+    <section class="open-source" aria-labelledby="open-source-heading">
+      <div class="wrap">
+        <h2 id="open-source-heading">open source</h2>
+        <p>
+          tekir is developed in the open. The API, the database schema, and
+          the Flutter app are all public, and changes land through regular
+          pull requests.
+        </p>
+        <p>
+          <a class="header-link" href="https://github.com/tekiristanbul/tekir">github.com/tekiristanbul/tekir</a>
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap site-footer__inner">
+      <p>built in istanbul, for istanbul's street cats</p>
+      <nav aria-label="footer">
+        <a class="header-link" href="https://tekir.istanbul">tekir.istanbul</a>
+        <a class="header-link" href="https://github.com/tekiristanbul/tekir">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
