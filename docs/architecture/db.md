@@ -106,10 +106,12 @@ create table update_statuses (
   primary key (update_id, status)
 );
 
--- needs-help (issue #4) is a distinct update subtype with its own lifecycle
--- (expiry, resolution) — approved in direction, not yet in schema-ready
--- shape: the help-category vocabulary and early-resolution authorization
--- rule are still open (see [[alerts]]). deliberately not modeled here yet.
+-- needs-help (issue #4) is a distinct update subtype with its own lifecycle:
+-- a fixed 72-hour expiry, no resolve action in the mvp, and a fixed 5-value
+-- help-category vocabulary (injured/sick, food needed, water needed, unsafe
+-- location, trapped) — all approved in direction and content (see
+-- [[alerts]]), just not yet in schema-ready shape. deliberately not
+-- modeled here yet; this is issue #4's own implementation work, not #21's.
 
 -- outbox: the worker (see [[backend]]) polls unprocessed rows, fans each
 -- one out to the cat's followers (one `notifications` row + one push per
@@ -163,7 +165,7 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 - `update_statuses` + `updates.comment`: an update carries one or more structured statuses from the fixed mvp vocabulary (`seen`/`fed`/`water_provided`, approved on issue #3) plus an optional free-text comment. `updates.seq` is a monotonic tie-breaker for [[api]]'s keyset pagination — needed because two updates can share the same `created_at` under fast writes/seeding, and `created_at` alone wouldn't order them deterministically.
 - `traits`/`cat_traits`: the trait vocabulary is data, not code — adding, relabeling, or retiring a trait is a row change, never a migration or app release. `cat_traits.trait_key` references `traits.key`, so a cat can only carry a trait that exists in the vocabulary; retiring a trait (`traits.active = false`) removes it from future selection (`ListActiveTraits`) but never deletes the row or a cat's existing association, preserving history.
 - `cats.area` is a point; the ~50m "area" concept from [[cats]] is expressed at query time via `st_dwithin(area, point, 50)` rather than a separate area table — that table would add complexity with no behavior it doesn't already give.
-- `cats.needs_help_until`: set to `now() + <duration>` whenever a new `help_request` update lands. the duration is a config value — [[alerts]] never settled on one.
+- `cats.needs_help_until`: set to `now() + 72h` whenever a new `help_request` update lands — 72 hours is the fixed mvp expiry per the issue #4 product decision (see [[alerts]]); still implemented as a config value rather than a hardcoded literal.
 - `cats.last_update_at`: refreshed on every new update, so the map's "recently updated" highlight ([[map]]) needs no join.
 - `cats.status`: cats are never deleted, only marked `inactive`, per [[cats]]. the threshold for going inactive (silence duration) is undecided — left as a job/cron concern, the schema doesn't need to know the number.
 - no duplicate-merge table exists yet. `nearby` lookups are computed on the fly; once a merge mechanism is decided ([[cats]]), a `cats.merged_into` column is the likely addition.
@@ -171,10 +173,9 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 
 ## open questions
 
-- `needs_help` expiry duration.
 - cat-inactivity threshold.
 - the specific trait vocabulary content (labels/grouping) is pending product-owner review; the storage model itself (keyed, extensible, data not enum) is decided.
-- needs-help's schema shape: help-category vocabulary and early-resolution authorization aren't fixed yet, so its lifecycle fields aren't modeled here (see [[alerts]]).
+- needs-help's actual schema shape (lifecycle columns, category vocabulary storage) isn't modeled here yet — the product decision itself (72h expiry, 5 fixed categories, no resolve) is final; the schema work is issue #4's own follow-up, not an open product question.
 - duplicate-cat merge mechanism and whether it needs a `merged_into` column or something richer.
 
 ## out of scope

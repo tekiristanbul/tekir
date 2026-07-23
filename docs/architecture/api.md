@@ -34,7 +34,7 @@ POST /v1/cats            (Bearer required)  { area, photo(multipart), traits[], 
                                              → 201 { cat }  or  409 { candidates:[...] } (when confirmed_new is absent and nearby matches exist — not yet implemented)
 ```
 
-`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it deliberately omits `needs_help` and `followed_by_me` from the earlier sketch above: active-needs-help rendering is still blocked on [[alerts]] (issue #4), and there's no follow/account feature yet. `photos[]` is `primary_photo` (nullable) for now — there's no `media` table yet (see [[db]]), so a cat has exactly one photo column. unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
+`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it deliberately omits `needs_help` and `followed_by_me` from the earlier sketch above: the issue #4 product decision is final (see [[alerts]]), but active-needs-help rendering itself isn't implemented yet — that's issue #4's own follow-up work, not #21's — and there's no follow/account feature yet. `photos[]` is `primary_photo` (nullable) for now — there's no `media` table yet (see [[db]]), so a cat has exactly one photo column. unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
 
 `area_label` (both endpoints) is a nullable, human-readable location string (e.g. "Moda Sahili, Kadıköy") — display-only, never parsed back into coordinates. added for the issue #21 prototype-parity correction: the map's marker-preview sheet and the cat-detail screen show it in place of raw lat/lng. there is no runtime reverse-geocoding service; it's set once at cat-creation/seed time (see [[db]]). `GET /v1/cats?bbox=` also now returns `name`, alongside `area_label` — the minimum fields the marker-preview sheet needs, so selecting a marker never triggers a second full-detail fetch.
 
@@ -72,16 +72,14 @@ push delivery is not client-facing. every new update writes a row to `notificati
 
 ### modeling notes
 
-- `cat.needs_help` is derived: the latest update is `help_request` and hasn't expired. the expiry duration is unresolved (see [[alerts]] open question) and is left as a config value, not a hardcoded number.
+- `cat.needs_help` is derived: the latest update is `help_request` and hasn't expired. the expiry is a fixed 72 hours per the issue #4 product decision ([[alerts]]); still left as a config value in the implementation rather than a hardcoded number.
 - `confirmed_new` on `POST /v1/cats` only carries the "yes, this is a different cat" confirmation — it does not implement the actual duplicate-merge mechanism ([[cats]] leaves that open).
 - colony vs. individual cat is not modeled — every cat is an atomic record, no grouping.
 - the api never produces a single "official current status" when followers post conflicting updates — clients get the full ordered list and display it themselves, per [[updates]]'s "all updates shown, newest first" decision.
 
 ## open questions
 
-- `needs_help` expiry duration ([[alerts]]).
 - duplicate-cat merge mechanism ([[cats]]).
-- whether `help_request` notifications should behave differently from regular update notifications ([[notifications]]).
 - the initial trait vocabulary's labels and grouping are pending product-owner review ([[cats]]); the model (controlled, extensible, keyed) is decided, the specific list is not.
 
 ## out of scope
