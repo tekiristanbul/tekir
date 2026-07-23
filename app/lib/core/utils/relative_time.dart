@@ -16,3 +16,18 @@ String relativeTimeTr(DateTime time, {DateTime? now}) {
   String two(int n) => n.toString().padLeft(2, '0');
   return '${two(local.day)}.${two(local.month)}.${local.year}';
 }
+
+/// Turkish "time until" for an active needs-help alert's expiry (issue
+/// #4/#23) — "1 saat sonra sona eriyor", "45 dakika sonra sona eriyor". Only
+/// meaningful for a still-active expiry (expiresAt in the future); an
+/// already-past expiresAt isn't formatted here since an expired alert is
+/// never shown with active emphasis in the first place.
+String expiresInTr(DateTime expiresAt, {DateTime? now}) {
+  final reference = now ?? DateTime.now();
+  final diff = expiresAt.toLocal().difference(reference);
+
+  if (diff.inMinutes < 1) return 'birazdan sona eriyor';
+  if (diff.inMinutes < 60) return '${diff.inMinutes} dakika sonra sona eriyor';
+  if (diff.inHours < 24) return '${diff.inHours} saat sonra sona eriyor';
+  return '${diff.inDays} gün sonra sona eriyor';
+}

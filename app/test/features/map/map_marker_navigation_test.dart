@@ -21,7 +21,6 @@ const _marker = CatMarker(
   lat: 41.02561,
   lng: 28.97440,
   areaLabel: 'Galata Kulesi çevresi, Beyoğlu',
-  needsHelp: false,
 );
 
 // GoogleMap is a real platform view under google_maps_flutter; the moment

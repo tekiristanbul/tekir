@@ -14,7 +14,6 @@ const _cat = CatMarker(
       'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Cat_November_2010-1a.jpg/500px-Cat_November_2010-1a.jpg',
   lat: 41.0256,
   lng: 28.9744,
-  needsHelp: false,
 );
 
 final _boundsA = LatLngBounds(

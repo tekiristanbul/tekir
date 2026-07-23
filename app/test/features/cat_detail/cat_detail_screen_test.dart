@@ -202,4 +202,169 @@ void main() {
     expect(find.text('Daha fazla göster'), findsOneWidget);
     expect(find.byType(OutlinedButton), findsWidgets);
   });
+
+  testWidgets(
+    'an active needs-help alert shows a prominent category + expiry banner',
+    (tester) async {
+      final now = DateTime.now();
+      final detail = CatDetail(
+        id: _catId,
+        name: 'duman',
+        lat: 41.0256,
+        lng: 28.9744,
+        areaLabel: 'Galata Kulesi çevresi, Beyoğlu',
+        primaryPhoto: null,
+        traits: const [],
+        createdAt: DateTime.utc(2026, 1, 1),
+        lastUpdateAt: null,
+        activeAlert: ActiveAlert(
+          category: 'injured_or_sick',
+          categoryLabel: 'yaralı / hasta',
+          createdAt: now.subtract(const Duration(hours: 1)),
+          expiresAt: now.add(const Duration(hours: 71)),
+        ),
+      );
+      await _pump(
+        tester,
+        CatDetailState(detail: detail, updates: const [], hasLoadedOnce: true),
+      );
+
+      expect(find.textContaining('yaralı / hasta'), findsOneWidget);
+      expect(find.textContaining('sona eriyor'), findsOneWidget);
+    },
+  );
+
+  testWidgets('no active alert shows no alert banner', (tester) async {
+    await _pump(
+      tester,
+      CatDetailState(
+        detail: _detailWithTraits,
+        updates: const [],
+        hasLoadedOnce: true,
+      ),
+    );
+
+    expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+  });
+
+  testWidgets(
+    'a needs-help timeline entry shows its category, expired without active emphasis',
+    (tester) async {
+      final now = DateTime.now();
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: _detailWithTraits,
+          updates: [
+            CatUpdateEntry(
+              id: 'u1',
+              kind: 'needs_help',
+              statuses: const [],
+              comment: null,
+              createdAt: now.subtract(const Duration(hours: 100)),
+              needsHelpCategory: 'water_needed',
+              needsHelpCategoryLabel: 'suya ihtiyacı var',
+              needsHelpExpiresAt: now.subtract(const Duration(hours: 28)),
+              needsHelpActive: false,
+            ),
+          ],
+          hasLoadedOnce: true,
+        ),
+      );
+
+      expect(find.text('suya ihtiyacı var'), findsOneWidget);
+      // an expired entry must never render with the active help color —
+      // that emphasis is reserved for the active-alert banner alone, and
+      // this fixture has no active alert at all.
+      expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+    },
+  );
+
+  testWidgets('more than three traits collapse to "+n daha" until expanded', (
+    tester,
+  ) async {
+    final detail = CatDetail(
+      id: _catId,
+      name: 'minnoş',
+      lat: 41.0256,
+      lng: 28.9744,
+      areaLabel: null,
+      primaryPhoto: null,
+      traits: const [
+        CatTrait(key: 'playful', label: 'Oyuncu'),
+        CatTrait(key: 'calm', label: 'Sakin'),
+        CatTrait(key: 'curious', label: 'Meraklı'),
+        CatTrait(key: 'friendly', label: 'İnsanlara yakın'),
+      ],
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastUpdateAt: null,
+    );
+    await _pump(
+      tester,
+      CatDetailState(detail: detail, updates: const [], hasLoadedOnce: true),
+    );
+
+    expect(find.text('Oyuncu'), findsOneWidget);
+    expect(find.text('Sakin'), findsOneWidget);
+    expect(find.text('Meraklı'), findsOneWidget);
+    expect(find.text('İnsanlara yakın'), findsNothing);
+    expect(find.text('+1 daha'), findsOneWidget);
+
+    await tester.tap(find.text('+1 daha'));
+    await tester.pump();
+
+    expect(find.text('İnsanlara yakın'), findsOneWidget);
+    expect(find.text('daha az göster'), findsOneWidget);
+
+    await tester.tap(find.text('daha az göster'));
+    await tester.pump();
+
+    expect(find.text('İnsanlara yakın'), findsNothing);
+    expect(find.text('+1 daha'), findsOneWidget);
+  });
+
+  testWidgets('three or fewer traits never show a "+n daha" entry', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      CatDetailState(
+        detail: _detailWithTraits,
+        updates: const [],
+        hasLoadedOnce: true,
+      ),
+    );
+
+    expect(find.textContaining('daha'), findsNothing);
+  });
+
+  testWidgets('a long trait list does not overflow the layout', (tester) async {
+    final detail = CatDetail(
+      id: _catId,
+      name: 'çok özellikli kedi',
+      lat: 41.0256,
+      lng: 28.9744,
+      areaLabel: null,
+      primaryPhoto: null,
+      traits: const [
+        CatTrait(key: 'a', label: 'Oyuncu'),
+        CatTrait(key: 'b', label: 'Sakin'),
+        CatTrait(key: 'c', label: 'Meraklı'),
+        CatTrait(key: 'd', label: 'Hareketli'),
+        CatTrait(key: 'e', label: 'Bağımsız'),
+        CatTrait(key: 'f', label: 'Konuşkan'),
+        CatTrait(key: 'g', label: 'Dokunulmaktan hoşlanmaz'),
+      ],
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastUpdateAt: null,
+    );
+    await _pump(
+      tester,
+      CatDetailState(detail: detail, updates: const [], hasLoadedOnce: true),
+    );
+    await tester.tap(find.text('+4 daha'));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+  });
 }

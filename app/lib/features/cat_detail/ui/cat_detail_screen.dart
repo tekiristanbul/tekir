@@ -97,14 +97,12 @@ class _CatDetailBody extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (detail.activeAlert != null) ...[
+                _ActiveAlertBanner(alert: detail.activeAlert!),
+                const SizedBox(height: AppSpacing.s4),
+              ],
               if (detail.traits.isNotEmpty) ...[
-                Wrap(
-                  spacing: AppSpacing.s2,
-                  runSpacing: AppSpacing.s2,
-                  children: detail.traits
-                      .map((t) => _TraitChip(label: t.label))
-                      .toList(),
-                ),
+                _TraitsSection(traits: detail.traits),
                 const SizedBox(height: AppSpacing.s4),
               ],
               if (detail.lastUpdateAt != null) ...[
@@ -281,30 +279,146 @@ class _BackCircleButton extends StatelessWidget {
   }
 }
 
-class _TraitChip extends StatelessWidget {
-  const _TraitChip({required this.label});
+/// Active needs-help alert (issue #4/#23): category + expiry context in the
+/// help color family, never blended with the primary accent (docs/product/
+/// alerts.md) — the one place on this screen an active alert gets its loud
+/// emphasis. The timeline below never repeats this treatment, active or
+/// expired (see _NeedsHelpTag).
+class _ActiveAlertBanner extends StatelessWidget {
+  const _ActiveAlertBanner({required this.alert});
 
-  final String label;
+  final ActiveAlert alert;
 
   @override
   Widget build(BuildContext context) {
     return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.s4,
+        vertical: AppSpacing.s3,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.helpSoft,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.help),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.warning_amber_rounded,
+            size: 20,
+            color: AppColors.help,
+          ),
+          const SizedBox(width: AppSpacing.s3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  alert.categoryLabel,
+                  style: const TextStyle(
+                    color: AppColors.helpStrong,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  expiresInTr(alert.expiresAt),
+                  style: const TextStyle(
+                    color: AppColors.helpStrong,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The cat's trait summary (issue #21/#23): the first three, then a "+n
+/// daha" entry that expands the full list in place — never an unbounded
+/// chip wrap, so a cat with many traits can't blow out the layout.
+class _TraitsSection extends StatefulWidget {
+  const _TraitsSection({required this.traits});
+
+  final List<CatTrait> traits;
+
+  @override
+  State<_TraitsSection> createState() => _TraitsSectionState();
+}
+
+class _TraitsSectionState extends State<_TraitsSection> {
+  static const _collapsedCount = 3;
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final traits = widget.traits;
+    final hasMore = traits.length > _collapsedCount;
+    final visible = (_expanded || !hasMore)
+        ? traits
+        : traits.take(_collapsedCount).toList();
+    final remaining = traits.length - _collapsedCount;
+
+    return Wrap(
+      spacing: AppSpacing.s2,
+      runSpacing: AppSpacing.s2,
+      children: [
+        for (final t in visible) _TraitChip(label: t.label),
+        if (hasMore && !_expanded)
+          _TraitChip(
+            label: '+$remaining daha',
+            onTap: () => setState(() => _expanded = true),
+          ),
+        if (hasMore && _expanded)
+          _TraitChip(
+            label: 'daha az göster',
+            onTap: () => setState(() => _expanded = false),
+          ),
+      ],
+    );
+  }
+}
+
+class _TraitChip extends StatelessWidget {
+  const _TraitChip({required this.label, this.onTap});
+
+  final String label;
+
+  /// Present only for the "+n daha" / "daha az göster" toggle chip — a
+  /// plain trait chip is never tappable.
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final chip = Container(
       height: 32,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s3),
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: onTap != null ? AppColors.surfaceAlt : AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.full),
         border: Border.all(color: AppColors.lineStrong),
       ),
       child: Text(
         label,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: AppColors.muted,
+          color: onTap != null ? AppColors.primaryStrong : AppColors.muted,
         ),
       ),
+    );
+    if (onTap == null) return chip;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.full),
+      child: chip,
     );
   }
 }
@@ -372,6 +486,40 @@ class _StatusTag extends StatelessWidget {
   }
 }
 
+/// A needs-help timeline entry's category tag (issue #4/#23). Deliberately
+/// never uses the loud help-red styling here, active or expired — that
+/// emphasis lives solely in _ActiveAlertBanner above the timeline, so it
+/// isn't duplicated per history entry. An expired entry additionally never
+/// gets any active-looking accent, per docs/product/alerts.md.
+class _NeedsHelpTag extends StatelessWidget {
+  const _NeedsHelpTag({required this.update});
+
+  final CatUpdateEntry update;
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = update.needsHelpActive ?? false;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.s2,
+        vertical: 3,
+      ),
+      decoration: BoxDecoration(
+        color: isActive ? AppColors.helpSoft : AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(AppRadius.full),
+      ),
+      child: Text(
+        update.needsHelpCategoryLabel ?? update.needsHelpCategory ?? '',
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: isActive ? AppColors.helpStrong : AppColors.muted,
+        ),
+      ),
+    );
+  }
+}
+
 /// One update's structured statuses and free-text comment render as two
 /// visually distinct elements — status tags (bold pills) vs. plain (never
 /// italic) muted body text — per issue #21's requirement that the two
@@ -423,13 +571,15 @@ class _TimelineItem extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        child: Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: update.statuses
-                              .map((s) => _StatusTag(status: s))
-                              .toList(),
-                        ),
+                        child: update.isNeedsHelp
+                            ? _NeedsHelpTag(update: update)
+                            : Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: update.statuses
+                                    .map((s) => _StatusTag(status: s))
+                                    .toList(),
+                              ),
                       ),
                       const SizedBox(width: AppSpacing.s2),
                       Text(

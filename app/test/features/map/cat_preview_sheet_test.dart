@@ -15,7 +15,6 @@ const _cat = CatMarker(
   primaryPhoto: '',
   lat: 41.02561,
   lng: 28.97440,
-  needsHelp: false,
 );
 
 Future<void> _pump(
@@ -59,33 +58,42 @@ void main() {
         lat: 41.02561,
         lng: 28.97440,
         areaLabel: 'Moda Sahili, Kadıköy',
-        needsHelp: false,
       ),
     );
 
     expect(find.text('Moda Sahili, Kadıköy'), findsOneWidget);
   });
 
-  testWidgets('shows a clear needs-help mark when active', (tester) async {
-    await _pump(
-      tester,
-      const CatMarker(
-        id: 'cat-1',
-        name: 'tekir',
-        primaryPhoto: '',
-        lat: 41.02561,
-        lng: 28.97440,
-        needsHelp: true,
-      ),
-    );
+  testWidgets(
+    'shows a clear needs-help mark (category + expiry context) when active',
+    (tester) async {
+      final now = DateTime.now();
+      await _pump(
+        tester,
+        CatMarker(
+          id: 'cat-1',
+          name: 'tekir',
+          primaryPhoto: '',
+          lat: 41.02561,
+          lng: 28.97440,
+          activeAlert: ActiveAlert(
+            category: 'trapped',
+            categoryLabel: 'mahsur kalmış',
+            createdAt: now.subtract(const Duration(hours: 1)),
+            expiresAt: now.add(const Duration(hours: 2)),
+          ),
+        ),
+      );
 
-    expect(find.text('yardım gerekiyor'), findsOneWidget);
-  });
+      expect(find.textContaining('mahsur kalmış'), findsOneWidget);
+      expect(find.textContaining('sona eriyor'), findsOneWidget);
+    },
+  );
 
   testWidgets('does not show a needs-help mark when inactive', (tester) async {
     await _pump(tester, _cat);
 
-    expect(find.text('yardım gerekiyor'), findsNothing);
+    expect(find.textContaining('sona eriyor'), findsNothing);
   });
 
   testWidgets('tapping "Detaya git" triggers onOpenDetail', (tester) async {
