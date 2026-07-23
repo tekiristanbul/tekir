@@ -21,11 +21,17 @@ var seedPingID = pgtype.UUID{
 	Valid: true,
 }
 
-// placecats.com placeholder photos, cycled across fixture cats.
+// wikimedia commons photos, cycled across fixture cats. placecats.com was
+// tried first but sends no Access-Control-Allow-Origin header, which the
+// flutter web build needs to fetch and decode marker images; commons serves
+// every file with `access-control-allow-origin: *`.
 var seedPhotos = []string{
-	"https://placecats.com/millie/300/200",
-	"https://placecats.com/neo/300/200",
-	"https://placecats.com/bella/300/200",
+	"https://upload.wikimedia.org/wikipedia/commons/thumb/0/01/Calico_cat%2C_-_Assisi%2C_Italy.jpg/500px-Calico_cat%2C_-_Assisi%2C_Italy.jpg",
+	"https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Cat_November_2010-1a.jpg/500px-Cat_November_2010-1a.jpg",
+	"https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/Cat_Street_Tokyo_2.JPG/500px-Cat_Street_Tokyo_2.JPG",
+	"https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Cat_in_Efremov%2C_Russia1.jpg/500px-Cat_in_Efremov%2C_Russia1.jpg",
+	"https://upload.wikimedia.org/wikipedia/commons/thumb/e/ed/Cat_nose_face.jpg/500px-Cat_nose_face.jpg",
+	"https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Cat_playing_with_a_lizard.jpg/500px-Cat_playing_with_a_lizard.jpg",
 }
 
 // a tight cluster near galata tower (walking distance apart, for clustering)
