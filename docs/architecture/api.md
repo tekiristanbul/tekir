@@ -28,22 +28,33 @@ GET  /v1/me               (X-Device-Token, optional Bearer)                     
 
 ```
 GET  /v1/cats?bbox=...                                    → [{ id, primary_photo, area{lat,lng}, needs_help, last_update_at }]
-GET  /v1/cats/nearby?lat&lng&radius=50                     → [{ id, primary_photo, name }]   (duplicate check in the add-cat flow)
-GET  /v1/cats/{cat_id}                                     → { id, photos[], traits[], name|null, area, needs_help, followed_by_me }
+GET  /v1/cats/nearby?lat&lng&radius=50                     → [{ id, primary_photo, name }]   (duplicate check in the add-cat flow — not yet implemented)
+GET  /v1/cats/{cat_id}                                     → { id, name, area{lat,lng}, primary_photo|null, traits[{key,label}], created_at, last_update_at|null }
 POST /v1/cats            (Bearer required)  { area, photo(multipart), traits[], name?, confirmed_new? }
-                                             → 201 { cat }  or  409 { candidates:[...] } (when confirmed_new is absent and nearby matches exist)
+                                             → 201 { cat }  or  409 { candidates:[...] } (when confirmed_new is absent and nearby matches exist — not yet implemented)
 ```
+
+`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it deliberately omits `needs_help` and `followed_by_me` from the earlier sketch above: active-needs-help rendering is still blocked on [[alerts]] (issue #4), and there's no follow/account feature yet. `photos[]` is `primary_photo` (nullable) for now — there's no `media` table yet (see [[db]]), so a cat has exactly one photo column. unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
+
+### traits
+
+```
+GET  /v1/traits    → [{ key, label }]
+```
+
+the active, selectable trait vocabulary (issue #21 product clarification): a controlled, extensible list — not a client-hardcoded set, not free text, not a closed enum (see [[db]]). retired traits are omitted here but not from a cat's own `traits[]` (existing associations survive retirement). trait selection/editing (assigning a trait to a cat) isn't implemented yet; this endpoint exists so a future add/edit-cat flow has a vocabulary to render a selector from. the initial vocabulary content is a proposal pending product-owner review, not a locked list.
 
 ### updates
 
-> ⚠ **provisional contract.** [[updates]] specifies a *structured* status with an optional comment; no minimum status vocabulary is defined yet (tracked in `docs/backlog.md` as a blocking decision). until it is, `comment` is free text and nothing in the product can reliably query it ("was the cat fed?", "was water provided?") — don't build features that assume it can. this shape is expected to change once the vocabulary is decided; it is not a stable contract yet.
+an update is one or more structured statuses from the fixed mvp vocabulary approved on issue #3 (`seen`, `fed`, `water_provided`) plus an optional free-text comment. `needs_help` as an update subtype remains owned by [[alerts]] (issue #4) and isn't modeled here.
 
 ```
-GET  /v1/cats/{cat_id}/updates?cursor=      → [{ id, type: status|help_request, comment|null, media_id|null, created_at }]  (newest first)
-POST /v1/cats/{cat_id}/updates              { type, comment?, media_id? }
-                                             (media_id present → Bearer required; absent → X-Device-Token alone is enough)
+GET  /v1/cats/{cat_id}/updates?cursor=&limit=   → { items: [{ id, statuses[], comment|null, created_at }], next_cursor|null }
+POST /v1/cats/{cat_id}/updates              { statuses[], comment? }          (not yet implemented — issue #21 is read-only)
 POST /v1/media           (Bearer required)  multipart file → { media_id, url }
 ```
+
+`GET /v1/cats/{cat_id}/updates` is implemented (issue #21). newest first, keyset-paginated on `(created_at, seq)` — `seq` is a monotonic tie-breaker for rows that share a `created_at` (see [[db]]). `cursor` is an opaque token taken verbatim from the previous page's `next_cursor`; omit it for the first page. `limit` defaults to 20 and is capped at 50 — an out-of-range or non-integer `limit`, or an undecodable `cursor`, is a `400`. unknown `cat_id` → `404`. `next_cursor` is `null` once there is no further page — a client never has to guess.
 
 ### follows / notifications
 
@@ -67,9 +78,9 @@ push delivery is not client-facing. every new update writes a row to `notificati
 ## open questions
 
 - `needs_help` expiry duration ([[alerts]]).
-- fixed enum/vocabulary for status-update content ([[updates]]).
 - duplicate-cat merge mechanism ([[cats]]).
 - whether `help_request` notifications should behave differently from regular update notifications ([[notifications]]).
+- the initial trait vocabulary's labels and grouping are pending product-owner review ([[cats]]); the model (controlled, extensible, keyed) is decided, the specific list is not.
 
 ## out of scope
 
