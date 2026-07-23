@@ -20,3 +20,9 @@ website/
   styles.css         all styling
   assets/            static assets (e.g. the map preview screenshot)
 ```
+
+## cloudflare deployment
+
+- build command: none
+- deploy command: `npx wrangler deploy`
+- root directory: `website`
