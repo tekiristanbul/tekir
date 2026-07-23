@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../data/cat_marker.dart';
@@ -24,6 +26,15 @@ final _istanbulBounds = LatLngBounds(
 );
 const _minZoom = 12.0;
 const _maxZoom = 20.0;
+
+// how far a single cluster tap zooms in. fitting the camera to the
+// cluster's own bounds (CameraUpdate.newLatLngBounds) sounds more
+// "precise", but for a tight cluster (markers a few meters apart, like
+// the seeded galata group) the bounds-fit zoom can come out *lower* than
+// the current zoom — the tap would then not zoom in at all, and the
+// cluster would never split. a fixed step guarantees forward progress on
+// every tap, splitting any cluster within a couple of taps.
+const _clusterTapZoomStep = 2.0;
 
 // clustering itself is native (google_maps_flutter's own ClusterManager,
 // which wraps Google's official @googlemaps/markerclusterer on web) — every
@@ -79,9 +90,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     setState(() => _markers = markers.toSet());
   }
 
-  void _onClusterTap(Cluster cluster) {
-    _controller?.animateCamera(
-      CameraUpdate.newLatLngBounds(cluster.bounds, 60),
+  Future<void> _onClusterTap(Cluster cluster) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final currentZoom = await controller.getZoomLevel();
+    final targetZoom = math.min(currentZoom + _clusterTapZoomStep, _maxZoom);
+    await controller.animateCamera(
+      CameraUpdate.newLatLngZoom(cluster.position, targetZoom),
     );
   }
 
@@ -209,19 +224,25 @@ class _ErrorBanner extends StatelessWidget {
       top: 12,
       left: 12,
       right: 12,
-      child: Material(
-        color: AppColors.panel,
-        elevation: 2,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              const Icon(Icons.error_outline, color: Colors.red, size: 18),
-              const SizedBox(width: 8),
-              const Expanded(child: Text("couldn't load cats")),
-              TextButton(onPressed: onRetry, child: const Text('retry')),
-            ],
+      // on web, GoogleMap is a real platform view (an html element), not
+      // flutter-rendered pixels — widgets stacked above it need
+      // PointerInterceptor or their taps can fall through to the map
+      // underneath instead of registering on the widget itself.
+      child: PointerInterceptor(
+        child: Material(
+          color: AppColors.panel,
+          elevation: 2,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(child: Text("couldn't load cats")),
+                TextButton(onPressed: onRetry, child: const Text('retry')),
+              ],
+            ),
           ),
         ),
       ),
