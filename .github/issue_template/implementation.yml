@@ -1,0 +1,82 @@
+name: implementation
+description: define maintainer-approved implementation work for copilot coding agent
+title: ""
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        use this form only after product and technical decisions are sufficiently clear. it is not a feature-request form.
+  - type: textarea
+    id: problem
+    attributes:
+      label: problem
+      description: what concrete problem must this implementation solve?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: user-visible behavior
+      description: describe the expected behavior and turkish copy, or write "none".
+    validations:
+      required: true
+  - type: textarea
+    id: product-decisions
+    attributes:
+      label: product decisions
+      description: list the accepted product and ux decisions relevant to this issue.
+    validations:
+      required: true
+  - type: textarea
+    id: technical-constraints
+    attributes:
+      label: technical constraints
+      description: list required architecture, api, schema, security, or dependency boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: acceptance criteria
+      description: use a short, testable checklist.
+      value: "- [ ] "
+    validations:
+      required: true
+  - type: input
+    id: design-reference
+    attributes:
+      label: design reference
+      description: link repository design docs, prototype path, screenshots, or write "none".
+    validations:
+      required: true
+  - type: textarea
+    id: test-expectations
+    attributes:
+      label: test expectations
+      description: name required unit, integration, widget, migration, and manual checks.
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: out of scope
+      description: state what this issue must not change.
+    validations:
+      required: true
+  - type: dropdown
+    id: product-owner-approval
+    attributes:
+      label: product owner approval required
+      options:
+        - "yes — keep the pull request draft and approval pending"
+        - "no — no user behavior, copy, or visual output changes"
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: dependencies
+      description: link blocking issues or pull requests, or write "none".
+    validations:
+      required: true
