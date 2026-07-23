@@ -1,0 +1,79 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5-alpine
+        env:
+          POSTGRES_USER: catsofistanbul
+          POSTGRES_PASSWORD: catsofistanbul
+          POSTGRES_DB: catsofistanbul
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U catsofistanbul"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://catsofistanbul:catsofistanbul@localhost:5432/catsofistanbul?sslmode=disable
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: lint
+        run: go tool golangci-lint run ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: migrate
+        run: go tool goose -dir db/migrations postgres "$DATABASE_URL" up
+
+      - name: test
+        run: go test ./...
+
+  flutter:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.7
+          channel: stable
+
+      - name: pub get
+        run: flutter pub get
+
+      - name: format
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: analyze
+        run: flutter analyze
+
+      - name: test
+        run: flutter test

@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgis/postgis:17-3.5-alpine
+    environment:
+      POSTGRES_USER: catsofistanbul
+      POSTGRES_PASSWORD: catsofistanbul
+      POSTGRES_DB: catsofistanbul
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catsofistanbul"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://catsofistanbul:catsofistanbul@postgres:5432/catsofistanbul?sslmode=disable
+      LOG_LEVEL: info
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

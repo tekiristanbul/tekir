@@ -1,0 +1,14 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - unused
+    - unconvert
+    - misspell
+  exclusions:
+    paths:
+      - internal/repository/.*\.go
+formatters:
+  enable:
+    - gofmt
+    - goimports
