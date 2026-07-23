@@ -1,3 +1,7 @@
+import '../../../core/models/active_alert.dart';
+
+export '../../../core/models/active_alert.dart' show ActiveAlert;
+
 /// Wire shape from `GET /v1/cats?bbox=` (docs/architecture/api.md): the
 /// minimum fields a map marker needs. `name` and `areaLabel` were added for
 /// the issue #21 prototype-parity correction — the minimum extra fields the
@@ -11,7 +15,7 @@ class CatMarker {
     required this.lat,
     required this.lng,
     this.areaLabel,
-    required this.needsHelp,
+    this.activeAlert,
     this.lastUpdateAt,
   });
 
@@ -21,12 +25,19 @@ class CatMarker {
   final double lat;
   final double lng;
   final String? areaLabel;
-  final bool needsHelp;
+
+  /// Present only while the cat has an active needs-help alert (issue
+  /// #4/#23) — never a bare boolean, so the preview sheet has the category
+  /// and lifecycle it needs to render context, not just "something's wrong".
+  final ActiveAlert? activeAlert;
   final DateTime? lastUpdateAt;
+
+  bool get needsHelp => activeAlert != null;
 
   factory CatMarker.fromJson(Map<String, dynamic> json) {
     final area = json['area'] as Map<String, dynamic>;
     final rawLastUpdate = json['last_update_at'] as String?;
+    final rawActiveAlert = json['active_alert'] as Map<String, dynamic>?;
     return CatMarker(
       id: json['id'] as String,
       name: json['name'] as String? ?? '',
@@ -34,7 +45,9 @@ class CatMarker {
       lat: (area['lat'] as num).toDouble(),
       lng: (area['lng'] as num).toDouble(),
       areaLabel: json['area_label'] as String?,
-      needsHelp: json['needs_help'] as bool? ?? false,
+      activeAlert: rawActiveAlert != null
+          ? ActiveAlert.fromJson(rawActiveAlert)
+          : null,
       lastUpdateAt: rawLastUpdate != null
           ? DateTime.parse(rawLastUpdate)
           : null,

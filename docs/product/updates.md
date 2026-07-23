@@ -13,6 +13,7 @@ define how information about a cat stays current.
 - behavioral traits like "friendly" or "playful" are not status-update content — they belong to the cat's profile ([[cats]]), not to an individual update.
 - updates can be posted without a photo.
 - all updates are shown, newest first — not just the latest one.
+- a needs-help alert ([[alerts]]) is a distinct subtype of the same update history, not a separate feed — a cat's timeline shows both kinds together, newest first. it carries a fixed help category instead of `seen`/`fed`/`water_provided`, and its own lifecycle (72-hour expiry, no resolve), but it's still one entry in the same "all updates shown, newest first" list.
 
 ## open questions
 

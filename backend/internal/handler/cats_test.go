@@ -73,7 +73,6 @@ func TestCatsHandler_Nearby(t *testing.T) {
 			Lng:       28.9744,
 			Lat:       41.0256,
 			AreaLabel: pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
-			NeedsHelp: pgtype.Bool{Bool: false, Valid: true},
 		},
 	}}))
 
@@ -320,5 +319,126 @@ func TestCatsHandler_UpdateHistory_RepositoryFailure(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Nearby_ActiveAlertMetadata(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	id := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{rows: []repository.ListCatsInBoundsRow{
+		{
+			ID:                 id,
+			Name:               pgtype.Text{String: "duman", Valid: true},
+			NeedsHelpCategory:  pgtype.Text{String: "injured_or_sick", Valid: true},
+			NeedsHelpCreatedAt: pgtype.Timestamptz{Time: fixedNow.Add(-time.Hour), Valid: true},
+			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: fixedNow.Add(71 * time.Hour), Valid: true},
+		},
+	}}, service.WithClock(func() time.Time { return fixedNow })))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats?bbox=28,41,29,42", nil)
+	h.Nearby(rec, req)
+
+	var body []catMarkerResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body[0].ActiveAlert == nil {
+		t.Fatal("expected active_alert to be present")
+	}
+	if body[0].ActiveAlert.Category != "injured_or_sick" {
+		t.Errorf("unexpected category: %q", body[0].ActiveAlert.Category)
+	}
+	if body[0].ActiveAlert.CategoryLabel != "yaralı / hasta" {
+		t.Errorf("unexpected category_label: %q", body[0].ActiveAlert.CategoryLabel)
+	}
+}
+
+func TestCatsHandler_Nearby_NoActiveAlertIsNull(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{rows: []repository.ListCatsInBoundsRow{
+		{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, Name: pgtype.Text{String: "tekir", Valid: true}},
+	}}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats?bbox=28,41,29,42", nil)
+	h.Nearby(rec, req)
+
+	var body []catMarkerResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body[0].ActiveAlert != nil {
+		t.Errorf("expected null active_alert, got %+v", body[0].ActiveAlert)
+	}
+}
+
+func TestCatsHandler_Detail_ActiveAlertMetadata(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	id := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:                 pgtype.UUID{Bytes: id, Valid: true},
+			Name:               pgtype.Text{String: "kadıköy kedisi", Valid: true},
+			NeedsHelpCategory:  pgtype.Text{String: "trapped", Valid: true},
+			NeedsHelpCreatedAt: pgtype.Timestamptz{Time: fixedNow.Add(-71 * time.Hour), Valid: true},
+			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: fixedNow.Add(time.Hour), Valid: true},
+		},
+	}, service.WithClock(func() time.Time { return fixedNow })))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String(), nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	var body catDetailResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.ActiveAlert == nil {
+		t.Fatal("expected active_alert to be present")
+	}
+	if body.ActiveAlert.Category != "trapped" {
+		t.Errorf("unexpected category: %q", body.ActiveAlert.Category)
+	}
+	if body.ActiveAlert.CategoryLabel != "mahsur kalmış" {
+		t.Errorf("unexpected category_label: %q", body.ActiveAlert.CategoryLabel)
+	}
+}
+
+func TestCatsHandler_UpdateHistory_NeedsHelpEntry(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists: true,
+		updateRows: []repository.ListCatUpdatesRow{
+			{
+				ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				Kind:               "needs_help",
+				CreatedAt:          pgtype.Timestamptz{Time: fixedNow.Add(-100 * time.Hour), Valid: true},
+				Seq:                pgtype.Int8{Int64: 1, Valid: true},
+				NeedsHelpCategory:  pgtype.Text{String: "water_needed", Valid: true},
+				NeedsHelpExpiresAt: pgtype.Timestamptz{Time: fixedNow.Add(-28 * time.Hour), Valid: true},
+				Statuses:           []string{},
+			},
+		},
+	}, service.WithClock(func() time.Time { return fixedNow })))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String()+"/updates", nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	var body updateHistoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	item := body.Items[0]
+	if item.Kind != "needs_help" {
+		t.Errorf("expected kind needs_help, got %q", item.Kind)
+	}
+	if item.NeedsHelpCategory == nil || *item.NeedsHelpCategory != "water_needed" {
+		t.Errorf("unexpected needs_help_category: %v", item.NeedsHelpCategory)
+	}
+	// this fixture's expiry is well in the past — expired entries must
+	// remain in history, but never with active emphasis.
+	if item.NeedsHelpActive == nil || *item.NeedsHelpActive {
+		t.Errorf("expected an expired (inactive) needs-help entry, got %v", item.NeedsHelpActive)
 	}
 }

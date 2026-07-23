@@ -2,6 +2,10 @@
 /// (docs/architecture/api.md).
 library;
 
+import '../../../core/models/active_alert.dart';
+
+export '../../../core/models/active_alert.dart' show ActiveAlert;
+
 /// One entry of the controlled trait vocabulary (issue #21): a stable key
 /// plus its current display label. Not a fixed/closed set — see
 /// docs/product/cats.md.
@@ -27,6 +31,7 @@ class CatDetail {
     required this.traits,
     required this.createdAt,
     required this.lastUpdateAt,
+    this.activeAlert,
   });
 
   final String id;
@@ -43,10 +48,12 @@ class CatDetail {
   final List<CatTrait> traits;
   final DateTime createdAt;
   final DateTime? lastUpdateAt;
+  final ActiveAlert? activeAlert;
 
   factory CatDetail.fromJson(Map<String, dynamic> json) {
     final area = json['area'] as Map<String, dynamic>;
     final rawLastUpdate = json['last_update_at'] as String?;
+    final rawActiveAlert = json['active_alert'] as Map<String, dynamic>?;
     return CatDetail(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -61,33 +68,63 @@ class CatDetail {
       lastUpdateAt: rawLastUpdate != null
           ? DateTime.parse(rawLastUpdate)
           : null,
+      activeAlert: rawActiveAlert != null
+          ? ActiveAlert.fromJson(rawActiveAlert)
+          : null,
     );
   }
 }
 
-/// One entry of a cat's newest-first status history (issue #3): one or more
-/// structured statuses plus an optional free-text comment.
+/// One entry of a cat's newest-first history — either an ordinary status
+/// update (issue #3: one or more structured statuses plus an optional
+/// free-text comment, kind == "ordinary") or a needs-help update (issue
+/// #4/#23: a fixed category plus its own lifecycle, kind == "needs_help").
+/// needsHelpActive is server-decided (the server's clock, never the
+/// client's) and is only meaningful when kind is "needs_help"; an expired
+/// needs-help entry stays in history exactly like an ordinary one, just
+/// with needsHelpActive false.
 class CatUpdateEntry {
   const CatUpdateEntry({
     required this.id,
+    this.kind = 'ordinary',
     required this.statuses,
     required this.comment,
     required this.createdAt,
+    this.needsHelpCategory,
+    this.needsHelpCategoryLabel,
+    this.needsHelpExpiresAt,
+    this.needsHelpActive,
   });
 
   final String id;
+  final String kind;
   final List<String> statuses;
   final String? comment;
   final DateTime createdAt;
 
+  final String? needsHelpCategory;
+  final String? needsHelpCategoryLabel;
+  final DateTime? needsHelpExpiresAt;
+  final bool? needsHelpActive;
+
+  bool get isNeedsHelp => kind == 'needs_help';
+
   factory CatUpdateEntry.fromJson(Map<String, dynamic> json) {
+    final rawExpiresAt = json['needs_help_expires_at'] as String?;
     return CatUpdateEntry(
       id: json['id'] as String,
+      kind: json['kind'] as String? ?? 'ordinary',
       statuses: (json['statuses'] as List<dynamic>)
           .map((e) => e as String)
           .toList(),
       comment: json['comment'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
+      needsHelpCategory: json['needs_help_category'] as String?,
+      needsHelpCategoryLabel: json['needs_help_category_label'] as String?,
+      needsHelpExpiresAt: rawExpiresAt != null
+          ? DateTime.parse(rawExpiresAt)
+          : null,
+      needsHelpActive: json['needs_help_active'] as bool?,
     );
   }
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/tekiristanbul/tekir/backend/internal/repository"
 )
 
@@ -83,5 +85,56 @@ func TestStore_ListCatTraits_Empty(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("expected no traits, got %v", rows)
+	}
+}
+
+func TestStore_ListActiveTraits_GroupThenTraitOrdering(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := store.UpsertTraitGroup(ctx, repository.UpsertTraitGroupParams{Key: "group_b", DisplayName: "Group B", SortOrder: 1}); err != nil {
+		t.Fatalf("upsert group_b: %v", err)
+	}
+	if _, err := store.UpsertTraitGroup(ctx, repository.UpsertTraitGroupParams{Key: "group_a", DisplayName: "Group A", SortOrder: 0}); err != nil {
+		t.Fatalf("upsert group_a: %v", err)
+	}
+
+	upsertGroupedTrait(t, ctx, store, "b_second", "B Second", "group_b", 1)
+	upsertGroupedTrait(t, ctx, store, "b_first", "B First", "group_b", 0)
+	upsertGroupedTrait(t, ctx, store, "a_first", "A First", "group_a", 0)
+
+	rows, err := store.ListActiveTraits(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	var keys []string
+	for _, r := range rows {
+		if r.Key == "a_first" || r.Key == "b_first" || r.Key == "b_second" {
+			keys = append(keys, r.Key)
+		}
+	}
+	want := []string{"a_first", "b_first", "b_second"}
+	if len(keys) != len(want) {
+		t.Fatalf("expected %v, got %v", want, keys)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Errorf("expected group-then-trait order %v, got %v", want, keys)
+			break
+		}
+	}
+}
+
+func upsertGroupedTrait(t *testing.T, ctx context.Context, store *repository.Store, key, displayName, groupKey string, sortOrder int32) {
+	t.Helper()
+	if _, err := store.UpsertTrait(ctx, repository.UpsertTraitParams{
+		Key:         key,
+		DisplayName: displayName,
+		GroupKey:    pgtype.Text{String: groupKey, Valid: true},
+		Active:      true,
+		SortOrder:   sortOrder,
+	}); err != nil {
+		t.Fatalf("upsert trait %s: %v", key, err)
 	}
 }

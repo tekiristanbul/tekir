@@ -12,6 +12,9 @@ define the core thing shown on the map: the cat.
 - cats should not be deletable. instead, a cat can become inactive — for example marked as lost, or if no one has posted an update for it in a long time.
 - the minimum information to add a cat: name, a photo, and a location are all required.
 - a cat can carry zero or more traits (e.g. friendly, playful) from a controlled vocabulary — not free text, and not a fixed/closed list either, since the vocabulary itself can still grow. traits describe the cat's profile and are separate from a status update's structured statuses ([[updates]]).
+- traits are grouped (product-owner decision on issue #21/#23): personality, interaction with people, interaction with other animals, and physical characteristics are the proposed groups, so a future picker can present a grouped multi-select instead of one flat list. a trait's group is mutable metadata, like its display label — moving a trait to a different group is a data change, not a migration.
+- the cat-detail screen shows only a short trait summary (the first few, then a "+n more" that expands the full list in place) rather than an unbounded chip list — this is a display rule for issue #23, not a change to the underlying vocabulary.
+- a future add/edit-cat picker groups traits by their group and supports search once the vocabulary grows large enough that a flat list stops being easy to scan; that picker's own visual design and interaction details aren't decided here — the prototype/implementation define those when that flow is actually built.
 
 ## open questions
 

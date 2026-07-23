@@ -87,8 +87,8 @@ class CatPreviewSheet extends StatelessWidget {
                       ),
                     ],
                     const SizedBox(height: 6),
-                    if (cat.needsHelp)
-                      const _NeedsHelpBadge()
+                    if (cat.activeAlert != null)
+                      _NeedsHelpBadge(alert: cat.activeAlert!)
                     else if (cat.lastUpdateAt != null)
                       Row(
                         children: [
@@ -141,8 +141,14 @@ class CatPreviewSheet extends StatelessWidget {
   }
 }
 
+/// Active needs-help mark (issue #4/#23): category + expiry context in
+/// turkish, in the help color family — never blended with the primary
+/// accent (docs/product/alerts.md), so a cat in trouble reads distinctly
+/// from a routine freshness highlight.
 class _NeedsHelpBadge extends StatelessWidget {
-  const _NeedsHelpBadge();
+  const _NeedsHelpBadge({required this.alert});
+
+  final ActiveAlert alert;
 
   @override
   Widget build(BuildContext context) {
@@ -155,17 +161,24 @@ class _NeedsHelpBadge extends StatelessWidget {
         color: AppColors.help,
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.warning_amber_rounded, size: 12, color: AppColors.helpInk),
-          SizedBox(width: 4),
-          Text(
-            'yardım gerekiyor',
-            style: TextStyle(
-              color: AppColors.helpInk,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
+          const Icon(
+            Icons.warning_amber_rounded,
+            size: 12,
+            color: AppColors.helpInk,
+          ),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              '${alert.categoryLabel} · ${expiresInTr(alert.expiresAt)}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.helpInk,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],

@@ -9,15 +9,14 @@ import (
 )
 
 type Cat struct {
-	ID             pgtype.UUID        `json:"id"`
-	Name           pgtype.Text        `json:"name"`
-	Area           interface{}        `json:"area"`
-	PhotoUrl       pgtype.Text        `json:"photo_url"`
-	Status         string             `json:"status"`
-	LastUpdateAt   pgtype.Timestamptz `json:"last_update_at"`
-	NeedsHelpUntil pgtype.Timestamptz `json:"needs_help_until"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	AreaLabel      pgtype.Text        `json:"area_label"`
+	ID           pgtype.UUID        `json:"id"`
+	Name         pgtype.Text        `json:"name"`
+	Area         interface{}        `json:"area"`
+	PhotoUrl     pgtype.Text        `json:"photo_url"`
+	Status       string             `json:"status"`
+	LastUpdateAt pgtype.Timestamptz `json:"last_update_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	AreaLabel    pgtype.Text        `json:"area_label"`
 }
 
 type CatTrait struct {
@@ -31,14 +30,24 @@ type Trait struct {
 	Active      bool               `json:"active"`
 	SortOrder   int32              `json:"sort_order"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	GroupKey    pgtype.Text        `json:"group_key"`
+}
+
+type TraitGroup struct {
+	Key         string `json:"key"`
+	DisplayName string `json:"display_name"`
+	SortOrder   int32  `json:"sort_order"`
 }
 
 type Update struct {
-	ID        pgtype.UUID        `json:"id"`
-	CatID     pgtype.UUID        `json:"cat_id"`
-	Comment   pgtype.Text        `json:"comment"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	Seq       pgtype.Int8        `json:"seq"`
+	ID                 pgtype.UUID        `json:"id"`
+	CatID              pgtype.UUID        `json:"cat_id"`
+	Comment            pgtype.Text        `json:"comment"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	Seq                pgtype.Int8        `json:"seq"`
+	Kind               string             `json:"kind"`
+	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
+	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 }
 
 type UpdateStatus struct {

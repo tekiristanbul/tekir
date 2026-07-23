@@ -17,43 +17,66 @@ type Querier interface {
 	// no endpoint sets this yet — trait selection is out of scope for issue #21
 	// and belongs to the future add/edit-cat flow. used by seed data only.
 	CreateCatTrait(ctx context.Context, arg CreateCatTraitParams) error
-	// created_at is caller-supplied (not now()) so seed data and tests can
-	// construct deterministic, repeatable timelines and tie-breaker scenarios.
-	// upserts on id (like UpsertCat) so re-running the seed script with fixed
-	// ids stays idempotent instead of erroring on a duplicate key; seq is never
-	// touched by the update branch, so a row's tie-breaker position is stable.
+	// kind discriminates an ordinary status update from a needs-help one (issue
+	// #23); needs_help_category/needs_help_expires_at are null for an ordinary
+	// update and required for a needs-help one — enforced by
+	// updates_kind_fields_ck, not application code alone. created_at stays
+	// caller-supplied (not now()) so seed data and tests can construct
+	// deterministic, repeatable timelines and exact expiry-boundary scenarios;
+	// needs_help_expires_at is likewise caller-supplied here (computed as
+	// created_at + 72h at the call site, per the fixed mvp expiry) rather than
+	// in sql, for the same determinism reason. upserts on id (like UpsertCat) so
+	// re-running the seed script with fixed ids stays idempotent instead of
+	// erroring on a duplicate key; seq is never touched by the update branch,
+	// so a row's tie-breaker position is stable.
 	CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error)
 	CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatusParams) error
 	// traits are fetched separately via ListCatTraits (join against the traits
 	// vocabulary) rather than aggregated in here, so each trait can carry its
-	// display_name without hand-rolling composite-type aggregation in sql.
+	// display_name without hand-rolling composite-type aggregation in sql. the
+	// lateral join is the same latest-needs-help-update lookup as
+	// ListCatsInBounds, unfiltered by expiry for the same reason.
 	GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error)
-	// the selectable vocabulary: what a future add/edit-cat flow renders as
-	// options. retired (active=false) traits are excluded here but not from
+	// the selectable vocabulary: what the future grouped multi-select picker
+	// (product-owner decision on issue #21/#23) renders as options, ordered
+	// group-then-trait so a client can render section headers without its own
+	// sort pass. retired (active=false) traits are excluded here but not from
 	// ListCatTraits, so a cat that already carries a retired trait keeps
-	// showing it.
+	// showing it. a trait with no group (group_key null) sorts after every
+	// grouped trait rather than interleaving arbitrarily.
 	ListActiveTraits(ctx context.Context) ([]ListActiveTraitsRow, error)
-	// joins the vocabulary so cat detail can render a display label without a
-	// separate vocabulary fetch. intentionally not filtered by traits.active:
-	// retiring a trait must not erase a cat's existing, historical association.
+	// joins the vocabulary (and its group) so cat detail can render a display
+	// label without a separate vocabulary fetch. intentionally not filtered by
+	// traits.active: retiring a trait must not erase a cat's existing,
+	// historical association.
 	ListCatTraits(ctx context.Context, catID pgtype.UUID) ([]ListCatTraitsRow, error)
 	// newest-first keyset pagination: (created_at, seq) both descending, seq
 	// breaking ties deterministically when created_at collides. before_created_at
 	// is null on the first page; the caller fetches row_limit+1 rows to detect
 	// whether a next page exists, then trims the extra row before responding.
+	// kind/needs_help_category/needs_help_expires_at (issue #23) let the client
+	// render a needs-help entry distinctly from an ordinary one; active-vs-
+	// expired for a needs-help entry is decided by the service layer against an
+	// injected clock, never by this query's own now() or the client's own clock.
 	ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) ([]ListCatUpdatesRow, error)
 	// area && envelope::geography uses cats_area_gix (gist on geography supports
 	// the && bounding-box operator); st_makeenvelope builds the requested viewport.
 	// name/area_label are the minimum extra fields the map-marker preview sheet
 	// needs (issue #21 prototype-parity correction) — no second full-detail
-	// fetch on marker tap.
+	// fetch on marker tap. the lateral join returns each cat's latest
+	// needs-help update (issue #4/#23), whether or not it has since expired —
+	// ListNearby (service layer) is the one that decides active-vs-expired,
+	// against an injected clock, not this query's own now().
 	ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
 	UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UUID, error)
 	// loads/updates the vocabulary itself (seed data only for now — there's no
 	// admin endpoint). upserting on key lets seed re-runs adjust display_name/
-	// sort_order/active in place instead of erroring on a duplicate key.
+	// group_key/sort_order/active in place instead of erroring on a duplicate key.
 	UpsertTrait(ctx context.Context, arg UpsertTraitParams) (string, error)
+	// loads/updates the group vocabulary (seed data only, same rationale as
+	// UpsertTrait).
+	UpsertTraitGroup(ctx context.Context, arg UpsertTraitGroupParams) (string, error)
 	UpsertWorkspacePing(ctx context.Context, arg UpsertWorkspacePingParams) (UpsertWorkspacePingRow, error)
 }
 

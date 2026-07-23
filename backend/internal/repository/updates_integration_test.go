@@ -9,11 +9,36 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tekiristanbul/tekir/backend/internal/repository"
 )
+
+// isCheckViolation reports whether err is a postgres check-constraint
+// failure (sqlstate 23514) — the mechanism updates_kind_fields_ck (issue
+// #23) and update_statuses' status check use to reject an invalid
+// ordinary/needs-help field combination or an unlisted category.
+func isCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
+}
+
+func createNeedsHelpUpdate(t *testing.T, ctx context.Context, store *repository.Store, catID pgtype.UUID, createdAt time.Time, category string) {
+	t.Helper()
+	_, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:              catID,
+		Kind:               "needs_help",
+		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
+		NeedsHelpCategory:  pgtype.Text{String: category, Valid: true},
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("create needs-help update: %v", err)
+	}
+}
 
 // newTestStore connects to DATABASE_URL, skipping the test if it isn't set
 // (mirrors cats_integration_test.go: requires a real, migrated database).
@@ -60,6 +85,7 @@ func createTestUpdate(t *testing.T, ctx context.Context, store *repository.Store
 	row, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
 		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		CatID:     catID,
+		Kind:      "ordinary",
 		Comment:   commentText,
 		CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
 	})
@@ -243,5 +269,144 @@ func TestStore_ListCatUpdates_NoCommentIsNull(t *testing.T) {
 	}
 	if rows[0].Comment.Valid {
 		t.Errorf("expected no comment, got %q", rows[0].Comment.String)
+	}
+}
+
+func TestStore_CreateUpdate_AllFiveNeedsHelpCategories(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	id := upsertTestCat(t, ctx, store, "needs-help demo")
+	categories := []string{"injured_or_sick", "food_needed", "water_needed", "unsafe_location", "trapped"}
+	for i, category := range categories {
+		createNeedsHelpUpdate(t, ctx, store, id, time.Now().Add(-time.Duration(i)*time.Minute), category)
+	}
+}
+
+func TestStore_CreateUpdate_InvalidNeedsHelpCategoryRejected(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	id := upsertTestCat(t, ctx, store, "invalid category")
+	_, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:              id,
+		Kind:               "needs_help",
+		CreatedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		NeedsHelpCategory:  pgtype.Text{String: "not_a_real_category", Valid: true},
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(72 * time.Hour), Valid: true},
+	})
+	if !isCheckViolation(err) {
+		t.Fatalf("expected a check-constraint violation for an unlisted category, got %v", err)
+	}
+}
+
+func TestStore_CreateUpdate_OrdinaryCannotCarryNeedsHelpFields(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	id := upsertTestCat(t, ctx, store, "ordinary with stray needs-help field")
+	_, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+		ID:                pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:             id,
+		Kind:              "ordinary",
+		CreatedAt:         pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		NeedsHelpCategory: pgtype.Text{String: "trapped", Valid: true},
+	})
+	if !isCheckViolation(err) {
+		t.Fatalf("expected a check-constraint violation for an ordinary update carrying a needs-help category, got %v", err)
+	}
+}
+
+func TestStore_CreateUpdate_NeedsHelpRequiresCategoryAndExpiry(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	id := upsertTestCat(t, ctx, store, "incomplete needs-help")
+
+	t.Run("missing category", func(t *testing.T) {
+		_, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+			ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			CatID:              id,
+			Kind:               "needs_help",
+			CreatedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(72 * time.Hour), Valid: true},
+		})
+		if !isCheckViolation(err) {
+			t.Fatalf("expected a check-constraint violation for a needs-help update missing its category, got %v", err)
+		}
+	})
+
+	t.Run("missing expiry", func(t *testing.T) {
+		_, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+			ID:                pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			CatID:             id,
+			Kind:              "needs_help",
+			CreatedAt:         pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			NeedsHelpCategory: pgtype.Text{String: "trapped", Valid: true},
+		})
+		if !isCheckViolation(err) {
+			t.Fatalf("expected a check-constraint violation for a needs-help update missing its expiry, got %v", err)
+		}
+	})
+}
+
+func TestStore_ListCatUpdates_NeedsHelpEntryCarriesCategoryAndExpiry(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	id := upsertTestCat(t, ctx, store, "needs-help history entry")
+	createNeedsHelpUpdate(t, ctx, store, id, time.Now().Add(-time.Hour), "food_needed")
+
+	rows, err := store.ListCatUpdates(ctx, repository.ListCatUpdatesParams{CatID: id, RowLimit: 20})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(rows))
+	}
+	if rows[0].Kind != "needs_help" {
+		t.Errorf("expected kind needs_help, got %q", rows[0].Kind)
+	}
+	if !rows[0].NeedsHelpCategory.Valid || rows[0].NeedsHelpCategory.String != "food_needed" {
+		t.Errorf("unexpected needs_help_category: %v", rows[0].NeedsHelpCategory)
+	}
+	if !rows[0].NeedsHelpExpiresAt.Valid {
+		t.Error("expected needs_help_expires_at to be set")
+	}
+	// an expired needs-help update stays in history, exactly like an
+	// ordinary one — expiry only ever affects active-surface emphasis,
+	// never row survival (issue #4/#23).
+}
+
+func TestStore_GetCatByID_LatestNeedsHelpUpdate(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	id := upsertTestCat(t, ctx, store, "repeated alerts")
+	createNeedsHelpUpdate(t, ctx, store, id, time.Now().Add(-10*time.Hour), "water_needed")
+	createNeedsHelpUpdate(t, ctx, store, id, time.Now().Add(-time.Hour), "trapped")
+
+	row, err := store.GetCatByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !row.NeedsHelpCategory.Valid || row.NeedsHelpCategory.String != "trapped" {
+		t.Errorf("expected the latest needs-help update's category (trapped), got %v", row.NeedsHelpCategory)
+	}
+}
+
+func TestStore_GetCatByID_NoNeedsHelpUpdateIsNull(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	id := upsertTestCat(t, ctx, store, "never needed help")
+
+	row, err := store.GetCatByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if row.NeedsHelpCategory.Valid || row.NeedsHelpCreatedAt.Valid || row.NeedsHelpExpiresAt.Valid {
+		t.Errorf("expected no needs-help fields for a cat with no needs-help update, got %+v", row)
 	}
 }
