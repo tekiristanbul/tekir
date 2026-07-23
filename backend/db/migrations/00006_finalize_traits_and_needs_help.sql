@@ -52,6 +52,23 @@ create index updates_needs_help_idx on updates (cat_id, created_at desc, seq des
 -- columns for one fact is exactly the "separate mutable state that can
 -- drift" shape issue #23 asks to avoid, so it's dropped in favor of a
 -- single source of truth (see docs/architecture/db.md).
+--
+-- guard first: a currently-active needs_help_until can't be losslessly
+-- converted into a needs-help update row (it carries no category, which
+-- this migration has no way to invent), so silently dropping the column
+-- would silently turn off a real, currently-visible alert with nothing to
+-- replace it. fail loudly instead and let a human decide (e.g. hand-write
+-- a needs-help update carrying the right category first) rather than
+-- discarding state no later step can recover.
+-- +goose StatementBegin
+do $$
+begin
+  if exists (select 1 from cats where needs_help_until is not null and needs_help_until > now()) then
+    raise exception 'cats.needs_help_until has active (non-expired) values - resolve them into needs-help updates before dropping the column (see issue #23)';
+  end if;
+end $$;
+-- +goose StatementEnd
+
 drop index if exists cats_needs_help_idx;
 alter table cats drop column needs_help_until;
 

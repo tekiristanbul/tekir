@@ -125,9 +125,11 @@ create index updates_needs_help_idx on updates (cat_id, created_at desc, seq des
 -- one row per structured status on an update (an update may carry several,
 -- e.g. "seen" + "water_provided"). fixed check constraint, not free text or
 -- a `traits`-style vocabulary table: issue #3's product-owner decision
--- approved this exact, closed mvp vocabulary, unlike cat traits. only ever
--- populated for an ordinary update — a needs-help update carries a category
--- instead (see updates.needs_help_category above), never both.
+-- approved this exact, closed mvp vocabulary, unlike cat traits. intended
+-- to be populated only for an ordinary update — a needs-help update
+-- carries a category instead (see updates.needs_help_category above) — but
+-- that pairing, and issue #3's "at least one status per ordinary update"
+-- rule, aren't enforced at this layer yet; see the open question below.
 create table update_statuses (
   update_id  uuid not null references updates(id),
   status     text not null check (status in ('seen', 'fed', 'water_provided')),
@@ -198,6 +200,7 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 - cat-inactivity threshold.
 - the specific trait vocabulary content (labels/grouping) is pending product-owner review; the storage model itself (keyed, extensible, data not enum, grouped) is decided.
 - duplicate-cat merge mechanism and whether it needs a `merged_into` column or something richer.
+- two update-content invariants from issue #3 aren't enforced at the database level yet: an ordinary update must carry at least one `update_statuses` row, and a needs-help update must carry none. `updates` and `update_statuses` are written as separate inserts with no transaction/trigger tying them together, so today's schema permits a zero-status ordinary update or a needs-help update with statuses attached. not a concern for issue #23 (there's no write endpoint yet to produce either), but the future `POST /v1/cats/{cat_id}/updates` write path ([[api]]) must enforce this itself — in a single transaction, a trigger, or both — before it's safe to treat as a real invariant rather than a documented intent.
 
 ## out of scope
 
