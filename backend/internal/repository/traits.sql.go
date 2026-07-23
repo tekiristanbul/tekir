@@ -30,21 +30,27 @@ func (q *Queries) CreateCatTrait(ctx context.Context, arg CreateCatTraitParams) 
 }
 
 const listActiveTraits = `-- name: ListActiveTraits :many
-select key, display_name
-from traits
-where active
-order by sort_order, key
+select t.key, t.display_name, t.group_key, g.display_name as group_display_name
+from traits t
+left join trait_groups g on g.key = t.group_key
+where t.active
+order by coalesce(g.sort_order, 2147483647), t.sort_order, t.key
 `
 
 type ListActiveTraitsRow struct {
-	Key         string `json:"key"`
-	DisplayName string `json:"display_name"`
+	Key              string      `json:"key"`
+	DisplayName      string      `json:"display_name"`
+	GroupKey         pgtype.Text `json:"group_key"`
+	GroupDisplayName pgtype.Text `json:"group_display_name"`
 }
 
-// the selectable vocabulary: what a future add/edit-cat flow renders as
-// options. retired (active=false) traits are excluded here but not from
+// the selectable vocabulary: what the future grouped multi-select picker
+// (product-owner decision on issue #21/#23) renders as options, ordered
+// group-then-trait so a client can render section headers without its own
+// sort pass. retired (active=false) traits are excluded here but not from
 // ListCatTraits, so a cat that already carries a retired trait keeps
-// showing it.
+// showing it. a trait with no group (group_key null) sorts after every
+// grouped trait rather than interleaving arbitrarily.
 func (q *Queries) ListActiveTraits(ctx context.Context) ([]ListActiveTraitsRow, error) {
 	rows, err := q.db.Query(ctx, listActiveTraits)
 	if err != nil {
@@ -54,7 +60,12 @@ func (q *Queries) ListActiveTraits(ctx context.Context) ([]ListActiveTraitsRow, 
 	var items []ListActiveTraitsRow
 	for rows.Next() {
 		var i ListActiveTraitsRow
-		if err := rows.Scan(&i.Key, &i.DisplayName); err != nil {
+		if err := rows.Scan(
+			&i.Key,
+			&i.DisplayName,
+			&i.GroupKey,
+			&i.GroupDisplayName,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -66,21 +77,25 @@ func (q *Queries) ListActiveTraits(ctx context.Context) ([]ListActiveTraitsRow, 
 }
 
 const listCatTraits = `-- name: ListCatTraits :many
-select t.key, t.display_name
+select t.key, t.display_name, t.group_key, g.display_name as group_display_name
 from cat_traits ct
 join traits t on t.key = ct.trait_key
+left join trait_groups g on g.key = t.group_key
 where ct.cat_id = $1
-order by t.sort_order, t.key
+order by coalesce(g.sort_order, 2147483647), t.sort_order, t.key
 `
 
 type ListCatTraitsRow struct {
-	Key         string `json:"key"`
-	DisplayName string `json:"display_name"`
+	Key              string      `json:"key"`
+	DisplayName      string      `json:"display_name"`
+	GroupKey         pgtype.Text `json:"group_key"`
+	GroupDisplayName pgtype.Text `json:"group_display_name"`
 }
 
-// joins the vocabulary so cat detail can render a display label without a
-// separate vocabulary fetch. intentionally not filtered by traits.active:
-// retiring a trait must not erase a cat's existing, historical association.
+// joins the vocabulary (and its group) so cat detail can render a display
+// label without a separate vocabulary fetch. intentionally not filtered by
+// traits.active: retiring a trait must not erase a cat's existing,
+// historical association.
 func (q *Queries) ListCatTraits(ctx context.Context, catID pgtype.UUID) ([]ListCatTraitsRow, error) {
 	rows, err := q.db.Query(ctx, listCatTraits, catID)
 	if err != nil {
@@ -90,7 +105,12 @@ func (q *Queries) ListCatTraits(ctx context.Context, catID pgtype.UUID) ([]ListC
 	var items []ListCatTraitsRow
 	for rows.Next() {
 		var i ListCatTraitsRow
-		if err := rows.Scan(&i.Key, &i.DisplayName); err != nil {
+		if err := rows.Scan(
+			&i.Key,
+			&i.DisplayName,
+			&i.GroupKey,
+			&i.GroupDisplayName,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -102,32 +122,59 @@ func (q *Queries) ListCatTraits(ctx context.Context, catID pgtype.UUID) ([]ListC
 }
 
 const upsertTrait = `-- name: UpsertTrait :one
-insert into traits (key, display_name, active, sort_order)
-values ($1, $2, $3, $4)
+insert into traits (key, display_name, group_key, active, sort_order)
+values ($1, $2, $3, $4, $5)
 on conflict (key) do update set
   display_name = excluded.display_name,
+  group_key = excluded.group_key,
   active = excluded.active,
   sort_order = excluded.sort_order
 returning key
 `
 
 type UpsertTraitParams struct {
-	Key         string `json:"key"`
-	DisplayName string `json:"display_name"`
-	Active      bool   `json:"active"`
-	SortOrder   int32  `json:"sort_order"`
+	Key         string      `json:"key"`
+	DisplayName string      `json:"display_name"`
+	GroupKey    pgtype.Text `json:"group_key"`
+	Active      bool        `json:"active"`
+	SortOrder   int32       `json:"sort_order"`
 }
 
 // loads/updates the vocabulary itself (seed data only for now — there's no
 // admin endpoint). upserting on key lets seed re-runs adjust display_name/
-// sort_order/active in place instead of erroring on a duplicate key.
+// group_key/sort_order/active in place instead of erroring on a duplicate key.
 func (q *Queries) UpsertTrait(ctx context.Context, arg UpsertTraitParams) (string, error) {
 	row := q.db.QueryRow(ctx, upsertTrait,
 		arg.Key,
 		arg.DisplayName,
+		arg.GroupKey,
 		arg.Active,
 		arg.SortOrder,
 	)
+	var key string
+	err := row.Scan(&key)
+	return key, err
+}
+
+const upsertTraitGroup = `-- name: UpsertTraitGroup :one
+insert into trait_groups (key, display_name, sort_order)
+values ($1, $2, $3)
+on conflict (key) do update set
+  display_name = excluded.display_name,
+  sort_order = excluded.sort_order
+returning key
+`
+
+type UpsertTraitGroupParams struct {
+	Key         string `json:"key"`
+	DisplayName string `json:"display_name"`
+	SortOrder   int32  `json:"sort_order"`
+}
+
+// loads/updates the group vocabulary (seed data only, same rationale as
+// UpsertTrait).
+func (q *Queries) UpsertTraitGroup(ctx context.Context, arg UpsertTraitGroupParams) (string, error) {
+	row := q.db.QueryRow(ctx, upsertTraitGroup, arg.Key, arg.DisplayName, arg.SortOrder)
 	var key string
 	err := row.Scan(&key)
 	return key, err

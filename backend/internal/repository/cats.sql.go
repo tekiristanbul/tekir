@@ -33,25 +33,40 @@ select
   c.area_label,
   c.photo_url,
   c.created_at,
-  c.last_update_at
+  c.last_update_at,
+  nh.needs_help_category,
+  nh.created_at as needs_help_created_at,
+  nh.needs_help_expires_at
 from cats c
+left join lateral (
+  select u.needs_help_category, u.created_at, u.needs_help_expires_at
+  from updates u
+  where u.cat_id = c.id and u.kind = 'needs_help'
+  order by u.created_at desc, u.seq desc
+  limit 1
+) nh on true
 where c.id = $1
 `
 
 type GetCatByIDRow struct {
-	ID           pgtype.UUID        `json:"id"`
-	Name         pgtype.Text        `json:"name"`
-	Lng          float64            `json:"lng"`
-	Lat          float64            `json:"lat"`
-	AreaLabel    pgtype.Text        `json:"area_label"`
-	PhotoUrl     pgtype.Text        `json:"photo_url"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	LastUpdateAt pgtype.Timestamptz `json:"last_update_at"`
+	ID                 pgtype.UUID        `json:"id"`
+	Name               pgtype.Text        `json:"name"`
+	Lng                float64            `json:"lng"`
+	Lat                float64            `json:"lat"`
+	AreaLabel          pgtype.Text        `json:"area_label"`
+	PhotoUrl           pgtype.Text        `json:"photo_url"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
+	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
+	NeedsHelpCreatedAt pgtype.Timestamptz `json:"needs_help_created_at"`
+	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 }
 
 // traits are fetched separately via ListCatTraits (join against the traits
 // vocabulary) rather than aggregated in here, so each trait can carry its
-// display_name without hand-rolling composite-type aggregation in sql.
+// display_name without hand-rolling composite-type aggregation in sql. the
+// lateral join is the same latest-needs-help-update lookup as
+// ListCatsInBounds, unfiltered by expiry for the same reason.
 func (q *Queries) GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error) {
 	row := q.db.QueryRow(ctx, getCatByID, id)
 	var i GetCatByIDRow
@@ -64,27 +79,39 @@ func (q *Queries) GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow
 		&i.PhotoUrl,
 		&i.CreatedAt,
 		&i.LastUpdateAt,
+		&i.NeedsHelpCategory,
+		&i.NeedsHelpCreatedAt,
+		&i.NeedsHelpExpiresAt,
 	)
 	return i, err
 }
 
 const listCatsInBounds = `-- name: ListCatsInBounds :many
 select
-  id,
-  name,
-  photo_url,
-  st_x(area::geometry)::float8 as lng,
-  st_y(area::geometry)::float8 as lat,
-  area_label,
-  (needs_help_until is not null and needs_help_until > now()) as needs_help,
-  last_update_at
-from cats
-where status = 'active'
-  and area && st_setsrid(
+  c.id,
+  c.name,
+  c.photo_url,
+  st_x(c.area::geometry)::float8 as lng,
+  st_y(c.area::geometry)::float8 as lat,
+  c.area_label,
+  c.last_update_at,
+  nh.needs_help_category,
+  nh.created_at as needs_help_created_at,
+  nh.needs_help_expires_at
+from cats c
+left join lateral (
+  select u.needs_help_category, u.created_at, u.needs_help_expires_at
+  from updates u
+  where u.cat_id = c.id and u.kind = 'needs_help'
+  order by u.created_at desc, u.seq desc
+  limit 1
+) nh on true
+where c.status = 'active'
+  and c.area && st_setsrid(
     st_makeenvelope($1::float8, $2::float8, $3::float8, $4::float8),
     4326
   )::geography
-order by created_at desc
+order by c.created_at desc
 `
 
 type ListCatsInBoundsParams struct {
@@ -95,21 +122,26 @@ type ListCatsInBoundsParams struct {
 }
 
 type ListCatsInBoundsRow struct {
-	ID           pgtype.UUID        `json:"id"`
-	Name         pgtype.Text        `json:"name"`
-	PhotoUrl     pgtype.Text        `json:"photo_url"`
-	Lng          float64            `json:"lng"`
-	Lat          float64            `json:"lat"`
-	AreaLabel    pgtype.Text        `json:"area_label"`
-	NeedsHelp    pgtype.Bool        `json:"needs_help"`
-	LastUpdateAt pgtype.Timestamptz `json:"last_update_at"`
+	ID                 pgtype.UUID        `json:"id"`
+	Name               pgtype.Text        `json:"name"`
+	PhotoUrl           pgtype.Text        `json:"photo_url"`
+	Lng                float64            `json:"lng"`
+	Lat                float64            `json:"lat"`
+	AreaLabel          pgtype.Text        `json:"area_label"`
+	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
+	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
+	NeedsHelpCreatedAt pgtype.Timestamptz `json:"needs_help_created_at"`
+	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 }
 
 // area && envelope::geography uses cats_area_gix (gist on geography supports
 // the && bounding-box operator); st_makeenvelope builds the requested viewport.
 // name/area_label are the minimum extra fields the map-marker preview sheet
 // needs (issue #21 prototype-parity correction) — no second full-detail
-// fetch on marker tap.
+// fetch on marker tap. the lateral join returns each cat's latest
+// needs-help update (issue #4/#23), whether or not it has since expired —
+// ListNearby (service layer) is the one that decides active-vs-expired,
+// against an injected clock, not this query's own now().
 func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error) {
 	rows, err := q.db.Query(ctx, listCatsInBounds,
 		arg.MinLng,
@@ -131,8 +163,10 @@ func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsPara
 			&i.Lng,
 			&i.Lat,
 			&i.AreaLabel,
-			&i.NeedsHelp,
 			&i.LastUpdateAt,
+			&i.NeedsHelpCategory,
+			&i.NeedsHelpCreatedAt,
+			&i.NeedsHelpExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -145,7 +179,7 @@ func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsPara
 }
 
 const upsertCat = `-- name: UpsertCat :one
-insert into cats (id, name, area, area_label, photo_url, status, last_update_at, needs_help_until)
+insert into cats (id, name, area, area_label, photo_url, status, last_update_at)
 values (
   $1,
   $2,
@@ -153,8 +187,7 @@ values (
   $5,
   $6,
   $7,
-  $8,
-  $9
+  $8
 )
 on conflict (id) do update set
   name = excluded.name,
@@ -162,21 +195,19 @@ on conflict (id) do update set
   area_label = excluded.area_label,
   photo_url = excluded.photo_url,
   status = excluded.status,
-  last_update_at = excluded.last_update_at,
-  needs_help_until = excluded.needs_help_until
+  last_update_at = excluded.last_update_at
 returning id
 `
 
 type UpsertCatParams struct {
-	ID             pgtype.UUID        `json:"id"`
-	Name           pgtype.Text        `json:"name"`
-	Lng            float64            `json:"lng"`
-	Lat            float64            `json:"lat"`
-	AreaLabel      pgtype.Text        `json:"area_label"`
-	PhotoUrl       pgtype.Text        `json:"photo_url"`
-	Status         string             `json:"status"`
-	LastUpdateAt   pgtype.Timestamptz `json:"last_update_at"`
-	NeedsHelpUntil pgtype.Timestamptz `json:"needs_help_until"`
+	ID           pgtype.UUID        `json:"id"`
+	Name         pgtype.Text        `json:"name"`
+	Lng          float64            `json:"lng"`
+	Lat          float64            `json:"lat"`
+	AreaLabel    pgtype.Text        `json:"area_label"`
+	PhotoUrl     pgtype.Text        `json:"photo_url"`
+	Status       string             `json:"status"`
+	LastUpdateAt pgtype.Timestamptz `json:"last_update_at"`
 }
 
 func (q *Queries) UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UUID, error) {
@@ -189,7 +220,6 @@ func (q *Queries) UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UU
 		arg.PhotoUrl,
 		arg.Status,
 		arg.LastUpdateAt,
-		arg.NeedsHelpUntil,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)

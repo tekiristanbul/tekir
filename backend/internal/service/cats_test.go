@@ -52,18 +52,21 @@ func (f fakeCatsLister) ListCatTraits(ctx context.Context, catID pgtype.UUID) ([
 }
 
 func TestCatsService_ListNearby(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	id := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	svc := NewCatsService(fakeCatsLister{rows: []repository.ListCatsInBoundsRow{
 		{
-			ID:        id,
-			Name:      pgtype.Text{String: "tekir", Valid: true},
-			PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
-			Lng:       28.9744,
-			Lat:       41.0256,
-			AreaLabel: pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
-			NeedsHelp: pgtype.Bool{Bool: true, Valid: true},
+			ID:                 id,
+			Name:               pgtype.Text{String: "tekir", Valid: true},
+			PhotoUrl:           pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+			Lng:                28.9744,
+			Lat:                41.0256,
+			AreaLabel:          pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
+			NeedsHelpCategory:  pgtype.Text{String: "injured_or_sick", Valid: true},
+			NeedsHelpCreatedAt: pgtype.Timestamptz{Time: fixedNow.Add(-time.Hour), Valid: true},
+			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: fixedNow.Add(time.Hour), Valid: true},
 		},
-	}})
+	}}, WithClock(func() time.Time { return fixedNow }))
 
 	markers, err := svc.ListNearby(context.Background(), Bounds{MinLng: 28, MinLat: 41, MaxLng: 29, MaxLat: 42})
 	if err != nil {
@@ -77,8 +80,14 @@ func TestCatsService_ListNearby(t *testing.T) {
 	if m.ID != uuid.UUID(id.Bytes).String() {
 		t.Errorf("expected id %s, got %s", uuid.UUID(id.Bytes).String(), m.ID)
 	}
-	if !m.NeedsHelp {
-		t.Error("expected needs_help to be true")
+	if m.ActiveAlert == nil {
+		t.Fatal("expected an active alert")
+	}
+	if m.ActiveAlert.Category != "injured_or_sick" {
+		t.Errorf("expected category injured_or_sick, got %q", m.ActiveAlert.Category)
+	}
+	if m.ActiveAlert.CategoryLabel != "yaralı / hasta" {
+		t.Errorf("unexpected category label: %q", m.ActiveAlert.CategoryLabel)
 	}
 	if m.LastUpdateAt != nil {
 		t.Errorf("expected nil last_update_at, got %v", m.LastUpdateAt)
@@ -297,5 +306,183 @@ func TestCatsService_ListCatUpdates_InvalidCatID(t *testing.T) {
 
 	if _, err := svc.ListCatUpdates(context.Background(), "not-a-uuid", "", 0); !errors.Is(err, ErrInvalidCatID) {
 		t.Fatalf("expected ErrInvalidCatID, got %v", err)
+	}
+}
+
+func TestNeedsHelpExpiresAt(t *testing.T) {
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	got := NeedsHelpExpiresAt(created)
+	want := created.Add(72 * time.Hour)
+	if !got.Equal(want) {
+		t.Errorf("expected server-controlled 72h expiry %v, got %v", want, got)
+	}
+}
+
+func TestNeedsHelpCategoryLabels_AllFiveCategories(t *testing.T) {
+	want := []string{"injured_or_sick", "food_needed", "water_needed", "unsafe_location", "trapped"}
+	if len(needsHelpCategoryLabels) != len(want) {
+		t.Fatalf("expected exactly %d categories, got %d: %v", len(want), len(needsHelpCategoryLabels), needsHelpCategoryLabels)
+	}
+	for _, category := range want {
+		if label, ok := needsHelpCategoryLabels[category]; !ok || label == "" {
+			t.Errorf("expected a non-empty turkish label for category %q, got %q (present=%v)", category, label, ok)
+		}
+	}
+}
+
+func TestCatsService_ListNearby_ActiveAlertBoundaries(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	baseRow := func(expiresAt time.Time) repository.ListCatsInBoundsRow {
+		return repository.ListCatsInBoundsRow{
+			ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			NeedsHelpCategory:  pgtype.Text{String: "trapped", Valid: true},
+			NeedsHelpCreatedAt: pgtype.Timestamptz{Time: expiresAt.Add(-72 * time.Hour), Valid: true},
+			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		}
+	}
+
+	cases := []struct {
+		name       string
+		expiresAt  time.Time
+		wantActive bool
+	}{
+		{"active before expiry", fixedNow.Add(time.Minute), true},
+		{"expired exactly at expiry", fixedNow, false},
+		{"expired after expiry", fixedNow.Add(-time.Minute), false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc := NewCatsService(
+				fakeCatsLister{rows: []repository.ListCatsInBoundsRow{baseRow(c.expiresAt)}},
+				WithClock(func() time.Time { return fixedNow }),
+			)
+			markers, err := svc.ListNearby(context.Background(), Bounds{MinLng: 28, MinLat: 41, MaxLng: 29, MaxLat: 42})
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			gotActive := markers[0].ActiveAlert != nil
+			if gotActive != c.wantActive {
+				t.Errorf("expected active=%v, got active=%v (alert=%+v)", c.wantActive, gotActive, markers[0].ActiveAlert)
+			}
+		})
+	}
+}
+
+func TestCatsService_GetCatDetail_ActiveAlert(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	id := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:                 pgtype.UUID{Bytes: id, Valid: true},
+			NeedsHelpCategory:  pgtype.Text{String: "unsafe_location", Valid: true},
+			NeedsHelpCreatedAt: pgtype.Timestamptz{Time: fixedNow.Add(-time.Hour), Valid: true},
+			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: fixedNow.Add(time.Hour), Valid: true},
+		},
+	}, WithClock(func() time.Time { return fixedNow }))
+
+	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if detail.ActiveAlert == nil {
+		t.Fatal("expected an active alert")
+	}
+	if detail.ActiveAlert.Category != "unsafe_location" {
+		t.Errorf("expected category unsafe_location, got %q", detail.ActiveAlert.Category)
+	}
+	if detail.ActiveAlert.CategoryLabel != "güvenli olmayan konum" {
+		t.Errorf("unexpected category label: %q", detail.ActiveAlert.CategoryLabel)
+	}
+}
+
+func TestCatsService_GetCatDetail_NoActiveAlert(t *testing.T) {
+	id := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{ID: pgtype.UUID{Bytes: id, Valid: true}},
+	})
+
+	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if detail.ActiveAlert != nil {
+		t.Errorf("expected no active alert, got %+v", detail.ActiveAlert)
+	}
+}
+
+func TestCatsService_ListCatUpdates_NeedsHelpEntry(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name       string
+		expiresAt  time.Time
+		wantActive bool
+	}{
+		{"active before expiry", fixedNow.Add(time.Hour), true},
+		{"expired exactly at expiry", fixedNow, false},
+		{"expired after expiry", fixedNow.Add(-time.Hour), false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc := NewCatsService(fakeCatsLister{
+				exists: true,
+				updateRows: []repository.ListCatUpdatesRow{
+					{
+						ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+						Kind:               "needs_help",
+						CreatedAt:          pgtype.Timestamptz{Time: c.expiresAt.Add(-72 * time.Hour), Valid: true},
+						Seq:                pgtype.Int8{Int64: 1, Valid: true},
+						NeedsHelpCategory:  pgtype.Text{String: "food_needed", Valid: true},
+						NeedsHelpExpiresAt: pgtype.Timestamptz{Time: c.expiresAt, Valid: true},
+						Statuses:           []string{},
+					},
+				},
+			}, WithClock(func() time.Time { return fixedNow }))
+
+			page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0)
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if len(page.Items) != 1 {
+				t.Fatalf("expected the needs-help entry to remain in history regardless of expiry, got %d items", len(page.Items))
+			}
+			item := page.Items[0]
+			if item.Kind != "needs_help" {
+				t.Errorf("expected kind needs_help, got %q", item.Kind)
+			}
+			if item.NeedsHelpCategory == nil || *item.NeedsHelpCategory != "food_needed" {
+				t.Errorf("unexpected category: %v", item.NeedsHelpCategory)
+			}
+			if item.NeedsHelpActive == nil || *item.NeedsHelpActive != c.wantActive {
+				t.Errorf("expected active=%v, got %v", c.wantActive, item.NeedsHelpActive)
+			}
+		})
+	}
+}
+
+func TestCatsService_ListCatUpdates_OrdinaryEntryHasNoNeedsHelpFields(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{
+		exists: true,
+		updateRows: []repository.ListCatUpdatesRow{
+			{
+				ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				Kind:      "ordinary",
+				CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				Seq:       pgtype.Int8{Int64: 1, Valid: true},
+				Statuses:  []string{"seen"},
+			},
+		},
+	})
+
+	page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	item := page.Items[0]
+	if item.NeedsHelpCategory != nil || item.NeedsHelpCategoryLabel != nil || item.NeedsHelpExpiresAt != nil || item.NeedsHelpActive != nil {
+		t.Errorf("expected no needs-help fields on an ordinary entry, got %+v", item)
 	}
 }

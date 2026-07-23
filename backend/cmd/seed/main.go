@@ -13,6 +13,7 @@ import (
 
 	"github.com/tekiristanbul/tekir/backend/internal/config"
 	"github.com/tekiristanbul/tekir/backend/internal/repository"
+	"github.com/tekiristanbul/tekir/backend/internal/service"
 )
 
 // fixed so re-running the seed updates the same row instead of duplicating it.
@@ -37,53 +38,87 @@ var seedPhotos = []string{
 // a tight cluster near galata tower (walking distance apart, for clustering)
 // plus a few cats further out (taksim, cihangir, kadıköy across the strait)
 // so panning the map away from the cluster demonstrates the bbox refetch.
+// needs-help state now lives on the updates themselves (see seedNeedsHelp
+// below), not as a per-cat boolean.
 var seedCats = []struct {
 	id        string
 	name      string
 	lat, lng  float64
-	needsHelp bool
 	areaLabel string
 }{
-	{"00000000-0000-4000-8000-000000000010", "tekir", 41.02561, 28.97440, false, "Galata Kulesi çevresi, Beyoğlu"},
-	{"00000000-0000-4000-8000-000000000011", "boncuk", 41.02575, 28.97455, false, "Galata Kulesi çevresi, Beyoğlu"},
-	{"00000000-0000-4000-8000-000000000012", "duman", 41.02548, 28.97430, true, "Galata Kulesi çevresi, Beyoğlu"},
-	{"00000000-0000-4000-8000-000000000013", "pamuk", 41.02590, 28.97465, false, "Galata Kulesi çevresi, Beyoğlu"},
-	{"00000000-0000-4000-8000-000000000014", "sarman", 41.02530, 28.97410, false, "Galata Kulesi çevresi, Beyoğlu"},
-	{"00000000-0000-4000-8000-000000000015", "minnoş", 41.02605, 28.97480, false, "Galata Kulesi çevresi, Beyoğlu"},
-	{"00000000-0000-4000-8000-000000000016", "zeytin", 41.02515, 28.97395, false, "Galata Kulesi çevresi, Beyoğlu"},
-	{"00000000-0000-4000-8000-000000000017", "taksim kedisi", 41.03700, 28.98500, false, "Taksim Meydanı, Beyoğlu"},
-	{"00000000-0000-4000-8000-000000000018", "cihangir kedisi", 41.03160, 28.98360, false, "Cihangir, Beyoğlu"},
-	{"00000000-0000-4000-8000-000000000019", "kadıköy kedisi", 40.99110, 29.02690, true, "Moda Sahili, Kadıköy"},
+	{"00000000-0000-4000-8000-000000000010", "tekir", 41.02561, 28.97440, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000011", "boncuk", 41.02575, 28.97455, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000012", "duman", 41.02548, 28.97430, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000013", "pamuk", 41.02590, 28.97465, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000014", "sarman", 41.02530, 28.97410, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000015", "minnoş", 41.02605, 28.97480, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000016", "zeytin", 41.02515, 28.97395, "Galata Kulesi çevresi, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000017", "taksim kedisi", 41.03700, 28.98500, "Taksim Meydanı, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000018", "cihangir kedisi", 41.03160, 28.98360, "Cihangir, Beyoğlu"},
+	{"00000000-0000-4000-8000-000000000019", "kadıköy kedisi", 40.99110, 29.02690, "Moda Sahili, Kadıköy"},
 }
 
-// seedTraitVocabulary is the initial proposed vocabulary from the issue #21
-// product clarification — the product owner still needs to review the
-// labels and grouping before merge, but the model (controlled, extensible,
-// keyed) is what's implemented here. sort_order preserves proposal order.
-var seedTraitVocabulary = []struct {
+// seedTraitGroups back the future grouped multi-select trait picker
+// (product-owner decision on issue #21/#23). sort_order preserves the order
+// the product owner listed them in.
+var seedTraitGroups = []struct {
 	key         string
 	displayName string
 }{
-	{"friendly", "Friendly"},
-	{"shy", "Shy"},
-	{"cautious", "Cautious"},
-	{"playful", "Playful"},
-	{"calm", "Calm"},
-	{"curious", "Curious"},
-	{"affectionate", "Affectionate"},
-	{"independent", "Independent"},
-	{"vocal", "Vocal"},
-	{"energetic", "Energetic"},
-	{"territorial", "Territorial"},
-	{"does_not_like_touch", "Does Not Like Touch"},
+	{"personality", "Kişilik"},
+	{"interaction_with_people", "İnsanlarla ilişki"},
+	{"interaction_with_animals", "Hayvanlarla ilişki"},
+	{"physical_characteristics", "Fiziksel özellikler"},
 }
 
-// seedCatTraits assigns a couple of vocabulary keys to a couple of cats —
-// just enough for the cat-detail demo to show traits are present, absent,
-// and (via pamuk) more than one at once.
+// seedTraitVocabulary is the initial proposed vocabulary + grouping from the
+// issue #23 product clarification — the product owner still needs to
+// approve the specific labels/grouping before merge (see docs/product/
+// cats.md), but the model (controlled, extensible, keyed, grouped) is what's
+// implemented here. sort_order is per-group, preserving proposal order.
+// "skittish" is a seed-only fixture, deliberately seeded inactive (never
+// approved by the product owner as a real vocabulary entry) purely to
+// demonstrate that a retired trait disappears from ListActiveTraits while
+// an existing cat_traits association survives (see seedCatTraits below).
+var seedTraitVocabulary = []struct {
+	key         string
+	displayName string
+	groupKey    string
+	active      bool
+}{
+	{"playful", "Oyuncu", "personality", true},
+	{"calm", "Sakin", "personality", true},
+	{"curious", "Meraklı", "personality", true},
+	{"energetic", "Hareketli", "personality", true},
+	{"independent", "Bağımsız", "personality", true},
+	{"vocal", "Konuşkan", "personality", true},
+
+	{"friendly", "İnsanlara yakın", "interaction_with_people", true},
+	{"shy", "Çekingen", "interaction_with_people", true},
+	{"cautious", "Temkinli", "interaction_with_people", true},
+	{"affectionate", "Sevecen", "interaction_with_people", true},
+	{"does_not_like_touch", "Dokunulmaktan hoşlanmaz", "interaction_with_people", true},
+	{"skittish", "Ürkek", "interaction_with_people", false},
+
+	{"cat_friendly", "Kedilerle uyumlu", "interaction_with_animals", true},
+	{"dog_friendly", "Köpeklerle uyumlu", "interaction_with_animals", true},
+	{"territorial", "Bölgeci", "interaction_with_animals", true},
+	{"prefers_solo", "Yalnız kalmayı tercih eder", "interaction_with_animals", true},
+
+	{"one_eyed", "Tek gözlü", "physical_characteristics", true},
+	{"three_legged", "Üç bacaklı", "physical_characteristics", true},
+	{"limited_mobility", "Hareket kısıtlılığı var", "physical_characteristics", true},
+}
+
+// seedCatTraits assigns vocabulary keys to a handful of cats: none (most
+// cats), one, several, more than three (minnoş — the "+n more" cat-detail
+// summary demo), and one retired-but-still-associated trait (zeytin, with
+// "skittish" — seeded inactive above).
 var seedCatTraits = map[string][]string{
 	"00000000-0000-4000-8000-000000000010": {"friendly"},
 	"00000000-0000-4000-8000-000000000013": {"friendly", "playful"},
+	"00000000-0000-4000-8000-000000000015": {"playful", "calm", "curious", "friendly"},
+	"00000000-0000-4000-8000-000000000016": {"skittish"},
 }
 
 // tekir gets a multi-update timeline for the map-to-detail demo: newest
@@ -101,6 +136,30 @@ var seedUpdates = []struct {
 	{"00000000-0000-4000-8000-000000000022", "00000000-0000-4000-8000-000000000010", 2, []string{"seen", "water_provided"}, ""},
 	{"00000000-0000-4000-8000-000000000023", "00000000-0000-4000-8000-000000000010", 1, []string{"seen"}, "still hanging around the tower"},
 	{"00000000-0000-4000-8000-000000000024", "00000000-0000-4000-8000-000000000011", 1, []string{"seen"}, "spotted near the cluster"},
+}
+
+// seedNeedsHelp (issue #4/#23) deterministically covers every boundary
+// case the 72-hour, no-resolve expiry model needs demonstrated:
+//   - duman: comfortably active (created 1h ago).
+//   - kadıköy kedisi: active, but right at the edge of the 72h window
+//     (created 71h30m ago — expires in 30 minutes).
+//   - tekir: expired exactly at the 72h boundary (created exactly 72h ago).
+//   - boncuk: expired long ago, well past the boundary, and carries no
+//     other active alert.
+//
+// sarman and every other seeded cat intentionally get no needs-help update
+// at all, covering the "no active alert, no history of one either" case.
+// expires_at is computed here exactly the way the (not-yet-built) write
+// endpoint will: created_at + 72h, server-side, never client-supplied.
+var seedNeedsHelp = []struct {
+	id, catID  string
+	createdAgo time.Duration
+	category   string
+}{
+	{"00000000-0000-4000-8000-000000000030", "00000000-0000-4000-8000-000000000012", 1 * time.Hour, "injured_or_sick"},
+	{"00000000-0000-4000-8000-000000000031", "00000000-0000-4000-8000-000000000019", 71*time.Hour + 30*time.Minute, "trapped"},
+	{"00000000-0000-4000-8000-000000000032", "00000000-0000-4000-8000-000000000010", 72 * time.Hour, "food_needed"},
+	{"00000000-0000-4000-8000-000000000033", "00000000-0000-4000-8000-000000000011", 100 * time.Hour, "water_needed"},
 }
 
 func main() {
@@ -138,21 +197,15 @@ func run() error {
 
 	now := time.Now()
 	for i, c := range seedCats {
-		var needsHelpUntil pgtype.Timestamptz
-		if c.needsHelp {
-			needsHelpUntil = pgtype.Timestamptz{Time: now.Add(2 * time.Hour), Valid: true}
-		}
-
 		cat, err := store.UpsertCat(ctx, repository.UpsertCatParams{
-			ID:             pgtype.UUID{Bytes: uuid.MustParse(c.id), Valid: true},
-			Name:           pgtype.Text{String: c.name, Valid: true},
-			Lng:            c.lng,
-			Lat:            c.lat,
-			AreaLabel:      pgtype.Text{String: c.areaLabel, Valid: true},
-			PhotoUrl:       pgtype.Text{String: seedPhotos[i%len(seedPhotos)], Valid: true},
-			Status:         "active",
-			LastUpdateAt:   pgtype.Timestamptz{Time: now.Add(-time.Duration(i) * time.Hour), Valid: true},
-			NeedsHelpUntil: needsHelpUntil,
+			ID:           pgtype.UUID{Bytes: uuid.MustParse(c.id), Valid: true},
+			Name:         pgtype.Text{String: c.name, Valid: true},
+			Lng:          c.lng,
+			Lat:          c.lat,
+			AreaLabel:    pgtype.Text{String: c.areaLabel, Valid: true},
+			PhotoUrl:     pgtype.Text{String: seedPhotos[i%len(seedPhotos)], Valid: true},
+			Status:       "active",
+			LastUpdateAt: pgtype.Timestamptz{Time: now.Add(-time.Duration(i) * time.Hour), Valid: true},
 		})
 		if err != nil {
 			return err
@@ -160,15 +213,33 @@ func run() error {
 		log.Printf("seeded cat %s: %q", cat, c.name)
 	}
 
-	for i, t := range seedTraitVocabulary {
-		if _, err := store.UpsertTrait(ctx, repository.UpsertTraitParams{
-			Key:         t.key,
-			DisplayName: t.displayName,
-			Active:      true,
+	for i, g := range seedTraitGroups {
+		if _, err := store.UpsertTraitGroup(ctx, repository.UpsertTraitGroupParams{
+			Key:         g.key,
+			DisplayName: g.displayName,
 			SortOrder:   int32(i),
 		}); err != nil {
 			return err
 		}
+	}
+	log.Printf("seeded %d trait groups", len(seedTraitGroups))
+
+	// sort_order is per-group (the position within its own group), not a
+	// global index across the whole vocabulary — groupSortOrder tracks that
+	// per group_key as the slice is walked in its declared (grouped) order.
+	groupSortOrder := make(map[string]int32, len(seedTraitGroups))
+	for _, t := range seedTraitVocabulary {
+		sortOrder := groupSortOrder[t.groupKey]
+		if _, err := store.UpsertTrait(ctx, repository.UpsertTraitParams{
+			Key:         t.key,
+			DisplayName: t.displayName,
+			GroupKey:    pgtype.Text{String: t.groupKey, Valid: true},
+			Active:      t.active,
+			SortOrder:   sortOrder,
+		}); err != nil {
+			return err
+		}
+		groupSortOrder[t.groupKey] = sortOrder + 1
 	}
 	log.Printf("seeded %d trait vocabulary entries", len(seedTraitVocabulary))
 
@@ -192,6 +263,7 @@ func run() error {
 		update, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
 			ID:        pgtype.UUID{Bytes: uuid.MustParse(u.id), Valid: true},
 			CatID:     pgtype.UUID{Bytes: uuid.MustParse(u.catID), Valid: true},
+			Kind:      "ordinary",
 			Comment:   comment,
 			CreatedAt: pgtype.Timestamptz{Time: now.Add(-time.Duration(u.hoursAgo) * time.Hour), Valid: true},
 		})
@@ -207,6 +279,22 @@ func run() error {
 			}
 		}
 		log.Printf("seeded update %s for cat %s: %v", update.ID, u.catID, u.statuses)
+	}
+
+	for _, n := range seedNeedsHelp {
+		createdAt := now.Add(-n.createdAgo)
+		update, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+			ID:                 pgtype.UUID{Bytes: uuid.MustParse(n.id), Valid: true},
+			CatID:              pgtype.UUID{Bytes: uuid.MustParse(n.catID), Valid: true},
+			Kind:               "needs_help",
+			CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
+			NeedsHelpCategory:  pgtype.Text{String: n.category, Valid: true},
+			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: service.NeedsHelpExpiresAt(createdAt), Valid: true},
+		})
+		if err != nil {
+			return err
+		}
+		log.Printf("seeded needs-help update %s for cat %s: %s", update.ID, n.catID, n.category)
 	}
 
 	return nil

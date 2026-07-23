@@ -37,6 +37,45 @@ const (
 	maxUpdatesLimit     = 50
 )
 
+// needsHelpCategoryLabels is the fixed, closed mvp help-category vocabulary
+// and its turkish display label (product-owner decision on issue #4) — a
+// check constraint in the database, not a data-driven vocabulary like
+// traits, so it's a plain map rather than a repository-backed lookup.
+var needsHelpCategoryLabels = map[string]string{
+	"injured_or_sick": "yaralı / hasta",
+	"food_needed":     "mamaya ihtiyacı var",
+	"water_needed":    "suya ihtiyacı var",
+	"unsafe_location": "güvenli olmayan konum",
+	"trapped":         "mahsur kalmış",
+}
+
+// NeedsHelpExpiry is the fixed mvp needs-help lifetime (product-owner
+// decision on issue #4): exactly 72 hours, no early/manual resolve. Kept as
+// a named constant (not a hardcoded literal at each call site) per
+// docs/architecture/api.md's modeling note.
+const NeedsHelpExpiry = 72 * time.Hour
+
+// NeedsHelpExpiresAt computes the server-controlled expiry for a needs-help
+// update created at createdAt. This must be the only place that expiry gets
+// computed — a client-supplied expiry is never accepted (issue #4/#23) — so
+// both seed data and, eventually, the write endpoint call this rather than
+// each re-deriving createdAt+72h independently.
+func NeedsHelpExpiresAt(createdAt time.Time) time.Time {
+	return createdAt.Add(NeedsHelpExpiry)
+}
+
+// ActiveAlert is the minimum metadata a client needs to render an active
+// needs-help alert (issue #4/#23): which category, and enough of the
+// lifecycle (created_at/expires_at) to show context — never just a
+// boolean. Present only while CreatedAt/ExpiresAt (as decided against the
+// service's clock) mean the alert hasn't expired yet.
+type ActiveAlert struct {
+	Category      string
+	CategoryLabel string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+}
+
 // Bounds is the visible map viewport requested by the client, in WGS84 degrees.
 type Bounds struct {
 	MinLng float64
@@ -76,7 +115,7 @@ type CatMarker struct {
 	Lat          float64
 	Lng          float64
 	AreaLabel    *string
-	NeedsHelp    bool
+	ActiveAlert  *ActiveAlert
 	LastUpdateAt *time.Time
 }
 
@@ -93,15 +132,27 @@ type CatDetail struct {
 	Traits       []Trait
 	CreatedAt    time.Time
 	LastUpdateAt *time.Time
+	ActiveAlert  *ActiveAlert
 }
 
-// CatUpdate is one entry in a cat's newest-first status history (issue #3):
-// one or more structured statuses plus an optional free-text comment.
+// CatUpdate is one entry in a cat's newest-first history: either an
+// ordinary status update (issue #3 — one or more structured statuses plus
+// an optional free-text comment) or a needs-help update (issue #4/#23 — a
+// fixed category plus its own lifecycle). Kind discriminates the two; the
+// NeedsHelp* fields are only set when Kind == "needs_help". NeedsHelpActive
+// is decided against the service's injected clock, not the caller's own —
+// per issue #23, activeness must be deterministic from server time.
 type CatUpdate struct {
 	ID        string
+	Kind      string
 	Statuses  []string
 	Comment   *string
 	CreatedAt time.Time
+
+	NeedsHelpCategory      *string
+	NeedsHelpCategoryLabel *string
+	NeedsHelpExpiresAt     *time.Time
+	NeedsHelpActive        *bool
 }
 
 // UpdatesPage is one newest-first page of a cat's update history.
@@ -129,11 +180,49 @@ type CatsLister interface {
 }
 
 type CatsService struct {
-	db CatsLister
+	db    CatsLister
+	clock func() time.Time
 }
 
-func NewCatsService(db CatsLister) *CatsService {
-	return &CatsService{db: db}
+// CatsServiceOption configures optional CatsService behavior.
+type CatsServiceOption func(*CatsService)
+
+// WithClock overrides the clock used to decide whether a needs-help alert
+// is still active (issue #23: "active" is always expires_at compared
+// against the current time, never a separately stored flag). Production
+// wiring doesn't need this — it defaults to time.Now — but it lets tests
+// construct exact expiry-boundary scenarios deterministically, without any
+// dependency on wall-clock timing.
+func WithClock(clock func() time.Time) CatsServiceOption {
+	return func(s *CatsService) { s.clock = clock }
+}
+
+func NewCatsService(db CatsLister, opts ...CatsServiceOption) *CatsService {
+	s := &CatsService{db: db, clock: time.Now}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// deriveActiveAlert turns a (possibly absent, possibly expired) latest
+// needs-help update into the alert a client should render — nil whenever
+// there is no needs-help update at all, or the one that exists has expired
+// as of s.clock(). This is the one place "active" gets decided; the
+// database and the client both stay out of that decision entirely.
+func (s *CatsService) deriveActiveAlert(category pgtype.Text, createdAt, expiresAt pgtype.Timestamptz) *ActiveAlert {
+	if !category.Valid || !expiresAt.Valid {
+		return nil
+	}
+	if !expiresAt.Time.After(s.clock()) {
+		return nil
+	}
+	return &ActiveAlert{
+		Category:      category.String,
+		CategoryLabel: needsHelpCategoryLabels[category.String],
+		CreatedAt:     createdAt.Time,
+		ExpiresAt:     expiresAt.Time,
+	}
 }
 
 // ListNearby returns the active cats inside the requested viewport.
@@ -161,7 +250,7 @@ func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds) ([]CatMarke
 			Lat:          r.Lat,
 			Lng:          r.Lng,
 			AreaLabel:    textPtr(r.AreaLabel),
-			NeedsHelp:    r.NeedsHelp.Bool,
+			ActiveAlert:  s.deriveActiveAlert(r.NeedsHelpCategory, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt),
 			LastUpdateAt: timestamptzPtr(r.LastUpdateAt),
 		})
 	}
@@ -228,6 +317,7 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		Traits:       traits,
 		CreatedAt:    row.CreatedAt.Time,
 		LastUpdateAt: timestamptzPtr(row.LastUpdateAt),
+		ActiveAlert:  s.deriveActiveAlert(row.NeedsHelpCategory, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),
 	}, nil
 }
 
@@ -285,12 +375,24 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 
 	items := make([]CatUpdate, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, CatUpdate{
+		item := CatUpdate{
 			ID:        uuid.UUID(r.ID.Bytes).String(),
+			Kind:      r.Kind,
 			Statuses:  r.Statuses,
 			Comment:   textPtr(r.Comment),
 			CreatedAt: r.CreatedAt.Time,
-		})
+		}
+		if r.Kind == "needs_help" {
+			category := r.NeedsHelpCategory.String
+			label := needsHelpCategoryLabels[category]
+			expiresAt := r.NeedsHelpExpiresAt.Time
+			active := expiresAt.After(s.clock())
+			item.NeedsHelpCategory = &category
+			item.NeedsHelpCategoryLabel = &label
+			item.NeedsHelpExpiresAt = &expiresAt
+			item.NeedsHelpActive = &active
+		}
+		items = append(items, item)
 	}
 
 	page := UpdatesPage{Items: items}
