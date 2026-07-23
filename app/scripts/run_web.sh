@@ -36,20 +36,16 @@ trap restore EXIT
 
 sed -i.bak "s|key=[^\"]*|key=${GOOGLE_MAPS_API_KEY}|" "$index_html" && rm -f "${index_html}.bak"
 
-# under wsl there's no linux chrome binary for flutter to find on its own;
-# CHROME_EXECUTABLE tells it to launch the windows one instead (wsl runs
-# .exe files directly, and wsl2 forwards localhost so it can still reach
-# this dev server).
-if [ -z "${CHROME_EXECUTABLE:-}" ] && grep -qi microsoft /proc/version 2>/dev/null; then
-  for candidate in \
-    "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe" \
-    "/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe" \
-    "/mnt/c/Users/${USER}/AppData/Local/Google/Chrome/Application/chrome.exe"; do
-    if [ -f "$candidate" ]; then
-      export CHROME_EXECUTABLE="$candidate"
-      break
-    fi
-  done
+# under wsl, `flutter run -d chrome` tries to launch the windows chrome.exe
+# (there's no linux chrome binary) but hands it a linux-side --user-data-dir
+# path (/tmp/...), which windows chrome can't resolve — it fails to launch
+# every time. `-d web-server` sidesteps that: flutter just serves the app,
+# and you open it yourself in whatever browser is already running on
+# windows. use chrome or edge, not firefox — the debug/hot-reload bridge
+# (dwds) only supports chromium-based browsers.
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  echo "wsl detected: running as web-server — open http://localhost:5050 in chrome or edge yourself." >&2
+  flutter run -d web-server --web-port 5050 "$@"
+else
+  flutter run -d chrome --web-port 5050 "$@"
 fi
-
-flutter run -d chrome --web-port 5050 "$@"
