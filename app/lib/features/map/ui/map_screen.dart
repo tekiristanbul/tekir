@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
@@ -101,11 +102,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   void _onCatSelected(CatMarker cat) {
-    // cat-detail is a separate slice (issue #7 scope); surface the id so
-    // that flow has something to receive.
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('selected cat: ${cat.id}')));
+    context.push('/cats/${cat.id}');
   }
 
   void _onMapCreated(GoogleMapController controller) {
