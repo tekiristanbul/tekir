@@ -8,6 +8,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Cat struct {
+	ID             pgtype.UUID        `json:"id"`
+	Name           pgtype.Text        `json:"name"`
+	Area           interface{}        `json:"area"`
+	PhotoUrl       pgtype.Text        `json:"photo_url"`
+	Status         string             `json:"status"`
+	LastUpdateAt   pgtype.Timestamptz `json:"last_update_at"`
+	NeedsHelpUntil pgtype.Timestamptz `json:"needs_help_until"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type WorkspacePing struct {
 	ID        pgtype.UUID        `json:"id"`
 	Message   string             `json:"message"`
