@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# blocks committing a real google maps api key. app/web/index.html should
+# only ever contain the __GOOGLE_MAPS_API_KEY__ placeholder — the real key
+# is injected locally by app/scripts/run_web.sh and restored to the
+# placeholder on exit. that restore relies on a bash trap, which does not
+# run if the terminal is killed outright, so this is the backstop: it
+# blocks the commit even if a real key is still sitting in the file.
+set -euo pipefail
+
+key_pattern='AIza[0-9A-Za-z_-]{35}'
+
+if git diff --cached -- app/web/index.html | grep -E '^\+' | grep -qE "$key_pattern"; then
+  echo "pre-commit: a real google maps api key is staged in app/web/index.html" >&2
+  echo "  it should stay __GOOGLE_MAPS_API_KEY__ — see app/scripts/run_web.sh" >&2
+  exit 1
+fi
+
+exit 0
