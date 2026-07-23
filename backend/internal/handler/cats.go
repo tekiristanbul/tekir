@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/tekiristanbul/tekir/backend/internal/service"
 )
 
@@ -29,6 +31,36 @@ type catMarkerResponse struct {
 type areaLatLng struct {
 	Lat float64 `json:"lat"`
 	Lng float64 `json:"lng"`
+}
+
+type catDetailResponse struct {
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Area         areaLatLng      `json:"area"`
+	PrimaryPhoto *string         `json:"primary_photo"`
+	Traits       []traitResponse `json:"traits"`
+	CreatedAt    time.Time       `json:"created_at"`
+	LastUpdateAt *time.Time      `json:"last_update_at"`
+}
+
+type traitResponse struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+}
+
+type updateResponse struct {
+	ID        string    `json:"id"`
+	Statuses  []string  `json:"statuses"`
+	Comment   *string   `json:"comment"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// updateHistoryResponse is GET /v1/cats/{cat_id}/updates' page envelope:
+// NextCursor is null once the last page has been served, so clients never
+// have to guess whether to request another page.
+type updateHistoryResponse struct {
+	Items      []updateResponse `json:"items"`
+	NextCursor *string          `json:"next_cursor"`
 }
 
 // Nearby answers GET /v1/cats?bbox=minLng,minLat,maxLng,maxLat with the
@@ -61,6 +93,83 @@ func (h *CatsHandler) Nearby(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// Detail answers GET /v1/cats/{cat_id} with the cat-detail representation.
+func (h *CatsHandler) Detail(w http.ResponseWriter, r *http.Request) {
+	detail, err := h.cats.GetCatDetail(r.Context(), chi.URLParam(r, "cat_id"))
+	if err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+
+	traits := make([]traitResponse, 0, len(detail.Traits))
+	for _, t := range detail.Traits {
+		traits = append(traits, traitResponse{Key: t.Key, Label: t.Label})
+	}
+
+	writeJSON(w, http.StatusOK, catDetailResponse{
+		ID:           detail.ID,
+		Name:         detail.Name,
+		Area:         areaLatLng{Lat: detail.Lat, Lng: detail.Lng},
+		PrimaryPhoto: detail.PrimaryPhoto,
+		Traits:       traits,
+		CreatedAt:    detail.CreatedAt,
+		LastUpdateAt: detail.LastUpdateAt,
+	})
+}
+
+// UpdateHistory answers GET /v1/cats/{cat_id}/updates?cursor=&limit= with one
+// newest-first page of the cat's status-update history. cursor is the opaque
+// next_cursor from a previous page; limit defaults to 20 and caps at 50 so a
+// client can never pull an unbounded page.
+func (h *CatsHandler) UpdateHistory(w http.ResponseWriter, r *http.Request) {
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be an integer"})
+			return
+		}
+		limit = parsed
+	}
+
+	page, err := h.cats.ListCatUpdates(r.Context(), chi.URLParam(r, "cat_id"), r.URL.Query().Get("cursor"), limit)
+	if err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+
+	items := make([]updateResponse, 0, len(page.Items))
+	for _, u := range page.Items {
+		items = append(items, updateResponse{
+			ID:        u.ID,
+			Statuses:  u.Statuses,
+			Comment:   u.Comment,
+			CreatedAt: u.CreatedAt,
+		})
+	}
+
+	var nextCursor *string
+	if page.NextCursor != "" {
+		nextCursor = &page.NextCursor
+	}
+	writeJSON(w, http.StatusOK, updateHistoryResponse{Items: items, NextCursor: nextCursor})
+}
+
+func writeCatsServiceError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, service.ErrInvalidCatID):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cat id"})
+	case errors.Is(err, service.ErrCatNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cat not found"})
+	case errors.Is(err, service.ErrInvalidCursor):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cursor"})
+	case errors.Is(err, service.ErrInvalidLimit):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"})
+	default:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	}
 }
 
 // parseBounds validates the shape of the bbox query param; range/order
