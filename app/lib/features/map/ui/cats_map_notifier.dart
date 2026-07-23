@@ -11,6 +11,7 @@ class CatsMapState {
     this.isLoading = false,
     this.hasLoadedOnce = false,
     this.error,
+    this.selectedMarker,
   });
 
   final List<CatMarker> markers;
@@ -18,18 +19,29 @@ class CatsMapState {
   final bool hasLoadedOnce;
   final Object? error;
 
+  /// The cat whose marker-preview sheet is currently open (issue #21
+  /// prototype-parity correction: a marker tap opens a preview sheet over
+  /// the map, not a direct navigation — see prototype/app.js's openSheet).
+  /// Null when no sheet is open.
+  final CatMarker? selectedMarker;
+
   CatsMapState copyWith({
     List<CatMarker>? markers,
     bool? isLoading,
     bool? hasLoadedOnce,
     Object? error,
     bool clearError = false,
+    CatMarker? selectedMarker,
+    bool clearSelectedMarker = false,
   }) {
     return CatsMapState(
       markers: markers ?? this.markers,
       isLoading: isLoading ?? this.isLoading,
       hasLoadedOnce: hasLoadedOnce ?? this.hasLoadedOnce,
       error: clearError ? null : (error ?? this.error),
+      selectedMarker: clearSelectedMarker
+          ? null
+          : (selectedMarker ?? this.selectedMarker),
     );
   }
 }
@@ -60,6 +72,19 @@ class CatsMapNotifier extends Notifier<CatsMapState> {
       if (requestId != _requestId) return;
       state = state.copyWith(isLoading: false, hasLoadedOnce: true, error: e);
     }
+  }
+
+  /// Selects [cat] — highlights its marker and opens its preview sheet.
+  /// Cluster/camera/bbox-fetch behavior is untouched by this.
+  void selectCat(CatMarker cat) {
+    state = state.copyWith(selectedMarker: cat);
+  }
+
+  /// Clears the current selection — the sheet closes (if still open) and
+  /// the highlighted marker returns to its normal size/ring. The user stays
+  /// on the map; this never navigates.
+  void clearSelection() {
+    state = state.copyWith(clearSelectedMarker: true);
   }
 }
 

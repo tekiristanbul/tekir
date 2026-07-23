@@ -1,15 +1,28 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/relative_time.dart';
 import '../data/cat_detail.dart';
 import 'cat_detail_notifier.dart';
 
-/// Cat-detail view reached by selecting a map marker (docs/product/map.md):
-/// identity, location, traits, and newest-first status history. Read-only —
-/// posting an update, editing the cat, or needs-help rendering are out of
-/// scope for issue #21.
+const _heroHeight = 280.0;
+
+const _statusLabelsTr = {
+  'seen': 'görüldü',
+  'fed': 'mama verildi',
+  'water_provided': 'su verildi',
+};
+
+/// Cat-detail view reached from the map's marker-preview sheet
+/// (docs/product/map.md, docs/design/implementation-contract.md): an
+/// edge-to-edge hero photo, traits, a compact last-update line, and a
+/// newest-first status-update timeline. Read-only — posting an update,
+/// editing the cat, follow, and needs-help rendering are out of scope for
+/// issue #21. Matches prototype/app.js's renderDetail visual hierarchy;
+/// never shows raw lat/lng, and every user-facing string is Turkish.
 class CatDetailScreen extends ConsumerStatefulWidget {
   const CatDetailScreen({super.key, required this.catId});
 
@@ -32,34 +45,31 @@ class _CatDetailScreenState extends ConsumerState<CatDetailScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(catDetailProvider(widget.catId));
 
-    return Scaffold(
-      appBar: AppBar(title: Text(state.detail?.name ?? 'cat')),
-      body: _buildBody(state),
-    );
+    return Scaffold(backgroundColor: AppColors.bg, body: _buildBody(state));
   }
 
   Widget _buildBody(CatDetailState state) {
     if (state.notFound) {
-      return const _MessageView(
+      return const _MessageScreen(
         icon: Icons.search_off,
-        message: 'cat not found',
+        message: 'Kedi bulunamadı',
       );
     }
     if (state.error != null) {
-      return _MessageView(
+      return _MessageScreen(
         icon: Icons.error_outline,
-        message: "couldn't load cat",
-        actionLabel: 'retry',
+        message: 'Kedi yüklenemedi',
+        actionLabel: 'Tekrar dene',
         onAction: () =>
             ref.read(catDetailProvider(widget.catId).notifier).load(),
       );
     }
     if (state.isLoading && !state.hasLoadedOnce) {
-      return const Center(child: CircularProgressIndicator());
+      return const _MessageScreen(loading: true);
     }
     final detail = state.detail;
     if (detail == null) {
-      return const SizedBox.shrink();
+      return const _MessageScreen(loading: true);
     }
     return _CatDetailBody(detail: detail, state: state);
   }
@@ -74,188 +84,501 @@ class _CatDetailBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.zero,
       children: [
-        _CatPhoto(url: detail.primaryPhoto),
-        const SizedBox(height: 16),
-        Text(detail.name, style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 4),
-        Row(
-          children: [
-            const Icon(Icons.location_on, size: 16, color: AppColors.line),
-            const SizedBox(width: 4),
-            Text(
-              '${detail.lat.toStringAsFixed(4)}, ${detail.lng.toStringAsFixed(4)}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-        if (detail.traits.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: detail.traits
-                .map((t) => Chip(label: Text(t.label)))
-                .toList(),
+        _HeroPhoto(detail: detail),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s5,
+            AppSpacing.s4,
+            AppSpacing.s5,
+            AppSpacing.s6,
           ),
-        ],
-        const SizedBox(height: 24),
-        Text('update history', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        if (state.updates.isEmpty)
-          const _MessageView(
-            icon: Icons.history_toggle_off,
-            message: 'no updates yet',
-            padded: false,
-          )
-        else ...[
-          for (final update in state.updates) _UpdateTile(update: update),
-          if (state.hasNextPage) ...[
-            const SizedBox(height: 8),
-            Center(
-              child: state.isLoadingMore
-                  ? const CircularProgressIndicator()
-                  : TextButton(
-                      onPressed: () => ref
-                          .read(catDetailProvider(detail.id).notifier)
-                          .loadMoreUpdates(),
-                      child: const Text('load more'),
-                    ),
-            ),
-          ],
-        ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (detail.traits.isNotEmpty) ...[
+                Wrap(
+                  spacing: AppSpacing.s2,
+                  runSpacing: AppSpacing.s2,
+                  children: detail.traits
+                      .map((t) => _TraitChip(label: t.label))
+                      .toList(),
+                ),
+                const SizedBox(height: AppSpacing.s4),
+              ],
+              if (detail.lastUpdateAt != null) ...[
+                _LastUpdateRow(time: detail.lastUpdateAt!),
+                const SizedBox(height: AppSpacing.s6),
+              ],
+              Text(
+                'Son güncellemeler',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: AppSpacing.s2),
+              if (state.updates.isEmpty)
+                const _EmptyHistory()
+              else ...[
+                for (var i = 0; i < state.updates.length; i++)
+                  _TimelineItem(
+                    update: state.updates[i],
+                    isLast: i == state.updates.length - 1 && !state.hasNextPage,
+                  ),
+                if (state.hasNextPage) ...[
+                  const SizedBox(height: AppSpacing.s2),
+                  _LoadMoreButton(
+                    isLoading: state.isLoadingMore,
+                    onPressed: () => ref
+                        .read(catDetailProvider(detail.id).notifier)
+                        .loadMoreUpdates(),
+                  ),
+                ],
+              ],
+            ],
+          ),
+        ),
       ],
     );
   }
 }
 
-class _CatPhoto extends StatelessWidget {
-  const _CatPhoto({required this.url});
+class _HeroPhoto extends StatelessWidget {
+  const _HeroPhoto({required this.detail});
 
-  final String? url;
+  final CatDetail detail;
 
   @override
   Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(12);
-    if (url == null) {
-      return ClipRRect(
-        borderRadius: radius,
-        child: Container(
-          height: 220,
-          width: double.infinity,
-          color: AppColors.paper,
-          child: const Icon(Icons.pets, size: 48, color: AppColors.line),
-        ),
-      );
-    }
-    return ClipRRect(
-      borderRadius: radius,
-      child: CachedNetworkImage(
-        imageUrl: url!,
-        height: 220,
-        width: double.infinity,
-        fit: BoxFit.cover,
-        placeholder: (context, _) => const SizedBox(
-          height: 220,
-          child: Center(child: CircularProgressIndicator()),
-        ),
-        errorWidget: (context, _, _) => Container(
-          height: 220,
-          color: AppColors.paper,
-          child: const Icon(Icons.pets, size: 48, color: AppColors.line),
+    final photo = detail.primaryPhoto;
+    return SizedBox(
+      height: _heroHeight,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (photo == null)
+            const _HeroPlaceholder()
+          else
+            CachedNetworkImage(
+              imageUrl: photo,
+              fit: BoxFit.cover,
+              placeholder: (context, _) =>
+                  const _HeroPlaceholder(loading: true),
+              errorWidget: (context, _, _) => const _HeroPlaceholder(),
+            ),
+          // scrim: keeps the back button and the name/area caption readable
+          // over any photo, per prototype/styles.css's .hero-photo__scrim.
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0x59000000),
+                  Colors.transparent,
+                  Colors.transparent,
+                  Color(0x47000000),
+                ],
+                stops: [0.0, 0.26, 0.74, 1.0],
+              ),
+            ),
+          ),
+          Positioned(
+            top: AppSpacing.s3,
+            left: AppSpacing.s4,
+            child: _BackCircleButton(onGlass: true),
+          ),
+          Positioned(
+            left: AppSpacing.s5,
+            right: AppSpacing.s5,
+            bottom: AppSpacing.s4,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  detail.name,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: Colors.white,
+                    shadows: const [
+                      Shadow(color: Color(0x59000000), blurRadius: 6),
+                    ],
+                  ),
+                ),
+                if (detail.areaLabel != null) ...[
+                  const SizedBox(height: 3),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.location_on,
+                        size: 13,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          detail.areaLabel!,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Branded placeholder — same footprint as a real photo, never a generic
+/// grey box — used both while the photo loads and when a cat has none.
+class _HeroPlaceholder extends StatelessWidget {
+  const _HeroPlaceholder({this.loading = false});
+
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppColors.primarySoft,
+      child: Center(
+        child: loading
+            ? const CircularProgressIndicator(color: AppColors.primaryStrong)
+            : const Icon(Icons.pets, size: 56, color: AppColors.primaryStrong),
+      ),
+    );
+  }
+}
+
+class _BackCircleButton extends StatelessWidget {
+  const _BackCircleButton({this.onGlass = false});
+
+  final bool onGlass;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: onGlass ? Colors.white.withValues(alpha: 0.92) : AppColors.surface,
+      shape: const CircleBorder(),
+      elevation: 2,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () => context.pop(),
+        child: const SizedBox(
+          width: kTapMin,
+          height: kTapMin,
+          child: Icon(Icons.chevron_left, color: AppColors.ink),
         ),
       ),
     );
   }
 }
 
-/// An update's structured statuses and free-text comment are shown as two
-/// visually distinct elements (chips vs. italic body text), per issue #21's
-/// requirement that the two never blur together.
-class _UpdateTile extends StatelessWidget {
-  const _UpdateTile({required this.update});
+class _TraitChip extends StatelessWidget {
+  const _TraitChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s3),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        border: Border.all(color: AppColors.lineStrong),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: AppColors.muted,
+        ),
+      ),
+    );
+  }
+}
+
+class _LastUpdateRow extends StatelessWidget {
+  const _LastUpdateRow({required this.time});
+
+  final DateTime time;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.s3,
+        vertical: AppSpacing.s2,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.access_time,
+            size: 16,
+            color: AppColors.primaryStrong,
+          ),
+          const SizedBox(width: AppSpacing.s2),
+          Text(
+            'Son güncelleme: ${relativeTimeTr(time)}',
+            style: const TextStyle(fontSize: 13, color: AppColors.muted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusTag extends StatelessWidget {
+  const _StatusTag({required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.s2,
+        vertical: 3,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.primarySoft,
+        borderRadius: BorderRadius.circular(AppRadius.full),
+      ),
+      child: Text(
+        _statusLabelsTr[status] ?? status,
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: AppColors.primaryStrong,
+        ),
+      ),
+    );
+  }
+}
+
+/// One update's structured statuses and free-text comment render as two
+/// visually distinct elements — status tags (bold pills) vs. plain (never
+/// italic) muted body text — per issue #21's requirement that the two
+/// never blur together.
+class _TimelineItem extends StatelessWidget {
+  const _TimelineItem({required this.update, required this.isLast});
 
   final CatUpdateEntry update;
+  final bool isLast;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            _formatTimestamp(update.createdAt),
-            style: Theme.of(context).textTheme.labelSmall,
-          ),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: update.statuses
-                .map(
-                  (status) => Chip(
-                    label: Text(status.replaceAll('_', ' ')),
-                    visualDensity: VisualDensity.compact,
-                    backgroundColor: AppColors.accent.withValues(alpha: 0.15),
+          SizedBox(
+            width: 20,
+            child: Column(
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 6),
+                  width: 9,
+                  height: 9,
+                  decoration: const BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
                   ),
-                )
-                .toList(),
-          ),
-          if (update.comment != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              update.comment!,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(fontStyle: FontStyle.italic),
+                ),
+                if (!isLast)
+                  Expanded(
+                    child: Container(
+                      width: 1.5,
+                      margin: const EdgeInsets.only(top: 4),
+                      color: AppColors.line,
+                    ),
+                  ),
+              ],
             ),
-          ],
+          ),
+          const SizedBox(width: AppSpacing.s3),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.s3),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: update.statuses
+                              .map((s) => _StatusTag(status: s))
+                              .toList(),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.s2),
+                      Text(
+                        relativeTimeTr(update.createdAt),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.faint,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (update.comment != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      update.comment!,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.muted,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
-
-  static String _formatTimestamp(DateTime time) {
-    final local = time.toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
-  }
 }
 
-class _MessageView extends StatelessWidget {
-  const _MessageView({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-    this.padded = true,
-  });
-
-  final IconData icon;
-  final String message;
-  final String? actionLabel;
-  final VoidCallback? onAction;
-  final bool padded;
+class _EmptyHistory extends StatelessWidget {
+  const _EmptyHistory();
 
   @override
   Widget build(BuildContext context) {
-    final content = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 40, color: AppColors.line),
-        const SizedBox(height: 8),
-        Text(message),
-        if (actionLabel != null && onAction != null) ...[
-          const SizedBox(height: 8),
-          TextButton(onPressed: onAction, child: Text(actionLabel!)),
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: AppSpacing.s6),
+      child: Row(
+        children: [
+          Icon(Icons.history_toggle_off, color: AppColors.faint, size: 22),
+          SizedBox(width: AppSpacing.s3),
+          Text(
+            'Henüz güncelleme yok',
+            style: TextStyle(color: AppColors.muted),
+          ),
         ],
-      ],
+      ),
     );
-    if (!padded) return Center(child: content);
-    return Center(
-      child: Padding(padding: const EdgeInsets.all(24), child: content),
+  }
+}
+
+class _LoadMoreButton extends StatelessWidget {
+  const _LoadMoreButton({required this.isLoading, required this.onPressed});
+
+  final bool isLoading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: kTapMin,
+      child: OutlinedButton(
+        onPressed: isLoading ? null : onPressed,
+        style: OutlinedButton.styleFrom(
+          backgroundColor: AppColors.surface,
+          foregroundColor: AppColors.ink,
+          side: const BorderSide(color: AppColors.lineStrong),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+        ),
+        child: isLoading
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Text(
+                'Daha fazla göster',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+      ),
+    );
+  }
+}
+
+/// Loading / not-found / generic-error screen — no photo hero yet, so the
+/// back action gets its own small top-left circle instead of the hero's
+/// on-photo one.
+class _MessageScreen extends StatelessWidget {
+  const _MessageScreen({
+    this.icon,
+    this.message,
+    this.actionLabel,
+    this.onAction,
+    this.loading = false,
+  });
+
+  final IconData? icon;
+  final String? message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Center(
+          child: loading
+              ? const CircularProgressIndicator(color: AppColors.primary)
+              : Padding(
+                  padding: const EdgeInsets.all(AppSpacing.s6),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, size: 40, color: AppColors.faint),
+                      const SizedBox(height: AppSpacing.s3),
+                      Text(
+                        message ?? '',
+                        style: const TextStyle(color: AppColors.muted),
+                      ),
+                      if (actionLabel != null && onAction != null) ...[
+                        const SizedBox(height: AppSpacing.s3),
+                        OutlinedButton(
+                          onPressed: onAction,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.ink,
+                            side: const BorderSide(color: AppColors.lineStrong),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(AppRadius.md),
+                            ),
+                          ),
+                          child: Text(actionLabel!),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+        ),
+        Positioned(
+          top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+          left: AppSpacing.s4,
+          child: const _BackCircleButton(),
+        ),
+      ],
     );
   }
 }

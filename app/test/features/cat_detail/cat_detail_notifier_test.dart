@@ -12,6 +12,7 @@ final _detail = CatDetail(
   name: 'tekir',
   lat: 41.0256,
   lng: 28.9744,
+  areaLabel: 'Galata Kulesi çevresi, Beyoğlu',
   primaryPhoto: 'https://example.com/tekir.jpg',
   traits: const [CatTrait(key: 'friendly', label: 'Friendly')],
   createdAt: DateTime.utc(2026, 1, 1),

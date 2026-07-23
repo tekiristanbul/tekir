@@ -12,13 +12,15 @@ const _catId = 'cat-1';
 // real url to CachedNetworkImage would fire an actual network request the
 // moment it mounts, which these widget tests must not depend on. the
 // "missing photo" test below covers this exact code path (the null branch
-// in _CatPhoto) directly — there's no separate "photo loads successfully"
-// path that can be exercised without a real or intercepted network call.
+// in _HeroPlaceholder) directly — there's no separate "photo loads
+// successfully" path that can be exercised without a real or intercepted
+// network call.
 final _detailWithTraits = CatDetail(
   id: _catId,
   name: 'tekir',
   lat: 41.0256,
   lng: 28.9744,
+  areaLabel: 'Galata Kulesi çevresi, Beyoğlu',
   primaryPhoto: null,
   traits: const [CatTrait(key: 'friendly', label: 'Friendly')],
   createdAt: DateTime.utc(2026, 1, 1),
@@ -30,6 +32,7 @@ final _detailMissingPhoto = CatDetail(
   name: 'boncuk',
   lat: 41.0257,
   lng: 28.9745,
+  areaLabel: null,
   primaryPhoto: null,
   traits: const [],
   createdAt: DateTime.utc(2026, 1, 1),
@@ -78,55 +81,64 @@ void main() {
     expect(find.text('tekir'), findsNothing);
   });
 
-  testWidgets('shows the not-found state on a 404', (tester) async {
+  testWidgets('shows the not-found state, in turkish, with a back action', (
+    tester,
+  ) async {
     await _pump(
       tester,
       const CatDetailState(hasLoadedOnce: true, notFound: true),
     );
 
-    expect(find.text('cat not found'), findsOneWidget);
+    expect(find.text('Kedi bulunamadı'), findsOneWidget);
+    expect(find.byIcon(Icons.chevron_left), findsOneWidget);
   });
 
-  testWidgets('shows the error state with a retry action', (tester) async {
+  testWidgets('shows the error state with a turkish retry action', (
+    tester,
+  ) async {
     await _pump(
       tester,
       CatDetailState(hasLoadedOnce: true, error: Exception('network down')),
     );
 
-    expect(find.text("couldn't load cat"), findsOneWidget);
-    expect(find.text('retry'), findsOneWidget);
+    expect(find.text('Kedi yüklenemedi'), findsOneWidget);
+    expect(find.text('Tekrar dene'), findsOneWidget);
   });
 
-  testWidgets('populated: shows name, traits, and the update history', (
-    tester,
-  ) async {
-    await _pump(
-      tester,
-      CatDetailState(
-        detail: _detailWithTraits,
-        updates: [
-          CatUpdateEntry(
-            id: 'u1',
-            statuses: const ['seen', 'water_provided'],
-            comment: 'topped up the water bowl',
-            createdAt: DateTime.utc(2026, 1, 2),
-          ),
-        ],
-        hasLoadedOnce: true,
-      ),
-    );
+  testWidgets(
+    'populated: shows name, area label, traits, and turkish status history — never raw coordinates',
+    (tester) async {
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: _detailWithTraits,
+          updates: [
+            CatUpdateEntry(
+              id: 'u1',
+              statuses: const ['seen', 'water_provided'],
+              comment: 'kase boştu, doldurduk',
+              createdAt: DateTime.utc(2026, 1, 2),
+            ),
+          ],
+          hasLoadedOnce: true,
+        ),
+      );
 
-    expect(find.text('tekir'), findsWidgets);
-    expect(find.text('Friendly'), findsOneWidget);
-    // statuses render as chips, the comment as separate italic body text —
-    // both must be present and distinguishable, not merged into one string.
-    expect(find.text('seen'), findsOneWidget);
-    // _UpdateTile displays statuses with underscores replaced by spaces.
-    expect(find.text('water provided'), findsOneWidget);
-    expect(find.text('topped up the water bowl'), findsOneWidget);
-  });
+      expect(find.text('tekir'), findsWidgets);
+      expect(find.text('Galata Kulesi çevresi, Beyoğlu'), findsOneWidget);
+      expect(find.text('Friendly'), findsOneWidget);
+      // structured statuses render as turkish tags, the comment as
+      // separate (non-italic) body text — both present, never merged.
+      expect(find.text('görüldü'), findsOneWidget);
+      expect(find.text('su verildi'), findsOneWidget);
+      expect(find.text('kase boştu, doldurduk'), findsOneWidget);
+      // raw lat/lng must never render anywhere on the detail screen.
+      expect(find.textContaining('41.0256'), findsNothing);
+      expect(find.textContaining('28.9744'), findsNothing);
+    },
+  );
 
-  testWidgets('empty history: shows the empty state, not an error', (
+  testWidgets('empty history: shows the turkish empty state, not an error', (
     tester,
   ) async {
     await _pump(
@@ -138,11 +150,11 @@ void main() {
       ),
     );
 
-    expect(find.text('no updates yet'), findsOneWidget);
+    expect(find.text('Henüz güncelleme yok'), findsOneWidget);
   });
 
   testWidgets(
-    'missing photo: falls back to a placeholder, not a broken image',
+    'missing photo: falls back to a branded placeholder at the same hero size, not a broken image',
     (tester) async {
       await _pump(
         tester,
@@ -155,6 +167,39 @@ void main() {
 
       expect(find.text('boncuk'), findsWidgets);
       expect(find.byIcon(Icons.pets), findsOneWidget);
+      final heroBoxes = tester
+          .widgetList<SizedBox>(find.byType(SizedBox))
+          .where((box) => box.height == 280);
+      expect(
+        heroBoxes,
+        isNotEmpty,
+        reason: 'the hero region keeps its 280px height even without a photo',
+      );
     },
   );
+
+  testWidgets('load more renders as a secondary (outlined) action', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      CatDetailState(
+        detail: _detailWithTraits,
+        updates: [
+          CatUpdateEntry(
+            id: 'u1',
+            statuses: const ['fed'],
+            comment: null,
+            createdAt: DateTime.utc(2026, 1, 2),
+          ),
+        ],
+        nextCursor: 'next',
+        hasLoadedOnce: true,
+      ),
+    );
+
+    expect(find.text('mama verildi'), findsOneWidget);
+    expect(find.text('Daha fazla göster'), findsOneWidget);
+    expect(find.byType(OutlinedButton), findsWidgets);
+  });
 }

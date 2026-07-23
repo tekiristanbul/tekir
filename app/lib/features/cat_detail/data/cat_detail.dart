@@ -22,6 +22,7 @@ class CatDetail {
     required this.name,
     required this.lat,
     required this.lng,
+    required this.areaLabel,
     required this.primaryPhoto,
     required this.traits,
     required this.createdAt,
@@ -32,6 +33,12 @@ class CatDetail {
   final String name;
   final double lat;
   final double lng;
+
+  /// Human-readable, display-only location (e.g. "Moda Sahili, Kadıköy") —
+  /// added for the issue #21 prototype-parity correction so the detail
+  /// screen never has to show raw coordinates. Nullable: not every cat has
+  /// one set.
+  final String? areaLabel;
   final String? primaryPhoto;
   final List<CatTrait> traits;
   final DateTime createdAt;
@@ -45,6 +52,7 @@ class CatDetail {
       name: json['name'] as String,
       lat: (area['lat'] as num).toDouble(),
       lng: (area['lng'] as num).toDouble(),
+      areaLabel: json['area_label'] as String?,
       primaryPhoto: json['primary_photo'] as String?,
       traits: (json['traits'] as List<dynamic>)
           .map((e) => CatTrait.fromJson(e as Map<String, dynamic>))

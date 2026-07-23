@@ -101,4 +101,20 @@ void main() {
       expect(state.hasLoadedOnce, isTrue);
     },
   );
+
+  test('selectCat sets the selected marker; clearSelection clears it', () {
+    final container = ProviderContainer(
+      overrides: [catsApiProvider.overrideWithValue(_ControllableCatsApi())],
+    );
+    addTearDown(container.dispose);
+
+    final notifier = container.read(catsMapProvider.notifier);
+    expect(container.read(catsMapProvider).selectedMarker, isNull);
+
+    notifier.selectCat(_cat);
+    expect(container.read(catsMapProvider).selectedMarker, _cat);
+
+    notifier.clearSelection();
+    expect(container.read(catsMapProvider).selectedMarker, isNull);
+  });
 }
