@@ -36,4 +36,20 @@ trap restore EXIT
 
 sed -i.bak "s|key=[^\"]*|key=${GOOGLE_MAPS_API_KEY}|" "$index_html" && rm -f "${index_html}.bak"
 
+# under wsl there's no linux chrome binary for flutter to find on its own;
+# CHROME_EXECUTABLE tells it to launch the windows one instead (wsl runs
+# .exe files directly, and wsl2 forwards localhost so it can still reach
+# this dev server).
+if [ -z "${CHROME_EXECUTABLE:-}" ] && grep -qi microsoft /proc/version 2>/dev/null; then
+  for candidate in \
+    "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe" \
+    "/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe" \
+    "/mnt/c/Users/${USER}/AppData/Local/Google/Chrome/Application/chrome.exe"; do
+    if [ -f "$candidate" ]; then
+      export CHROME_EXECUTABLE="$candidate"
+      break
+    fi
+  done
+fi
+
 flutter run -d chrome --web-port 5050 "$@"
