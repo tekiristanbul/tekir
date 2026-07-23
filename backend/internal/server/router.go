@@ -13,7 +13,7 @@ import (
 	"github.com/tekiristanbul/tekir/backend/internal/handler"
 )
 
-func NewRouter(logger *slog.Logger, health *handler.HealthHandler, corsOrigins []string) http.Handler {
+func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, corsOrigins []string) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -34,6 +34,8 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, corsOrigins [
 
 	r.Get("/healthz", health.Live)
 	r.Get("/readyz", health.Ready)
+
+	r.Get("/v1/cats", cats.Nearby)
 
 	return r
 }

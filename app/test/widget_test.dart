@@ -1,26 +1,80 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
-import 'package:app/core/network/api_client.dart';
-import 'package:app/features/home/home_screen.dart';
+import 'package:app/features/map/data/location_service.dart';
+import 'package:app/features/map/ui/cats_map_notifier.dart';
 import 'package:app/main.dart';
 
-class _FakeApiClient implements ApiClient {
+// GoogleMap's onMapCreated/onCameraIdle never fire under plain `flutter
+// test` (there's no real platform view backing it), so the fetch pipeline
+// that normally populates catsMapProvider never runs here. Driving its
+// state directly keeps these tests about the banner logic, not about
+// mocking google_maps_flutter's platform channel.
+class _FixedCatsMapNotifier extends CatsMapNotifier {
+  _FixedCatsMapNotifier(this._state);
+
+  final CatsMapState _state;
+
   @override
-  Future<bool> checkHealth() async => true;
+  CatsMapState build() => _state;
 }
 
 void main() {
-  testWidgets('renders the placeholder home screen', (tester) async {
+  testWidgets(
+    'opens on the map and shows the fallback banner when location is unavailable',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            initialLocationProvider.overrideWith(
+              (ref) async => const ResolvedLocation(
+                center: istanbulFallback,
+                isFallback: true,
+              ),
+            ),
+            catsMapProvider.overrideWith(
+              () => _FixedCatsMapNotifier(const CatsMapState()),
+            ),
+          ],
+          child: const CatsOfIstanbulApp(),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.byType(GoogleMap), findsOneWidget);
+      expect(
+        find.text('location unavailable — showing istanbul'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('shows the empty-state banner once loaded with no cats in view', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [apiClientProvider.overrideWithValue(_FakeApiClient())],
+        overrides: [
+          initialLocationProvider.overrideWith(
+            (ref) async => const ResolvedLocation(
+              center: istanbulFallback,
+              isFallback: false,
+            ),
+          ),
+          catsMapProvider.overrideWith(
+            () => _FixedCatsMapNotifier(
+              const CatsMapState(hasLoadedOnce: true, markers: []),
+            ),
+          ),
+        ],
         child: const CatsOfIstanbulApp(),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('cats of istanbul'), findsOneWidget);
-    expect(find.text('api reachable'), findsOneWidget);
+    expect(find.text('no cats in this area yet'), findsOneWidget);
   });
 }

@@ -6,10 +6,16 @@ package repository
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	// area && envelope::geography uses cats_area_gix (gist on geography supports
+	// the && bounding-box operator); st_makeenvelope builds the requested viewport.
+	ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
+	UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UUID, error)
 	UpsertWorkspacePing(ctx context.Context, arg UpsertWorkspacePingParams) (UpsertWorkspacePingRow, error)
 }
 

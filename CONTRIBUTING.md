@@ -13,7 +13,7 @@
 
 - ai tools (including claude code, used to draft parts of this project) must never appear as a commit author, committer, or `Co-Authored-By:` trailer. the human contributor who made the commit is solely responsible for its content, regardless of what tooling helped produce it.
 
-these are enforced by a `commit-msg` hook in `.githooks/`. enable it once per clone:
+these are enforced by a `commit-msg` hook in `.githooks/`. a `pre-commit` hook there also blocks committing a real google maps api key into `app/web/index.html` (see `app/scripts/run_web.sh`). enable both once per clone:
 
 ```sh
 git config core.hooksPath .githooks

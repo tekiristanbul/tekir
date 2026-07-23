@@ -1,10 +1,10 @@
 import 'package:go_router/go_router.dart';
 
-import '../../features/home/home_screen.dart';
+import '../../features/map/ui/map_screen.dart';
 
-/// Single placeholder route for the bootstrap workspace. Tabs (map /
-/// discover / notifications / account) and modal routes land with the
-/// real screens (docs/architecture/flutter.md).
+/// Map is the first screen (docs/product/map.md). Remaining tabs (discover /
+/// notifications / account) and modal routes land with the real screens
+/// (docs/architecture/flutter.md).
 final appRouter = GoRouter(
-  routes: [GoRoute(path: '/', builder: (context, state) => const HomeScreen())],
+  routes: [GoRoute(path: '/', builder: (context, state) => const MapScreen())],
 );
