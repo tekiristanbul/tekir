@@ -89,3 +89,20 @@ func TestCatsHandler_Nearby_InvalidBoundsOrder(t *testing.T) {
 		t.Fatalf("expected 400, got %d", rec.Code)
 	}
 }
+
+func TestCatsHandler_Nearby_NanAndInfiniteBounds(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+
+	cases := []string{"NaN,41,29,42", "28,41,29,Inf", "-Inf,41,29,42"}
+	for _, bbox := range cases {
+		t.Run(bbox, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/v1/cats?bbox="+bbox, nil)
+			h.Nearby(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d", rec.Code)
+			}
+		})
+	}
+}

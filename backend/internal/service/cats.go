@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,14 @@ type Bounds struct {
 }
 
 func (b Bounds) validate() error {
+	// strconv.ParseFloat accepts "NaN"/"Inf" as valid float syntax, and NaN
+	// fails every ordered comparison below (silently passing the range/order
+	// checks), so both need rejecting explicitly before reaching postgis.
+	for _, v := range [...]float64{b.MinLat, b.MaxLat, b.MinLng, b.MaxLng} {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return ErrInvalidBounds
+		}
+	}
 	if b.MinLat < -90 || b.MaxLat > 90 || b.MinLng < -180 || b.MaxLng > 180 {
 		return ErrInvalidBounds
 	}

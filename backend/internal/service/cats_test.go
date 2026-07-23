@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/google/uuid"
@@ -63,6 +64,10 @@ func TestCatsService_ListNearby_InvalidBounds(t *testing.T) {
 		{"min lng >= max lng", Bounds{MinLng: 29, MinLat: 41, MaxLng: 29, MaxLat: 42}},
 		{"lat out of range", Bounds{MinLng: 28, MinLat: -91, MaxLng: 29, MaxLat: 42}},
 		{"lng out of range", Bounds{MinLng: -181, MinLat: 41, MaxLng: 29, MaxLat: 42}},
+		{"nan lat", Bounds{MinLng: 28, MinLat: math.NaN(), MaxLng: 29, MaxLat: 42}},
+		{"nan lng", Bounds{MinLng: math.NaN(), MinLat: 41, MaxLng: 29, MaxLat: 42}},
+		{"positive infinity", Bounds{MinLng: 28, MinLat: 41, MaxLng: 29, MaxLat: math.Inf(1)}},
+		{"negative infinity", Bounds{MinLng: math.Inf(-1), MinLat: 41, MaxLng: 29, MaxLat: 42}},
 	}
 
 	for _, c := range cases {
