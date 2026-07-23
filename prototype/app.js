@@ -1,4 +1,4 @@
-/* cats istanbul — hi-fi clickable prototype. no framework, no build step. */
+/* tekir — hi-fi clickable prototype. no framework, no build step. */
 (function(){
 'use strict';
 

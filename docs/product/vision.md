@@ -2,7 +2,7 @@
 
 ## goal
 
-define what cats istanbul is, in one sentence, and why it exists.
+define what tekir is, in one sentence, and why it exists.
 
 ## decisions
 

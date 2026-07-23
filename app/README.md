@@ -1,6 +1,6 @@
 # app
 
-cats of istanbul mobile app
+tekir mobile app — cats of istanbul
 
 ## Getting Started
 

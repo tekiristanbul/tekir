@@ -1,9 +1,10 @@
-# cats istanbul
+# tekir
 
-a community-driven mobile app for tracking istanbul's street cats: where a cat usually is, its latest status, and whether it needs help.
+tekir — cats of istanbul — is a community-driven mobile app for tracking istanbul's street cats: where a cat usually is, its latest status, and whether it needs help. canonical domain: [tekir.istanbul](https://tekir.istanbul).
 
-this repo holds the project's foundation: a go api, a flutter app, and the postgres/postgis database behind them. no product features are implemented yet — see [`docs/backlog.md`](docs/backlog.md) for what's next.
+this repo holds the project's foundation: a go api, a flutter app, and the postgres/postgis database behind them. the mvp is in progress: the api serves a read-only nearby-cats endpoint (`GET /v1/cats`) and the flutter app renders it on a map; see [`docs/backlog.md`](docs/backlog.md) for what's next.
 
+- [`docs/brand.md`](docs/brand.md) — canonical product naming.
 - [`docs/product/`](docs/product/) — product vision, principles, and per-topic decisions (map, cats, updates, trust, notifications, community, discovery, users).
 - [`docs/architecture/`](docs/architecture/) — mvp api, db, flutter, and backend design.
 - [`docs/design/`](docs/design/) — low-fi wireframes and visual direction.
@@ -63,7 +64,7 @@ make sqlc            # regenerate query code after editing db/queries/*.sql
 
 `goose` and `sqlc` are pinned as go tool dependencies (`go.mod`'s `tool` directive) — `go tool goose`/`go tool sqlc` resolve and build them automatically, no separate install needed beyond go itself.
 
-migrations live in `backend/db/migrations`, queries in `backend/db/queries`. the only table so far (`workspace_pings`) is a smoke-test table proving migrations/seed/postgis work end to end — it isn't part of the product schema (see [`docs/architecture/db.md`](docs/architecture/db.md) for that).
+migrations live in `backend/db/migrations`, queries in `backend/db/queries`. `workspace_pings` is a smoke-test table proving migrations/seed/postgis work end to end — it isn't part of the product schema. `cats` is the first product table, backing the nearby-cats endpoint (see [`docs/architecture/db.md`](docs/architecture/db.md) for both).
 
 ## flutter app
 
