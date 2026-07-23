@@ -11,7 +11,7 @@ define the mobile app architecture consuming [[api]], scoped to mvp — no more 
 - **state/di**: `flutter_riverpod`, plain `Notifier`/`AsyncNotifier` (no codegen). there's one data source (the backend), so a separate domain/repository-interface layer isn't earning its keep yet.
 - **routing**: `go_router` — tabs (map / discover / notifications / account) plus modal routes (add update, add cat, login).
 - **network**: `dio` behind a single `ApiClient`; an interceptor attaches `X-Device-Token: <device_token>` (and `Authorization: Bearer <access_token>` when logged in) to every request, matching [[api]]'s auth model — two separate headers, since `Authorization` can't unambiguously carry both schemes at once.
-- **map**: `flutter_map` + `flutter_map_marker_cluster` for pin clustering, on OpenStreetMap tiles (revised from the original `google_maps_flutter` pick during issue #7: fully open-source, no api key or billing account needed. the public OSM tile server used for local dev/demo isn't meant for production traffic — see the OSM tile usage policy — so production needs a paid or self-hosted tile provider before real users show up).
+- **map**: `google_maps_flutter`, back to the original pick (issue #7 tried `flutter_map` + public OSM tiles first over the api-key/billing cost; reverted once it became clear the actual reason for `google_maps_flutter` was the hi-fi prototype's basemap — "map feels busy" feedback led to a quieter, label-light carto-positron-like style, not a vendor swap. that's a styling decision, not a sdk decision, and belongs on top of the sdk the prototype was designed against). clustering is native (`ClusterManager`/`clusterManagerId`, wrapping google's own `@googlemaps/markerclusterer` on web) — the third-party `google_maps_cluster_manager` package was tried first but is incompatible with the current `google_maps_flutter_platform_interface` (both define a colliding `Cluster`/`ClusterManager` type) and hasn't been updated to match. basemap look is controlled by a local json style (`features/map/data/map_style.dart`) that hides poi/business/transit labels and road shield icons, keeping water, neighborhood names, and road geometry/labels — full positron-style recoloring is a separate design-track decision, not made here. the api key is public-by-design in a web build; it's restricted via the google cloud console (http referrer + api restriction, billing budget alert), which is out of this repo's reach — see `web/index.html` for the placeholder and setup notes.
 - **push**: `firebase_messaging`; token refreshes call `PUT /v1/devices/me`.
 - **secure storage**: `flutter_secure_storage` for `device_token`, `access_token`, and `refresh_token`.
 - **media**: `image_picker` for capture/selection, `cached_network_image` for display.
@@ -26,7 +26,7 @@ lib/
     router/          app_router.dart
     theme/           app_theme.dart          (placeholder until the visual design is finalized)
   features/
-    map/             data/cats_api.dart · ui/map_screen.dart, cat_pin.dart
+    map/             data/cats_api.dart, marker_bitmap_builder.dart, map_style.dart · ui/map_screen.dart
     cat_detail/
     add_update/
     add_cat/
