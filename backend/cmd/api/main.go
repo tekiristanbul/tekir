@@ -48,7 +48,9 @@ func run() error {
 	store := repository.NewStore(pool)
 	healthSvc := service.NewHealthService(store)
 	healthHandler := handler.NewHealthHandler(healthSvc)
-	router := server.NewRouter(logger, healthHandler, cfg.CORSOrigins)
+	catsSvc := service.NewCatsService(store)
+	catsHandler := handler.NewCatsHandler(catsSvc)
+	router := server.NewRouter(logger, healthHandler, catsHandler, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,
