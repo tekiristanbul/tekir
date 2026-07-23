@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/okanck/catsofistanbul/backend/internal/repository"
+	"github.com/tekiristanbul/tekir/backend/internal/repository"
 )
 
 // requires a real, migrated database: run `make migrate-up` against the

@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
-	"github.com/okanck/catsofistanbul/backend/internal/handler"
+	"github.com/tekiristanbul/tekir/backend/internal/handler"
 )
 
 func NewRouter(logger *slog.Logger, health *handler.HealthHandler, corsOrigins []string) http.Handler {

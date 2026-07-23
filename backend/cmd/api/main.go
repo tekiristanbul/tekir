@@ -11,11 +11,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/okanck/catsofistanbul/backend/internal/config"
-	"github.com/okanck/catsofistanbul/backend/internal/handler"
-	"github.com/okanck/catsofistanbul/backend/internal/repository"
-	"github.com/okanck/catsofistanbul/backend/internal/server"
-	"github.com/okanck/catsofistanbul/backend/internal/service"
+	"github.com/tekiristanbul/tekir/backend/internal/config"
+	"github.com/tekiristanbul/tekir/backend/internal/handler"
+	"github.com/tekiristanbul/tekir/backend/internal/repository"
+	"github.com/tekiristanbul/tekir/backend/internal/server"
+	"github.com/tekiristanbul/tekir/backend/internal/service"
 )
 
 func main() {

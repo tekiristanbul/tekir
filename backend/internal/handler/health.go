@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/okanck/catsofistanbul/backend/internal/service"
+	"github.com/tekiristanbul/tekir/backend/internal/service"
 )
 
 type HealthHandler struct {

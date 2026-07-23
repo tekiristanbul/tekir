@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/okanck/catsofistanbul/backend/internal/service"
+	"github.com/tekiristanbul/tekir/backend/internal/service"
 )
 
 type fakePinger struct {

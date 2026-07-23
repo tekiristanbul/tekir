@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/okanck/catsofistanbul/backend/internal/config"
-	"github.com/okanck/catsofistanbul/backend/internal/repository"
+	"github.com/tekiristanbul/tekir/backend/internal/config"
+	"github.com/tekiristanbul/tekir/backend/internal/repository"
 )
 
 // fixed so re-running the seed updates the same row instead of duplicating it.

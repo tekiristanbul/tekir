@@ -1,6 +1,7 @@
 .PHONY: run build test lint fmt sqlc migrate-up migrate-down migrate-status seed
 
 DATABASE_URL ?= postgres://catsofistanbul:catsofistanbul@localhost:5432/catsofistanbul?sslmode=disable
+export DATABASE_URL
 
 run:
 	go run ./cmd/api
@@ -12,7 +13,7 @@ test:
 	go test ./...
 
 lint:
-	golangci-lint run ./...
+	go tool golangci-lint run ./...
 
 fmt:
 	gofmt -l .
@@ -31,4 +32,4 @@ migrate-status:
 	go tool goose -dir db/migrations postgres "$(DATABASE_URL)" status
 
 seed:
-	DATABASE_URL="$(DATABASE_URL)" go run ./cmd/seed
+	go run ./cmd/seed
