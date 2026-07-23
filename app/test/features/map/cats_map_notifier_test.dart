@@ -1,9 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import 'package:app/features/map/data/cat_marker.dart';
 import 'package:app/features/map/data/cats_api.dart';
@@ -11,14 +10,21 @@ import 'package:app/features/map/ui/cats_map_notifier.dart';
 
 const _cat = CatMarker(
   id: 'cat-1',
-  primaryPhoto: 'https://placecats.com/millie/300/200',
+  primaryPhoto:
+      'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Cat_November_2010-1a.jpg/500px-Cat_November_2010-1a.jpg',
   lat: 41.0256,
   lng: 28.9744,
   needsHelp: false,
 );
 
-final _boundsA = LatLngBounds(const LatLng(41, 28), const LatLng(42, 29));
-final _boundsB = LatLngBounds(const LatLng(40, 27), const LatLng(41, 28));
+final _boundsA = LatLngBounds(
+  southwest: const LatLng(41, 28),
+  northeast: const LatLng(42, 29),
+);
+final _boundsB = LatLngBounds(
+  southwest: const LatLng(40, 27),
+  northeast: const LatLng(41, 28),
+);
 
 /// A fake CatsApi whose responses resolve on demand, so tests can control
 /// completion order independently of call order.

@@ -31,6 +31,29 @@
 
   <title>app</title>
   <link rel="manifest" href="manifest.json">
+
+  <!--
+    Maps JavaScript API, required by google_maps_flutter_web. Replace
+    YOUR_GOOGLE_MAPS_API_KEY with a real key from a Google Cloud project
+    (Maps JavaScript API enabled): https://console.cloud.google.com/google/maps-apis
+
+    This key is public by design (it ships in the compiled web bundle) —
+    google_maps_flutter_web has no mechanism to keep it server-side. Its
+    security comes from restricting it in the Cloud Console, not secrecy:
+    HTTP referrer restriction to this app's domain(s), API restriction to
+    just "Maps JavaScript API", and a billing budget alert so an abused key
+    fails loud instead of racking up cost silently. None of that can be
+    done from this repo — it needs whoever owns the Google Cloud project.
+
+    Not async/deferred, and placed in <head>: both this and the
+    markerclusterer script below must finish before flutter_bootstrap.js
+    (in <body>) starts the engine and calls into `google.maps`/
+    `markerClusterer` — matches google_maps_flutter_web's own setup docs.
+  -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY"></script>
+
+  <!-- marker clustering (features/map/ui/map_screen.dart's ClusterManager) -->
+  <script src="https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer@2.5.3/dist/index.umd.min.js"></script>
 </head>
 <body>
   <!--

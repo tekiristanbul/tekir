@@ -1,20 +1,23 @@
-import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
-import 'package:app/features/map/data/cat_marker.dart';
-import 'package:app/features/map/data/cats_api.dart';
 import 'package:app/features/map/data/location_service.dart';
 import 'package:app/features/map/ui/cats_map_notifier.dart';
 import 'package:app/main.dart';
 
-class _FakeCatsApi implements CatsApi {
-  _FakeCatsApi(this.markers);
+// GoogleMap's onMapCreated/onCameraIdle never fire under plain `flutter
+// test` (there's no real platform view backing it), so the fetch pipeline
+// that normally populates catsMapProvider never runs here. Driving its
+// state directly keeps these tests about the banner logic, not about
+// mocking google_maps_flutter's platform channel.
+class _FixedCatsMapNotifier extends CatsMapNotifier {
+  _FixedCatsMapNotifier(this._state);
 
-  final List<CatMarker> markers;
+  final CatsMapState _state;
 
   @override
-  Future<List<CatMarker>> fetchInBounds(LatLngBounds bounds) async => markers;
+  CatsMapState build() => _state;
 }
 
 void main() {
@@ -30,7 +33,9 @@ void main() {
                 isFallback: true,
               ),
             ),
-            catsApiProvider.overrideWithValue(_FakeCatsApi(const [])),
+            catsMapProvider.overrideWith(
+              () => _FixedCatsMapNotifier(const CatsMapState()),
+            ),
           ],
           child: const CatsOfIstanbulApp(),
         ),
@@ -38,7 +43,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
 
-      expect(find.byType(FlutterMap), findsOneWidget);
+      expect(find.byType(GoogleMap), findsOneWidget);
       expect(
         find.text('location unavailable — showing istanbul'),
         findsOneWidget,
@@ -58,7 +63,11 @@ void main() {
               isFallback: false,
             ),
           ),
-          catsApiProvider.overrideWithValue(_FakeCatsApi(const [])),
+          catsMapProvider.overrideWith(
+            () => _FixedCatsMapNotifier(
+              const CatsMapState(hasLoadedOnce: true, markers: []),
+            ),
+          ),
         ],
         child: const CatsOfIstanbulApp(),
       ),

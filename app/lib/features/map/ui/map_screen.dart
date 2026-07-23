@@ -1,20 +1,34 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:flutter_map_marker_cluster/flutter_map_marker_cluster.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../data/cat_marker.dart';
 import '../data/location_service.dart';
-import 'cat_pin.dart';
+import '../data/map_style.dart';
+import '../data/marker_bitmap_builder.dart';
 import 'cats_map_notifier.dart';
 
 /// istanbul street-level: about 2-3 streets, per docs/product/map.md.
 const _initialZoom = 17.0;
 const _debounceDuration = Duration(milliseconds: 400);
+
+// keeps the camera within greater istanbul so the map can't be panned out
+// to a city/country view — the product wants a street-level experience,
+// not a general-purpose map.
+final _istanbulBounds = LatLngBounds(
+  southwest: const LatLng(40.80, 28.35),
+  northeast: const LatLng(41.40, 29.55),
+);
+const _minZoom = 12.0;
+const _maxZoom = 20.0;
+
+// clustering itself is native (google_maps_flutter's own ClusterManager,
+// which wraps Google's official @googlemaps/markerclusterer on web) — every
+// cat marker just tags itself with this id and the sdk groups them.
+const _catsClusterManagerId = ClusterManagerId('cats');
 
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
@@ -24,27 +38,51 @@ class MapScreen extends ConsumerStatefulWidget {
 }
 
 class _MapScreenState extends ConsumerState<MapScreen> {
-  final _mapController = MapController();
+  GoogleMapController? _controller;
   Timer? _debounce;
+  Set<Marker> _markers = {};
+  int _markerBuildGeneration = 0;
 
   @override
   void dispose() {
     _debounce?.cancel();
-    _mapController.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
-  void _onMapEvent(MapEvent event) {
-    // camera idle / debounce: refetch only once movement settles, never
-    // on every frame of a pan or fling gesture.
-    _debounce?.cancel();
-    _debounce = Timer(_debounceDuration, _fetchVisible);
+  // rebuilds the marker set (fetching/decoding each cat's photo into a
+  // BitmapDescriptor) whenever the fetched cat list changes. guarded by a
+  // generation counter so a slow rebuild from an older cat list can't
+  // clobber a newer one that finished first.
+  Future<void> _rebuildMarkers(List<CatMarker> cats) async {
+    final generation = ++_markerBuildGeneration;
+    final bitmaps = ref.read(markerBitmapBuilderProvider);
+
+    final markers = await Future.wait(
+      cats.map((cat) async {
+        final icon = await bitmaps.pin(
+          cacheKey: cat.id,
+          photoUrl: cat.primaryPhoto,
+          needsHelp: cat.needsHelp,
+        );
+        return Marker(
+          markerId: MarkerId(cat.id),
+          position: LatLng(cat.lat, cat.lng),
+          icon: icon,
+          clusterManagerId: _catsClusterManagerId,
+          onTap: () => _onCatSelected(cat),
+        );
+      }),
+    );
+
+    if (generation != _markerBuildGeneration || !mounted) return;
+    setState(() => _markers = markers.toSet());
   }
 
-  void _fetchVisible() {
-    ref
-        .read(catsMapProvider.notifier)
-        .fetchForBounds(_mapController.camera.visibleBounds);
+  void _onClusterTap(Cluster cluster) {
+    _controller?.animateCamera(
+      CameraUpdate.newLatLngBounds(cluster.bounds, 60),
+    );
   }
 
   void _onCatSelected(CatMarker cat) {
@@ -55,97 +93,77 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     ).showSnackBar(SnackBar(content: Text('selected cat: ${cat.id}')));
   }
 
+  void _onMapCreated(GoogleMapController controller) {
+    _controller = controller;
+    _fetchVisible();
+  }
+
+  void _onCameraIdle() {
+    // camera idle / debounce: refetch only once movement settles, never
+    // on every frame of a pan or fling gesture.
+    _debounce?.cancel();
+    _debounce = Timer(_debounceDuration, _fetchVisible);
+  }
+
+  Future<void> _fetchVisible() async {
+    final controller = _controller;
+    if (controller == null) return;
+    final bounds = await controller.getVisibleRegion();
+    await ref.read(catsMapProvider.notifier).fetchForBounds(bounds);
+  }
+
   @override
   Widget build(BuildContext context) {
     final initialLocation = ref.watch(initialLocationProvider);
 
+    ref.listen(catsMapProvider, (previous, next) {
+      if (previous?.markers != next.markers) {
+        _rebuildMarkers(next.markers);
+      }
+    });
+
     return Scaffold(
       body: initialLocation.when(
-        data: (resolved) => _MapView(
-          mapController: _mapController,
-          initialCenter: resolved.center,
+        data: (resolved) => _buildMap(
+          center: resolved.center,
           showFallbackBanner: resolved.isFallback,
-          onMapEvent: _onMapEvent,
-          onMapReady: _fetchVisible,
-          onCatSelected: _onCatSelected,
         ),
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (_, _) => _MapView(
-          mapController: _mapController,
-          initialCenter: istanbulFallback,
-          showFallbackBanner: true,
-          onMapEvent: _onMapEvent,
-          onMapReady: _fetchVisible,
-          onCatSelected: _onCatSelected,
-        ),
+        error: (_, _) =>
+            _buildMap(center: istanbulFallback, showFallbackBanner: true),
       ),
     );
   }
-}
 
-class _MapView extends ConsumerWidget {
-  const _MapView({
-    required this.mapController,
-    required this.initialCenter,
-    required this.showFallbackBanner,
-    required this.onMapEvent,
-    required this.onMapReady,
-    required this.onCatSelected,
-  });
-
-  final MapController mapController;
-  final LatLng initialCenter;
-  final bool showFallbackBanner;
-  final void Function(MapEvent event) onMapEvent;
-  final VoidCallback onMapReady;
-  final void Function(CatMarker cat) onCatSelected;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget _buildMap({required LatLng center, required bool showFallbackBanner}) {
     final mapState = ref.watch(catsMapProvider);
 
     return Stack(
       children: [
-        FlutterMap(
-          mapController: mapController,
-          options: MapOptions(
-            initialCenter: initialCenter,
-            initialZoom: _initialZoom,
-            onMapEvent: onMapEvent,
-            onMapReady: onMapReady,
+        GoogleMap(
+          initialCameraPosition: CameraPosition(
+            target: center,
+            zoom: _initialZoom,
           ),
-          children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'org.tekiristanbul.catsofistanbul',
+          style: catsOfIstanbulMapStyle,
+          cameraTargetBounds: CameraTargetBounds(_istanbulBounds),
+          minMaxZoomPreference: const MinMaxZoomPreference(_minZoom, _maxZoom),
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled: false,
+          mapToolbarEnabled: false,
+          markers: _markers,
+          clusterManagers: {
+            ClusterManager(
+              clusterManagerId: _catsClusterManagerId,
+              onClusterTap: _onClusterTap,
             ),
-            MarkerClusterLayerWidget(
-              options: MarkerClusterLayerOptions(
-                maxClusterRadius: 60,
-                size: const Size(44, 44),
-                markers: [
-                  for (final cat in mapState.markers)
-                    Marker(
-                      point: LatLng(cat.lat, cat.lng),
-                      width: 44,
-                      height: 44,
-                      child: CatPin(cat: cat, onTap: () => onCatSelected(cat)),
-                    ),
-                ],
-                builder: (context, markers) =>
-                    CatClusterPin(count: markers.length),
-              ),
-            ),
-            const RichAttributionWidget(
-              attributions: [
-                TextSourceAttribution('OpenStreetMap contributors'),
-              ],
-            ),
-          ],
+          },
+          onMapCreated: _onMapCreated,
+          onCameraIdle: _onCameraIdle,
         ),
         if (showFallbackBanner) const _FallbackLocationBanner(),
         if (mapState.isLoading) const _LoadingBar(),
-        if (mapState.error != null) _ErrorBanner(onRetry: onMapReady),
+        if (mapState.error != null) _ErrorBanner(onRetry: _fetchVisible),
         if (mapState.hasLoadedOnce &&
             !mapState.isLoading &&
             mapState.error == null &&
