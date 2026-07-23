@@ -27,36 +27,50 @@ GET  /v1/me               (X-Device-Token, optional Bearer)                     
 ### cats
 
 ```
-GET  /v1/cats?bbox=...                                    → [{ id, name, primary_photo, area{lat,lng}, area_label|null, needs_help, last_update_at }]
+GET  /v1/cats?bbox=...                                    → [{ id, name, primary_photo, area{lat,lng}, area_label|null, active_alert|null, last_update_at }]
 GET  /v1/cats/nearby?lat&lng&radius=50                     → [{ id, primary_photo, name }]   (duplicate check in the add-cat flow — not yet implemented)
-GET  /v1/cats/{cat_id}                                     → { id, name, area{lat,lng}, area_label|null, primary_photo|null, traits[{key,label}], created_at, last_update_at|null }
+GET  /v1/cats/{cat_id}                                     → { id, name, area{lat,lng}, area_label|null, primary_photo|null, traits[{key,label}], created_at, last_update_at|null, active_alert|null }
 POST /v1/cats            (Bearer required)  { area, photo(multipart), traits[], name?, confirmed_new? }
                                              → 201 { cat }  or  409 { candidates:[...] } (when confirmed_new is absent and nearby matches exist — not yet implemented)
 ```
 
-`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it deliberately omits `needs_help` and `followed_by_me` from the earlier sketch above: the issue #4 product decision is final (see [[alerts]]), but active-needs-help rendering itself isn't implemented yet — that's issue #4's own follow-up work, not #21's — and there's no follow/account feature yet. `photos[]` is `primary_photo` (nullable) for now — there's no `media` table yet (see [[db]]), so a cat has exactly one photo column. unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
+`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it omits `followed_by_me` from the earlier sketch above — there's no follow/account feature yet. `photos[]` is `primary_photo` (nullable) for now — there's no `media` table yet (see [[db]]), so a cat has exactly one photo column. unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
+
+`active_alert` (both endpoints, issue #4/#23) is `null` unless the cat has a currently-active needs-help alert:
+
+```
+active_alert: { category, category_label, created_at, expires_at } | null
+```
+
+`category` is one of the fixed mvp vocabulary (`injured_or_sick`, `food_needed`, `water_needed`, `unsafe_location`, `trapped`); `category_label` is its turkish display label. never a bare boolean — a client needs the category and lifecycle to render an alert meaningfully, not just "something's wrong". the object's mere presence already means "active": the server derives that by comparing `expires_at` against its own clock at request time (see [[db]]), so a client is never asked to make that comparison itself, and can't get it wrong by trusting its own clock.
 
 `area_label` (both endpoints) is a nullable, human-readable location string (e.g. "Moda Sahili, Kadıköy") — display-only, never parsed back into coordinates. added for the issue #21 prototype-parity correction: the map's marker-preview sheet and the cat-detail screen show it in place of raw lat/lng. there is no runtime reverse-geocoding service; it's set once at cat-creation/seed time (see [[db]]). `GET /v1/cats?bbox=` also now returns `name`, alongside `area_label` — the minimum fields the marker-preview sheet needs, so selecting a marker never triggers a second full-detail fetch.
 
 ### traits
 
 ```
-GET  /v1/traits    → [{ key, label }]
+GET  /v1/traits    → [{ key, label, group_key|null, group_label|null }]
 ```
 
-the active, selectable trait vocabulary (issue #21 product clarification): a controlled, extensible list — not a client-hardcoded set, not free text, not a closed enum (see [[db]]). retired traits are omitted here but not from a cat's own `traits[]` (existing associations survive retirement). trait selection/editing (assigning a trait to a cat) isn't implemented yet; this endpoint exists so a future add/edit-cat flow has a vocabulary to render a selector from. the initial vocabulary content is a proposal pending product-owner review, not a locked list.
+the active, selectable trait vocabulary (issue #21 product clarification): a controlled, extensible list — not a client-hardcoded set, not free text, not a closed enum (see [[db]]). retired traits are omitted here but not from a cat's own `traits[]` (existing associations survive retirement). `group_key`/`group_label` (issue #23) are additive to the pre-#23 shape — the group a trait belongs to (e.g. personality, interaction with people), so a future grouped multi-select picker can render section headers without a second fetch; `null` for a trait with no group. ordering is deterministic: group order, then trait order within its group. trait selection/editing (assigning a trait to a cat) isn't implemented yet; this endpoint exists so a future add/edit-cat flow has a vocabulary to render a selector from. the initial vocabulary content and grouping is a proposal pending product-owner review, not a locked list.
 
 ### updates
 
-an update is one or more structured statuses from the fixed mvp vocabulary approved on issue #3 (`seen`, `fed`, `water_provided`) plus an optional free-text comment. `needs_help` as an update subtype remains owned by [[alerts]] (issue #4) and isn't modeled here.
+an update is either an ordinary status update — one or more structured statuses from the fixed mvp vocabulary approved on issue #3 (`seen`, `fed`, `water_provided`) plus an optional free-text comment — or a needs-help update (issue #4/#23), an explicit subtype of the same history sharing the same table, carrying a fixed category and its own lifecycle instead of statuses. `kind` (`"ordinary"` | `"needs_help"`) discriminates the two.
 
 ```
-GET  /v1/cats/{cat_id}/updates?cursor=&limit=   → { items: [{ id, statuses[], comment|null, created_at }], next_cursor|null }
-POST /v1/cats/{cat_id}/updates              { statuses[], comment? }          (not yet implemented — issue #21 is read-only)
+GET  /v1/cats/{cat_id}/updates?cursor=&limit=   → { items: [{ id, kind, statuses[], comment|null, created_at,
+                                                              needs_help_category|null, needs_help_category_label|null,
+                                                              needs_help_expires_at|null, needs_help_active|null }],
+                                                     next_cursor|null }
+POST /v1/cats/{cat_id}/updates              { statuses[], comment? }          (not yet implemented — issue #21/#23 are read-only)
+POST /v1/cats/{cat_id}/needs-help  (Bearer required)  { category }            (not yet implemented — see below)
 POST /v1/media           (Bearer required)  multipart file → { media_id, url }
 ```
 
-`GET /v1/cats/{cat_id}/updates` is implemented (issue #21). newest first, keyset-paginated on `(created_at, seq)` — `seq` is a monotonic tie-breaker for rows that share a `created_at` (see [[db]]). `cursor` is an opaque token taken verbatim from the previous page's `next_cursor`; omit it for the first page. `limit` defaults to 20 and is capped at 50 — an out-of-range or non-integer `limit`, or an undecodable `cursor`, is a `400`. unknown `cat_id` → `404`. `next_cursor` is `null` once there is no further page — a client never has to guess.
+`GET /v1/cats/{cat_id}/updates` is implemented (issue #21, extended in #23). newest first, keyset-paginated on `(created_at, seq)` — `seq` is a monotonic tie-breaker for rows that share a `created_at` (see [[db]]). `cursor` is an opaque token taken verbatim from the previous page's `next_cursor`; omit it for the first page. `limit` defaults to 20 and is capped at 50 — an out-of-range or non-integer `limit`, or an undecodable `cursor`, is a `400`. unknown `cat_id` → `404`. `next_cursor` is `null` once there is no further page — a client never has to guess. an entry's `needs_help_*` fields are populated only when `kind` is `"needs_help"`; `needs_help_active` is decided by the server against its own clock (never the client's), so an entry never asks the client to compare timestamps itself — and an expired entry stays in the list exactly like an ordinary one, just with `needs_help_active: false`, per [[alerts]]'s "72 hours removes emphasis, not the record" decision.
+
+`POST /v1/cats/{cat_id}/needs-help` isn't implemented yet — issue #23 is a read-path slice, matching #21's own scoping. documented here so its authentication requirement is settled ahead of the write path actually landing: creating a needs-help alert always requires `Bearer` (phone-verified account), per the issue #4 product decision (see [[trust]]) — unlike an ordinary update or a follow, which only need a device token. the request accepts `category` only; `expires_at` is always server-computed as `created_at + 72h` (see [[db]]) and a client-supplied expiry is rejected, not merely ignored.
 
 ### follows / notifications
 
@@ -72,7 +86,7 @@ push delivery is not client-facing. every new update writes a row to `notificati
 
 ### modeling notes
 
-- `cat.needs_help` is derived: the latest update is `help_request` and hasn't expired. the expiry is a fixed 72 hours per the issue #4 product decision ([[alerts]]); still left as a config value in the implementation rather than a hardcoded number.
+- a cat's active alert is derived, never a stored boolean: the map/cat-detail read paths look up the cat's latest `needs_help` update and the server decides "active" by comparing its `expires_at` against the current time — expiry is a fixed 72 hours per the issue #4 product decision ([[alerts]]), kept as a named constant in the implementation rather than a hardcoded literal at each call site.
 - `confirmed_new` on `POST /v1/cats` only carries the "yes, this is a different cat" confirmation — it does not implement the actual duplicate-merge mechanism ([[cats]] leaves that open).
 - colony vs. individual cat is not modeled — every cat is an atomic record, no grouping.
 - the api never produces a single "official current status" when followers post conflicting updates — clients get the full ordered list and display it themselves, per [[updates]]'s "all updates shown, newest first" decision.
@@ -80,7 +94,7 @@ push delivery is not client-facing. every new update writes a row to `notificati
 ## open questions
 
 - duplicate-cat merge mechanism ([[cats]]).
-- the initial trait vocabulary's labels and grouping are pending product-owner review ([[cats]]); the model (controlled, extensible, keyed) is decided, the specific list is not.
+- the initial trait vocabulary's labels and grouping are pending product-owner review ([[cats]]); the model (controlled, extensible, keyed, grouped) is decided, the specific list and group assignments are not.
 
 ## out of scope
 
