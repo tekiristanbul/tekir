@@ -77,7 +77,6 @@ Future<void> _pumpMap(WidgetTester tester) async {
                 lng: 28.97440,
                 areaLabel: 'Galata Kulesi çevresi, Beyoğlu',
                 primaryPhoto: null,
-                traits: const [],
                 createdAt: DateTime.utc(2026, 1, 1),
                 lastUpdateAt: null,
               ),

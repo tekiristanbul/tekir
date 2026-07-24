@@ -147,7 +147,6 @@ type CatDetail struct {
 	Lng          float64
 	AreaLabel    *string
 	PrimaryPhoto *string
-	Traits       []Trait
 	CreatedAt    time.Time
 	LastUpdateAt *time.Time
 	ActiveAlert  *ActiveAlert
@@ -194,7 +193,6 @@ type CatsStore interface {
 	GetCatByID(ctx context.Context, id pgtype.UUID) (repository.GetCatByIDRow, error)
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	ListCatUpdates(ctx context.Context, arg repository.ListCatUpdatesParams) ([]repository.ListCatUpdatesRow, error)
-	ListCatTraits(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatTraitsRow, error)
 	CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error)
 }
 
@@ -317,15 +315,6 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		return CatDetail{}, err
 	}
 
-	traitRows, err := s.db.ListCatTraits(ctx, catID)
-	if err != nil {
-		return CatDetail{}, err
-	}
-	traits := make([]Trait, 0, len(traitRows))
-	for _, t := range traitRows {
-		traits = append(traits, Trait{Key: t.Key, Label: t.DisplayName})
-	}
-
 	return CatDetail{
 		ID:           uuid.UUID(row.ID.Bytes).String(),
 		Name:         row.Name.String,
@@ -333,7 +322,6 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		Lng:          row.Lng,
 		AreaLabel:    textPtr(row.AreaLabel),
 		PrimaryPhoto: textPtr(row.PhotoUrl),
-		Traits:       traits,
 		CreatedAt:    row.CreatedAt.Time,
 		LastUpdateAt: timestamptzPtr(row.LastUpdateAt),
 		ActiveAlert:  s.deriveActiveAlert(row.NeedsHelpCategory, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),

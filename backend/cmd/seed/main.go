@@ -58,69 +58,6 @@ var seedCats = []struct {
 	{"00000000-0000-4000-8000-000000000019", "kadıköy kedisi", 40.99110, 29.02690, "Moda Sahili, Kadıköy"},
 }
 
-// seedTraitGroups back the future grouped multi-select trait picker
-// (product-owner decision on issue #21/#23). sort_order preserves the order
-// the product owner listed them in.
-var seedTraitGroups = []struct {
-	key         string
-	displayName string
-}{
-	{"personality", "Kişilik"},
-	{"interaction_with_people", "İnsanlarla ilişki"},
-	{"interaction_with_animals", "Hayvanlarla ilişki"},
-	{"physical_characteristics", "Fiziksel özellikler"},
-}
-
-// seedTraitVocabulary is the initial proposed vocabulary + grouping from the
-// issue #23 product clarification — the product owner still needs to
-// approve the specific labels/grouping before merge (see docs/product/
-// cats.md), but the model (controlled, extensible, keyed, grouped) is what's
-// implemented here. sort_order is per-group, preserving proposal order.
-// "skittish" is a seed-only fixture, deliberately seeded inactive (never
-// approved by the product owner as a real vocabulary entry) purely to
-// demonstrate that a retired trait disappears from ListActiveTraits while
-// an existing cat_traits association survives (see seedCatTraits below).
-var seedTraitVocabulary = []struct {
-	key         string
-	displayName string
-	groupKey    string
-	active      bool
-}{
-	{"playful", "Oyuncu", "personality", true},
-	{"calm", "Sakin", "personality", true},
-	{"curious", "Meraklı", "personality", true},
-	{"energetic", "Hareketli", "personality", true},
-	{"independent", "Bağımsız", "personality", true},
-	{"vocal", "Konuşkan", "personality", true},
-
-	{"friendly", "İnsanlara yakın", "interaction_with_people", true},
-	{"shy", "Çekingen", "interaction_with_people", true},
-	{"cautious", "Temkinli", "interaction_with_people", true},
-	{"affectionate", "Sevecen", "interaction_with_people", true},
-	{"does_not_like_touch", "Dokunulmaktan hoşlanmaz", "interaction_with_people", true},
-	{"skittish", "Ürkek", "interaction_with_people", false},
-
-	{"cat_friendly", "Kedilerle uyumlu", "interaction_with_animals", true},
-	{"dog_friendly", "Köpeklerle uyumlu", "interaction_with_animals", true},
-	{"territorial", "Bölgeci", "interaction_with_animals", true},
-	{"prefers_solo", "Yalnız kalmayı tercih eder", "interaction_with_animals", true},
-
-	{"one_eyed", "Tek gözlü", "physical_characteristics", true},
-	{"three_legged", "Üç bacaklı", "physical_characteristics", true},
-	{"limited_mobility", "Hareket kısıtlılığı var", "physical_characteristics", true},
-}
-
-// seedCatTraits assigns vocabulary keys to a handful of cats: none (most
-// cats), one, several, more than three (minnoş — the "+n more" cat-detail
-// summary demo), and one retired-but-still-associated trait (zeytin, with
-// "skittish" — seeded inactive above).
-var seedCatTraits = map[string][]string{
-	"00000000-0000-4000-8000-000000000010": {"friendly"},
-	"00000000-0000-4000-8000-000000000013": {"friendly", "playful"},
-	"00000000-0000-4000-8000-000000000015": {"playful", "calm", "curious", "friendly"},
-	"00000000-0000-4000-8000-000000000016": {"skittish"},
-}
-
 // tekir gets a multi-update timeline for the map-to-detail demo: newest
 // first, a mix of single/multiple structured statuses, and both a commented
 // and a comment-less update. boncuk gets a single update. sarman is left
@@ -211,47 +148,6 @@ func run() error {
 			return err
 		}
 		log.Printf("seeded cat %s: %q", cat, c.name)
-	}
-
-	for i, g := range seedTraitGroups {
-		if _, err := store.UpsertTraitGroup(ctx, repository.UpsertTraitGroupParams{
-			Key:         g.key,
-			DisplayName: g.displayName,
-			SortOrder:   int32(i),
-		}); err != nil {
-			return err
-		}
-	}
-	log.Printf("seeded %d trait groups", len(seedTraitGroups))
-
-	// sort_order is per-group (the position within its own group), not a
-	// global index across the whole vocabulary — groupSortOrder tracks that
-	// per group_key as the slice is walked in its declared (grouped) order.
-	groupSortOrder := make(map[string]int32, len(seedTraitGroups))
-	for _, t := range seedTraitVocabulary {
-		sortOrder := groupSortOrder[t.groupKey]
-		if _, err := store.UpsertTrait(ctx, repository.UpsertTraitParams{
-			Key:         t.key,
-			DisplayName: t.displayName,
-			GroupKey:    pgtype.Text{String: t.groupKey, Valid: true},
-			Active:      t.active,
-			SortOrder:   sortOrder,
-		}); err != nil {
-			return err
-		}
-		groupSortOrder[t.groupKey] = sortOrder + 1
-	}
-	log.Printf("seeded %d trait vocabulary entries", len(seedTraitVocabulary))
-
-	for catID, traits := range seedCatTraits {
-		for _, traitKey := range traits {
-			if err := store.CreateCatTrait(ctx, repository.CreateCatTraitParams{
-				CatID:    pgtype.UUID{Bytes: uuid.MustParse(catID), Valid: true},
-				TraitKey: traitKey,
-			}); err != nil {
-				return err
-			}
-		}
 	}
 
 	for _, u := range seedUpdates {

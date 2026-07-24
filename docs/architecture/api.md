@@ -29,8 +29,8 @@ GET  /v1/me               (X-Device-Token, optional Bearer)                     
 ```
 GET  /v1/cats?bbox=...                                    → [{ id, name, primary_photo, area{lat,lng}, area_label|null, active_alert|null, last_update_at }]
 GET  /v1/cats/nearby?lat&lng&radius=50                     → [{ id, primary_photo, name }]   (duplicate check in the add-cat flow — not yet implemented)
-GET  /v1/cats/{cat_id}                                     → { id, name, area{lat,lng}, area_label|null, primary_photo|null, traits[{key,label}], created_at, last_update_at|null, active_alert|null }
-POST /v1/cats            (Bearer required)  { area, photo(multipart), traits[], name?, confirmed_new? }
+GET  /v1/cats/{cat_id}                                     → { id, name, area{lat,lng}, area_label|null, primary_photo|null, created_at, last_update_at|null, active_alert|null }
+POST /v1/cats            (Bearer required)  { area, photo(multipart), name?, confirmed_new? }
                                              → 201 { cat }  or  409 { candidates:[...] } (when confirmed_new is absent and nearby matches exist — not yet implemented)
 ```
 
@@ -46,13 +46,9 @@ active_alert: { category, category_label, created_at, expires_at } | null
 
 `area_label` (both endpoints) is a nullable, human-readable location string (e.g. "Moda Sahili, Kadıköy") — display-only, never parsed back into coordinates. added for the issue #21 prototype-parity correction: the map's marker-preview sheet and the cat-detail screen show it in place of raw lat/lng. there is no runtime reverse-geocoding service; it's set once at cat-creation/seed time (see [[db]]). `GET /v1/cats?bbox=` also now returns `name`, alongside `area_label` — the minimum fields the marker-preview sheet needs, so selecting a marker never triggers a second full-detail fetch.
 
-### traits
+### traits (dormant legacy storage)
 
-```
-GET  /v1/traits    → [{ key, label, group_key|null, group_label|null }]
-```
-
-the active, selectable trait vocabulary (issue #21 product clarification): a controlled, extensible list — not a client-hardcoded set, not free text, not a closed enum (see [[db]]). retired traits are omitted here but not from a cat's own `traits[]` (existing associations survive retirement). `group_key`/`group_label` (issue #23) are additive to the pre-#23 shape — the group a trait belongs to (e.g. personality, interaction with people), so a future grouped multi-select picker can render section headers without a second fetch; `null` for a trait with no group. ordering is deterministic: group order, then trait order within its group. trait selection/editing (assigning a trait to a cat) isn't implemented yet; this endpoint exists so a future add/edit-cat flow has a vocabulary to render a selector from. the initial vocabulary content and grouping is a proposal pending product-owner review, not a locked list.
+issue #42 removed permanent cat traits from the mvp surface: `GET /v1/traits` no longer exists, and `GET /v1/cats/{cat_id}` no longer returns a `traits` field. the underlying `traits`/`trait_groups`/`cat_traits` tables and their existing rows are untouched (see [[db]]) — dormant storage that current api responses never read from or write to. behavioral observations such as playful, shy, or friendly now belong in update comments ([[updates]]), not a permanent cat-profile attribute.
 
 ### updates
 
@@ -96,7 +92,6 @@ push delivery is not client-facing. every `POST /v1/cats/{cat_id}/updates` write
 ## open questions
 
 - duplicate-cat merge mechanism ([[cats]]).
-- the initial trait vocabulary's labels and grouping are pending product-owner review ([[cats]]); the model (controlled, extensible, keyed, grouped) is decided, the specific list and group assignments are not.
 
 ## out of scope
 

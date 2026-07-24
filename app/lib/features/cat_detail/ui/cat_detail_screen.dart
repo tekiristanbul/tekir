@@ -18,11 +18,13 @@ const _statusLabelsTr = {
 
 /// Cat-detail view reached from the map's marker-preview sheet
 /// (docs/product/map.md, docs/design/implementation-contract.md): an
-/// edge-to-edge hero photo, traits, a compact last-update line, and a
-/// newest-first status-update timeline. Read-only — posting an update,
-/// editing the cat, follow, and needs-help rendering are out of scope for
-/// issue #21. Matches prototype/app.js's renderDetail visual hierarchy;
-/// never shows raw lat/lng, and every user-facing string is Turkish.
+/// edge-to-edge hero photo, a compact last-update line, and a newest-first
+/// status-update timeline. Read-only — posting an update, editing the cat,
+/// follow, and needs-help rendering are out of scope for issue #21.
+/// Permanent trait chips are not part of the mvp surface (issue #42) —
+/// behavioral observations belong in update comments instead. Matches
+/// prototype/app.js's renderDetail visual hierarchy; never shows raw
+/// lat/lng, and every user-facing string is Turkish.
 class CatDetailScreen extends ConsumerStatefulWidget {
   const CatDetailScreen({super.key, required this.catId});
 
@@ -99,10 +101,6 @@ class _CatDetailBody extends ConsumerWidget {
             children: [
               if (detail.activeAlert != null) ...[
                 _ActiveAlertBanner(alert: detail.activeAlert!),
-                const SizedBox(height: AppSpacing.s4),
-              ],
-              if (detail.traits.isNotEmpty) ...[
-                _TraitsSection(traits: detail.traits),
                 const SizedBox(height: AppSpacing.s4),
               ],
               if (detail.lastUpdateAt != null) ...[
@@ -336,89 +334,6 @@ class _ActiveAlertBanner extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// The cat's trait summary (issue #21/#23): the first three, then a "+n
-/// daha" entry that expands the full list in place — never an unbounded
-/// chip wrap, so a cat with many traits can't blow out the layout.
-class _TraitsSection extends StatefulWidget {
-  const _TraitsSection({required this.traits});
-
-  final List<CatTrait> traits;
-
-  @override
-  State<_TraitsSection> createState() => _TraitsSectionState();
-}
-
-class _TraitsSectionState extends State<_TraitsSection> {
-  static const _collapsedCount = 3;
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final traits = widget.traits;
-    final hasMore = traits.length > _collapsedCount;
-    final visible = (_expanded || !hasMore)
-        ? traits
-        : traits.take(_collapsedCount).toList();
-    final remaining = traits.length - _collapsedCount;
-
-    return Wrap(
-      spacing: AppSpacing.s2,
-      runSpacing: AppSpacing.s2,
-      children: [
-        for (final t in visible) _TraitChip(label: t.label),
-        if (hasMore && !_expanded)
-          _TraitChip(
-            label: '+$remaining daha',
-            onTap: () => setState(() => _expanded = true),
-          ),
-        if (hasMore && _expanded)
-          _TraitChip(
-            label: 'daha az göster',
-            onTap: () => setState(() => _expanded = false),
-          ),
-      ],
-    );
-  }
-}
-
-class _TraitChip extends StatelessWidget {
-  const _TraitChip({required this.label, this.onTap});
-
-  final String label;
-
-  /// Present only for the "+n daha" / "daha az göster" toggle chip — a
-  /// plain trait chip is never tappable.
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final chip = Container(
-      height: 32,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s3),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: onTap != null ? AppColors.surfaceAlt : AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.full),
-        border: Border.all(color: AppColors.lineStrong),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: onTap != null ? AppColors.primaryStrong : AppColors.muted,
-        ),
-      ),
-    );
-    if (onTap == null) return chip;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppRadius.full),
-      child: chip,
     );
   }
 }

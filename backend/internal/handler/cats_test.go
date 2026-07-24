@@ -31,9 +31,6 @@ type fakeCatsLister struct {
 	updateRows []repository.ListCatUpdatesRow
 	updatesErr error
 
-	traitRows []repository.ListCatTraitsRow
-	traitsErr error
-
 	createRow repository.CreateUpdateRow
 	createErr error
 	// captured, if non-nil, records the arg the last CreateOrdinaryUpdate
@@ -56,10 +53,6 @@ func (f fakeCatsLister) CatExists(ctx context.Context, id pgtype.UUID) (bool, er
 
 func (f fakeCatsLister) ListCatUpdates(ctx context.Context, arg repository.ListCatUpdatesParams) ([]repository.ListCatUpdatesRow, error) {
 	return f.updateRows, f.updatesErr
-}
-
-func (f fakeCatsLister) ListCatTraits(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatTraitsRow, error) {
-	return f.traitRows, f.traitsErr
 }
 
 func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error) {
@@ -210,7 +203,6 @@ func TestCatsHandler_Detail(t *testing.T) {
 			PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
 			CreatedAt: pgtype.Timestamptz{Time: created, Valid: true},
 		},
-		traitRows: []repository.ListCatTraitsRow{{Key: "friendly", DisplayName: "Friendly"}},
 	}))
 
 	rec := httptest.NewRecorder()
@@ -231,11 +223,33 @@ func TestCatsHandler_Detail(t *testing.T) {
 	if body.PrimaryPhoto == nil || *body.PrimaryPhoto != "https://placecats.com/millie/300/200" {
 		t.Errorf("unexpected primary_photo: %v", body.PrimaryPhoto)
 	}
-	if len(body.Traits) != 1 || body.Traits[0].Key != "friendly" || body.Traits[0].Label != "Friendly" {
-		t.Errorf("unexpected traits: %v", body.Traits)
-	}
 	if body.AreaLabel == nil || *body.AreaLabel != "Galata Kulesi çevresi, Beyoğlu" {
 		t.Errorf("unexpected area_label: %v", body.AreaLabel)
+	}
+}
+
+// TestCatsHandler_Detail_NoTraitsField proves the cat-detail response never
+// carries a "traits" key (issue #42: permanent cat traits are dormant
+// legacy storage, no longer part of the mvp surface).
+func TestCatsHandler_Detail_NoTraitsField(t *testing.T) {
+	id := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:   pgtype.UUID{Bytes: id, Valid: true},
+			Name: pgtype.Text{String: "tekir", Valid: true},
+		},
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String(), nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, ok := raw["traits"]; ok {
+		t.Errorf("expected no traits key in response, got %s", rec.Body.String())
 	}
 }
 
