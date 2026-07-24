@@ -202,6 +202,30 @@ void main() {
     },
   );
 
+  test(
+    'prependUpdate is a no-op if the entry id is already in the timeline (retry-safe)',
+    () async {
+      final container = _containerWith(
+        _FakeCatDetailApi(
+          detail: _detail,
+          updatesPages: [
+            UpdatesPage(items: [_update('u1')], nextCursor: null),
+          ],
+        ),
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      notifier.prependUpdate(_update('u1', comment: 'retried submit'));
+
+      final state = container.read(catDetailProvider(_catId));
+      expect(state.updates, hasLength(1));
+      expect(state.updates.single.comment, isNull);
+    },
+  );
+
   test('prependUpdate is a no-op before detail has loaded', () async {
     final container = _containerWith(_FakeCatDetailApi());
     addTearDown(container.dispose);

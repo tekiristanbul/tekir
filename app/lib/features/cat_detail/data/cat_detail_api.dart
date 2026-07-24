@@ -86,7 +86,9 @@ class CatDetailApi {
         '/v1/cats/$catId/updates',
         data: {'statuses': statuses, 'comment': comment},
       );
-      return CatUpdateEntry.fromJson(response.data!);
+      final body = response.data;
+      if (body == null) throw const UpdateServerException();
+      return CatUpdateEntry.fromJson(body);
     } on DioException catch (e) {
       throw _mapCreateUpdateError(e);
     }

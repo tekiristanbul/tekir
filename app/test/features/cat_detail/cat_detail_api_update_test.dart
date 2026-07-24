@@ -180,6 +180,20 @@ void main() {
         );
       },
     );
+
+    test(
+      'a 2xx response with an empty body maps to UpdateServerException, not a crash',
+      () async {
+        final dio = Dio(BaseOptions(baseUrl: 'http://localhost:8080'));
+        dio.httpClientAdapter = _EmptyBodyAdapter();
+        final api = CatDetailApi(ApiClient(dio: dio));
+
+        await expectLater(
+          api.createUpdate('cat-1', statuses: const ['seen']),
+          throwsA(isA<UpdateServerException>()),
+        );
+      },
+    );
   });
 }
 
@@ -193,6 +207,26 @@ class _ThrowingAdapter implements HttpClientAdapter {
     throw DioException.connectionError(
       requestOptions: options,
       reason: 'offline',
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _EmptyBodyAdapter implements HttpClientAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    return ResponseBody.fromString(
+      '',
+      201,
+      headers: {
+        'content-type': ['application/json'],
+      },
     );
   }
 

@@ -114,10 +114,13 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
   /// create response directly rather than re-fetching, so the
   /// exactly-one-new-entry guarantee never races [loadMoreUpdates]. No-op
   /// if detail hasn't loaded yet — the ui only offers a way to submit once
-  /// it has.
+  /// it has. Also a no-op if this id is already present, so a retried
+  /// submit whose earlier attempt actually succeeded server-side can't
+  /// duplicate the timeline entry.
   void prependUpdate(CatUpdateEntry entry) {
     final detail = state.detail;
     if (detail == null) return;
+    if (state.updates.any((u) => u.id == entry.id)) return;
     state = state.copyWith(
       updates: [entry, ...state.updates],
       detail: CatDetail(
