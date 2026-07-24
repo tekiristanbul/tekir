@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -183,17 +184,7 @@ func (h *CatsHandler) UpdateHistory(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]updateResponse, 0, len(page.Items))
 	for _, u := range page.Items {
-		items = append(items, updateResponse{
-			ID:                     u.ID,
-			Kind:                   u.Kind,
-			Statuses:               u.Statuses,
-			Comment:                u.Comment,
-			CreatedAt:              u.CreatedAt,
-			NeedsHelpCategory:      u.NeedsHelpCategory,
-			NeedsHelpCategoryLabel: u.NeedsHelpCategoryLabel,
-			NeedsHelpExpiresAt:     u.NeedsHelpExpiresAt,
-			NeedsHelpActive:        u.NeedsHelpActive,
-		})
+		items = append(items, toUpdateResponse(u))
 	}
 
 	var nextCursor *string
@@ -201,6 +192,52 @@ func (h *CatsHandler) UpdateHistory(w http.ResponseWriter, r *http.Request) {
 		nextCursor = &page.NextCursor
 	}
 	writeJSON(w, http.StatusOK, updateHistoryResponse{Items: items, NextCursor: nextCursor})
+}
+
+func toUpdateResponse(u service.CatUpdate) updateResponse {
+	return updateResponse{
+		ID:                     u.ID,
+		Kind:                   u.Kind,
+		Statuses:               u.Statuses,
+		Comment:                u.Comment,
+		CreatedAt:              u.CreatedAt,
+		NeedsHelpCategory:      u.NeedsHelpCategory,
+		NeedsHelpCategoryLabel: u.NeedsHelpCategoryLabel,
+		NeedsHelpExpiresAt:     u.NeedsHelpExpiresAt,
+		NeedsHelpActive:        u.NeedsHelpActive,
+	}
+}
+
+// createUpdateRequest is the body of POST /v1/cats/{cat_id}/updates
+// (issue #36). DisallowUnknownFields rejects any client-supplied kind,
+// media, needs-help, timestamp, sequence, or author field outright — those
+// are always server-derived, never accepted from the caller.
+type createUpdateRequest struct {
+	Statuses []string `json:"statuses"`
+	Comment  *string  `json:"comment"`
+}
+
+// CreateUpdate answers POST /v1/cats/{cat_id}/updates: records a new
+// ordinary status update for the cat, attributed to the device identified
+// by the caller's X-Device-Token (see RequireDeviceToken). Requires no
+// bearer auth beyond that device token.
+func (h *CatsHandler) CreateUpdate(w http.ResponseWriter, r *http.Request) {
+	var req createUpdateRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	device := DeviceFromContext(r.Context())
+	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), device.DeviceID, req.Statuses, req.Comment)
+	if err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, toUpdateResponse(update))
 }
 
 func writeCatsServiceError(w http.ResponseWriter, err error) {
@@ -213,6 +250,8 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cursor"})
 	case errors.Is(err, service.ErrInvalidLimit):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"})
+	case errors.Is(err, service.ErrInvalidStatuses):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid statuses"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 	}

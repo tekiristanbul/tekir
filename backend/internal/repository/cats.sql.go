@@ -178,6 +178,22 @@ func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsPara
 	return items, nil
 }
 
+const updateCatLastUpdateAt = `-- name: UpdateCatLastUpdateAt :exec
+update cats set last_update_at = $1 where id = $2
+`
+
+type UpdateCatLastUpdateAtParams struct {
+	LastUpdateAt pgtype.Timestamptz `json:"last_update_at"`
+	ID           pgtype.UUID        `json:"id"`
+}
+
+// issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
+// so a new ordinary update and the cat's last_update_at commit atomically.
+func (q *Queries) UpdateCatLastUpdateAt(ctx context.Context, arg UpdateCatLastUpdateAtParams) error {
+	_, err := q.db.Exec(ctx, updateCatLastUpdateAt, arg.LastUpdateAt, arg.ID)
+	return err
+}
+
 const upsertCat = `-- name: UpsertCat :one
 insert into cats (id, name, area, area_label, photo_url, status, last_update_at)
 values (

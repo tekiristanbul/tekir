@@ -396,6 +396,213 @@ func TestStore_GetCatByID_LatestNeedsHelpUpdate(t *testing.T) {
 	}
 }
 
+// rawPool opens a second, direct connection to DATABASE_URL for assertions
+// the sqlc-generated Store has no query for (e.g. counting
+// notification_outbox rows, or checking a table for rows that must not
+// exist after a rolled-back transaction).
+func rawPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set, skipping integration test")
+	}
+
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// TestStore_CreateOrdinaryUpdate_Success exercises issue #36's atomic write
+// end to end against real postgres: the update row, its statuses, the
+// cat's last_update_at, and the notification_outbox row the
+// updates_enqueue_outbox trigger (migration 00008) produces all need to
+// commit together, and the new update needs to surface correctly through
+// the existing ListCatUpdates pagination path.
+func TestStore_CreateOrdinaryUpdate_Success(t *testing.T) {
+	store := newTestStore(t)
+	pool := rawPool(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "ordinary update recipient")
+	device, err := store.CreateDevice(ctx, repository.CreateDeviceParams{
+		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		TokenHash: uuid.NewString(),
+		Platform:  "ios",
+	})
+	if err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	row, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:             updateID,
+		CatID:          catID,
+		AuthorDeviceID: device.ID,
+		Comment:        pgtype.Text{String: "mama verildi", Valid: true},
+		CreatedAt:      pgtype.Timestamptz{Time: createdAt, Valid: true},
+		Statuses:       []string{"fed", "seen"},
+	})
+	if err != nil {
+		t.Fatalf("create ordinary update: %v", err)
+	}
+	if row.ID != updateID {
+		t.Errorf("expected row id %v, got %v", updateID, row.ID)
+	}
+
+	// author attribution landed on the update row.
+	var authorDeviceID pgtype.UUID
+	if err := pool.QueryRow(ctx, "select author_device_id from updates where id = $1", row.ID).Scan(&authorDeviceID); err != nil {
+		t.Fatalf("query author_device_id: %v", err)
+	}
+	if authorDeviceID != device.ID {
+		t.Errorf("expected author_device_id %v, got %v", device.ID, authorDeviceID)
+	}
+
+	// cats.last_update_at moved to the update's created_at, atomically.
+	cat, err := store.GetCatByID(ctx, catID)
+	if err != nil {
+		t.Fatalf("get cat: %v", err)
+	}
+	if !cat.LastUpdateAt.Valid || !cat.LastUpdateAt.Time.Equal(createdAt) {
+		t.Errorf("expected last_update_at %v, got %v", createdAt, cat.LastUpdateAt.Time)
+	}
+
+	// exactly one notification_outbox row was enqueued by the trigger.
+	var outboxCount int
+	if err := pool.QueryRow(ctx, "select count(*) from notification_outbox where update_id = $1", row.ID).Scan(&outboxCount); err != nil {
+		t.Fatalf("count outbox rows: %v", err)
+	}
+	if outboxCount != 1 {
+		t.Errorf("expected exactly 1 notification_outbox row, got %d", outboxCount)
+	}
+
+	// the new update surfaces correctly through the existing pagination path.
+	rows, err := store.ListCatUpdates(ctx, repository.ListCatUpdatesParams{CatID: catID, RowLimit: 20})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(rows))
+	}
+	if rows[0].ID != row.ID {
+		t.Errorf("expected listed update id %v, got %v", row.ID, rows[0].ID)
+	}
+	if rows[0].Kind != "ordinary" {
+		t.Errorf("expected kind ordinary, got %q", rows[0].Kind)
+	}
+	if len(rows[0].Statuses) != 2 {
+		t.Errorf("unexpected statuses: %v", rows[0].Statuses)
+	}
+	if rows[0].Comment.String != "mama verildi" {
+		t.Errorf("unexpected comment: %q", rows[0].Comment.String)
+	}
+}
+
+// TestStore_CreateOrdinaryUpdate_RollsBackOnInvalidStatus verifies the
+// transaction is a real, all-or-nothing unit rather than a best-effort
+// sequence of writes: an update_statuses check-constraint violation (a real
+// postgres failure, not a mock) must leave no trace of the update row, no
+// cats.last_update_at change, and no notification_outbox row.
+func TestStore_CreateOrdinaryUpdate_RollsBackOnInvalidStatus(t *testing.T) {
+	store := newTestStore(t)
+	pool := rawPool(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "rollback target")
+	before, err := store.GetCatByID(ctx, catID)
+	if err != nil {
+		t.Fatalf("get cat: %v", err)
+	}
+
+	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	_, err = store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:        updateID,
+		CatID:     catID,
+		CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		Statuses:  []string{"not_a_real_status"},
+	})
+	if !isCheckViolation(err) {
+		t.Fatalf("expected a check-constraint violation, got %v", err)
+	}
+
+	// the update row itself did not survive the rollback.
+	var updateCount int
+	if err := pool.QueryRow(ctx, "select count(*) from updates where id = $1", updateID).Scan(&updateCount); err != nil {
+		t.Fatalf("count update rows: %v", err)
+	}
+	if updateCount != 0 {
+		t.Errorf("expected the update row to be rolled back, found %d", updateCount)
+	}
+
+	// cats.last_update_at is untouched.
+	after, err := store.GetCatByID(ctx, catID)
+	if err != nil {
+		t.Fatalf("get cat: %v", err)
+	}
+	if after.LastUpdateAt != before.LastUpdateAt {
+		t.Errorf("expected last_update_at to stay %v, got %v", before.LastUpdateAt, after.LastUpdateAt)
+	}
+
+	// no outbox row: the trigger fires on insert, but that insert rolled back too.
+	var outboxCount int
+	if err := pool.QueryRow(ctx, "select count(*) from notification_outbox where update_id = $1", updateID).Scan(&outboxCount); err != nil {
+		t.Fatalf("count outbox rows: %v", err)
+	}
+	if outboxCount != 0 {
+		t.Errorf("expected no notification_outbox row after rollback, got %d", outboxCount)
+	}
+}
+
+// TestStore_CreateOrdinaryUpdate_PaginationRegression guards against the
+// write path silently breaking the existing keyset-pagination contract on
+// ListCatUpdates: a created ordinary update must take its correct
+// newest-first position alongside pre-existing history, not just appear in
+// an unpaginated read.
+func TestStore_CreateOrdinaryUpdate_PaginationRegression(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "pagination regression")
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	createTestUpdate(t, ctx, store, catID, base, []string{"seen"}, "")
+
+	newest := base.Add(time.Hour)
+	row, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:     catID,
+		CreatedAt: pgtype.Timestamptz{Time: newest, Valid: true},
+		Statuses:  []string{"water_provided"},
+	})
+	if err != nil {
+		t.Fatalf("create ordinary update: %v", err)
+	}
+
+	firstPage, err := store.ListCatUpdates(ctx, repository.ListCatUpdatesParams{CatID: catID, RowLimit: 1})
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if len(firstPage) != 1 || firstPage[0].ID != row.ID {
+		t.Fatalf("expected the newly created update first on page 1, got %+v", firstPage)
+	}
+
+	secondPage, err := store.ListCatUpdates(ctx, repository.ListCatUpdatesParams{
+		CatID:           catID,
+		RowLimit:        1,
+		BeforeCreatedAt: firstPage[0].CreatedAt,
+		BeforeSeq:       firstPage[0].Seq,
+	})
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if len(secondPage) != 1 || !secondPage[0].CreatedAt.Time.Equal(base) {
+		t.Fatalf("expected the older pre-existing update second, got %+v", secondPage)
+	}
+}
+
 func TestStore_GetCatByID_NoNeedsHelpUpdateIsNull(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
