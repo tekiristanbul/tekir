@@ -42,6 +42,9 @@ class _FakeStorage implements DeviceKeyValueStorage {
 
   @override
   Future<void> write(String key, String value) async => _data[key] = value;
+
+  @override
+  Future<void> delete(String key) async => _data.remove(key);
 }
 
 // Empty storage forces DeviceIdentityService through registration on every
@@ -55,6 +58,9 @@ class _EmptyStorage implements DeviceKeyValueStorage {
 
   @override
   Future<void> write(String key, String value) async => _data[key] = value;
+
+  @override
+  Future<void> delete(String key) async => _data.remove(key);
 }
 
 class _FakeCatDetailApi implements CatDetailApi {
@@ -111,6 +117,31 @@ class _FlakyDeviceAdapter implements HttpClientAdapter {
         : '{"device_id":"did-retry","device_token":"tok-retry"}';
     return ResponseBody.fromString(
       body,
+      201,
+      headers: {
+        'content-type': ['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+// Registers a fresh device_id/device_token every call — used to verify a
+// re-registration actually happens after DeviceIdentityService.invalidate().
+class _CountingRegistrationAdapter implements HttpClientAdapter {
+  int callCount = 0;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    callCount++;
+    return ResponseBody.fromString(
+      '{"device_id":"did-fresh-$callCount","device_token":"tok-fresh-$callCount"}',
       201,
       headers: {
         'content-type': ['application/json'],
@@ -324,9 +355,70 @@ void main() {
     },
   );
 
+  test(
+    'a 401 from the update api invalidates the stale device credential so the next submit re-registers',
+    () async {
+      final storage = _FakeStorage(); // pre-populated with did-1/tok-1
+      final registrationAdapter = _CountingRegistrationAdapter();
+      final deviceService = DeviceIdentityService(
+        storage: storage,
+        dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
+          ..httpClientAdapter = registrationAdapter,
+      );
+      final api = _FakeCatDetailApi()
+        ..nextError = const UpdateUnauthorizedException();
+      final container = _containerWith(
+        api,
+        deviceIdentityService: deviceService,
+      );
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+
+      final firstOk = await notifier.submitSeen();
+      expect(firstOk, isFalse);
+      final state = container.read(catUpdateComposerProvider(_catId));
+      expect(state.error, UpdateSubmitError.unauthorized);
+      expect(state.isSubmitting, isFalse);
+      expect(
+        updateSubmitErrorMessageTr(state.error!),
+        isNotEmpty,
+        reason: 'every mapped error has turkish, actionable copy',
+      );
+      expect(deviceService.cached, isNull, reason: 'stale credential dropped');
+      expect(storage._data.containsKey('device_token'), isFalse);
+      expect(
+        registrationAdapter.callCount,
+        0,
+        reason: 'invalidate() only clears state, it does not re-register',
+      );
+
+      // Retryable: a following successful submit re-registers and clears
+      // the error.
+      api
+        ..nextError = null
+        ..nextResult = _entry('upd-1');
+      final secondOk = await notifier.submitSeen();
+      expect(secondOk, isTrue);
+      expect(container.read(catUpdateComposerProvider(_catId)).error, isNull);
+      expect(
+        registrationAdapter.callCount,
+        1,
+        reason: 'stale credential must not be replayed; a fresh one is used',
+      );
+    },
+  );
+
+  // UpdateUnauthorizedException is exercised separately above (and below):
+  // retrying it now requires a device identity service that can actually
+  // re-register, since the fix for the stale-credential review comment
+  // makes the composer invalidate() the credential on a 401 rather than
+  // just clearing the in-memory error.
   for (final entry in {
     const UpdateValidationException(): UpdateSubmitError.validation,
-    const UpdateUnauthorizedException(): UpdateSubmitError.unauthorized,
     const CatNotFoundException(): UpdateSubmitError.notFound,
     const UpdateNetworkException(): UpdateSubmitError.network,
     const UpdateServerException(): UpdateSubmitError.server,

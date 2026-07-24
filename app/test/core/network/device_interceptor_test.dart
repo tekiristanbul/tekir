@@ -12,6 +12,9 @@ class _FakeStorage implements DeviceKeyValueStorage {
 
   @override
   Future<void> write(String key, String value) async {}
+
+  @override
+  Future<void> delete(String key) async {}
 }
 
 // ── fake Dio adapter that captures request options ────────────────────────────

@@ -45,6 +45,9 @@ class _FakeStorage implements DeviceKeyValueStorage {
 
   @override
   Future<void> write(String key, String value) async => _data[key] = value;
+
+  @override
+  Future<void> delete(String key) async => _data.remove(key);
 }
 
 class _FakeCatDetailApi implements CatDetailApi {
