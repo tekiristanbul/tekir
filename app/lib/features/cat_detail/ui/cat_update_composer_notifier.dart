@@ -134,8 +134,15 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     } on UpdateUnauthorizedException {
       // The stored credential looked valid locally but the server rejected
       // it — replaying the same token on retry would just 401 again, so
-      // drop it and force a fresh registration next time.
-      await ref.read(deviceIdentityServiceProvider).invalidate();
+      // drop it and force a fresh registration next time. Best-effort: a
+      // secure-storage deletion failure must not leave the user stuck in
+      // isSubmitting forever without ever seeing the retryable error.
+      try {
+        await ref.read(deviceIdentityServiceProvider).invalidate();
+      } catch (_) {
+        // Ignored — falling through still surfaces the unauthorized error
+        // and re-enables submission below.
+      }
       state = state.copyWith(
         isSubmitting: false,
         error: UpdateSubmitError.unauthorized,

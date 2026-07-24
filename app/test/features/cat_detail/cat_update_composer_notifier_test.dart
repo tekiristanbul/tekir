@@ -47,6 +47,22 @@ class _FakeStorage implements DeviceKeyValueStorage {
   Future<void> delete(String key) async => _data.remove(key);
 }
 
+// Delete always throws — used to verify a secure-storage failure during
+// DeviceIdentityService.invalidate() doesn't leave the composer stuck.
+class _ThrowingDeleteStorage implements DeviceKeyValueStorage {
+  final _data = <String, String>{'device_id': 'did-1', 'device_token': 'tok-1'};
+
+  @override
+  Future<String?> read(String key) async => _data[key];
+
+  @override
+  Future<void> write(String key, String value) async => _data[key] = value;
+
+  @override
+  Future<void> delete(String key) async =>
+      throw Exception('secure storage unavailable');
+}
+
 // Empty storage forces DeviceIdentityService through registration on every
 // init() call whose result isn't cached — used to exercise the
 // fails-then-succeeds retry path.
@@ -409,6 +425,48 @@ void main() {
         1,
         reason: 'stale credential must not be replayed; a fresh one is used',
       );
+    },
+  );
+
+  test(
+    'a secure-storage failure during invalidate does not leave the composer stuck submitting',
+    () async {
+      final storage = _ThrowingDeleteStorage();
+      final deviceService = DeviceIdentityService(
+        storage: storage,
+        dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
+          ..httpClientAdapter = _CountingRegistrationAdapter(),
+      );
+      final api = _FakeCatDetailApi()
+        ..nextError = const UpdateUnauthorizedException();
+      final container = _containerWith(
+        api,
+        deviceIdentityService: deviceService,
+      );
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+
+      final ok = await notifier.submitSeen();
+      expect(ok, isFalse);
+
+      final state = container.read(catUpdateComposerProvider(_catId));
+      expect(state.error, UpdateSubmitError.unauthorized);
+      expect(
+        state.isSubmitting,
+        isFalse,
+        reason: 'must not get stuck submitting when storage delete throws',
+      );
+
+      // A later retry remains possible — the in-flight guard isn't wedged.
+      api
+        ..nextError = null
+        ..nextResult = _entry('upd-1');
+      final retryOk = await notifier.submitSeen();
+      expect(retryOk, isTrue);
     },
   );
 
