@@ -89,4 +89,9 @@ select exists(select 1 from cats where id = sqlc.arg(id)) as exists;
 -- name: UpdateCatLastUpdateAt :exec
 -- issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
 -- so a new ordinary update and the cat's last_update_at commit atomically.
-update cats set last_update_at = sqlc.arg(last_update_at) where id = sqlc.arg(id);
+-- issue #38: monotonic — greatest() already ignores a null argument
+-- (postgres greatest/least ignore nulls, returning null only when every
+-- argument is null), so a cat's first-ever update still sets last_update_at
+-- correctly. this keeps an out-of-order commit (an older update committing
+-- after a newer one) from moving a cat's displayed freshness backwards.
+update cats set last_update_at = greatest(last_update_at, sqlc.arg(last_update_at)) where id = sqlc.arg(id);
