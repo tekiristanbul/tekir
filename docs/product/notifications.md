@@ -2,20 +2,27 @@
 
 ## goal
 
-define why and how users get notified, so they come back to the app.
+define why and how users return to cats they care about without turning tekir into a people-centric social network.
 
 ## decisions
 
-- notifications are sent to followers when a followed cat gets an update.
-- users opt into notifications by following/favoriting a cat, not on first app launch. this keeps the permission request small and relevant.
-- nearby alerts are only sent to users who follow that cat — not based on distance alone.
+- users follow or favorite cats, not people.
+- the primary value of following is saving a cat so the user can find it again.
+- followed cats are shown in a list ordered by most recent activity.
+- users opt into notifications through following/favoriting a cat, not on first app launch.
+- nearby alerts are sent only in relation to followed cats, not based on distance alone.
 - notifications are not based on location.
-- too many notifications is not expected to be a problem, since notifications only relate to what the user follows.
+- public user profiles may show contribution history, including which cats the user saw, fed, gave water to, photographed, or added.
+- badges are a secondary profile element near the profile header or avatar. they celebrate real contribution rather than follower counts.
+- leaderboards are not part of mvp.
 
 ## open questions
 
-- none raised in this part of the workshop.
+- which followed-cat update types should create a notification is not decided. avoiding notification fatigue is more important than notifying for every `seen` update.
+- the initial badge vocabulary and thresholds are not decided.
 
 ## out of scope
 
-- notifications based on location.
+- following people.
+- notifications based only on location.
+- leaderboards in mvp.
