@@ -27,11 +27,14 @@ follow `AGENTS.md` for readiness, delivery, review, evidence, and definition-of-
 - the technical founder owns architecture, api contracts, data model, security, infrastructure, and code quality.
 - product owner approval is never implied by implementation, tests, a draft pr, technical review, or an agent confidence score.
 - agents report findings and evidence; they never approve or merge.
+- documentation maintenance that only synchronizes already accepted decisions does not require product owner review.
+- changes to user behavior, user-facing turkish copy, visual output, ux interaction, or an explicitly pending product decision require human product owner review.
+- required review must be derived from the actual diff semantics and repository ownership rules; do not use generic conditional disclaimers such as `if required` when the repository context is sufficient to decide.
 
 ## agent responsibilities
 
 - implementation must stay within accepted issue scope, validate affected paths, update durable documentation, and open one draft pr.
-- technical review must prioritize correctness, data safety, migration safety, compatibility, security, privacy, performance, tests, documentation, and scope control. it must report blocking findings, non-blocking findings, open questions, residual risks, and confidence by area.
+- technical review must prioritize correctness, data safety, migration safety, compatibility, security, privacy, performance, tests, documentation, and scope control. for changed product or architecture concepts, it must perform a cross-document semantic-consistency pass across the applicable source-of-truth documents rather than reviewing changed files in isolation. it must report blocking findings, non-blocking findings, open questions, residual risks, required human review, evidence, and confidence by area.
 - product review must evaluate only user behavior, turkish copy, visual output, edge states, acceptance criteria, and approved design references. it must not invent technical architecture or approve on behalf of the human product owner.
 - when review confidence is below 80% in any material area, recommend human technical review explicitly.
 
