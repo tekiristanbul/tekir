@@ -14,10 +14,8 @@ import 'package:app/core/identity/device_identity.dart';
 /// The token is only attached when the request destination matches the api
 /// origin, preventing accidental credential leakage to third-party endpoints.
 class DeviceInterceptor extends Interceptor {
-  DeviceInterceptor({
-    required this._service,
-    required String apiBaseUrl,
-  }) : _apiOrigin = _originOf(apiBaseUrl);
+  DeviceInterceptor({required this._service, required String apiBaseUrl})
+    : _apiOrigin = _originOf(apiBaseUrl);
 
   final DeviceIdentityService _service;
   final String _apiOrigin;

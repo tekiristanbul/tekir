@@ -54,10 +54,7 @@ class FlutterSecureKeyValueStorage implements DeviceKeyValueStorage {
 /// Uses its own [Dio] instance (not the intercepted api client) so that
 /// registration never recursively waits for the credential it is creating.
 class DeviceIdentityService {
-  DeviceIdentityService({
-    required this._storage,
-    required this._dio,
-  });
+  DeviceIdentityService({required this._storage, required this._dio});
 
   final DeviceKeyValueStorage _storage;
   final Dio _dio;
