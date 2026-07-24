@@ -15,6 +15,9 @@ class _FakeStorage implements DeviceKeyValueStorage {
 
   @override
   Future<void> write(String key, String value) async => _data[key] = value;
+
+  @override
+  Future<void> delete(String key) async => _data.remove(key);
 }
 
 // ── fake Dio that returns a canned response ───────────────────────────────────
@@ -257,6 +260,41 @@ void main() {
       expect(second, isNotNull);
       expect(second!.deviceId, 'did-r');
     });
+
+    test(
+      'invalidate clears the cache, the persisted credential, and forces re-registration',
+      () async {
+        final storage = _FakeStorage();
+        int callCount = 0;
+        final dio = Dio(BaseOptions(baseUrl: 'http://localhost:8080'));
+        dio.httpClientAdapter = _CountingAdapter(
+          onCall: () {
+            callCount++;
+            return ResponseBody.fromString(
+              '{"device_id":"did-$callCount","device_token":"tok-$callCount"}',
+              201,
+              headers: {
+                'content-type': ['application/json'],
+              },
+            );
+          },
+        );
+        final svc = DeviceIdentityService(storage: storage, dio: dio);
+
+        final first = await svc.init();
+        expect(first!.deviceId, 'did-1');
+
+        await svc.invalidate();
+
+        expect(svc.cached, isNull);
+        expect(storage._data.containsKey('device_id'), isFalse);
+        expect(storage._data.containsKey('device_token'), isFalse);
+
+        final second = await svc.init();
+        expect(second!.deviceId, 'did-2', reason: 're-registers, not replays');
+        expect(callCount, 2);
+      },
+    );
 
     test('persists only after a complete valid response', () async {
       final storage = _FakeStorage();

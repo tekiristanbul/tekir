@@ -28,6 +28,7 @@ class DeviceIdentity {
 abstract class DeviceKeyValueStorage {
   Future<String?> read(String key);
   Future<void> write(String key, String value);
+  Future<void> delete(String key);
 }
 
 /// Production adapter that delegates to [FlutterSecureStorage].
@@ -42,6 +43,9 @@ class FlutterSecureKeyValueStorage implements DeviceKeyValueStorage {
   @override
   Future<void> write(String key, String value) =>
       _storage.write(key: key, value: value);
+
+  @override
+  Future<void> delete(String key) => _storage.delete(key: key);
 }
 
 /// Manages the anonymous device identity lifecycle:
@@ -74,6 +78,10 @@ class DeviceIdentityService {
     _initFuture ??= _loadOrRegister().then(
       (id) {
         _cached = id;
+        // A null result (malformed response, missing fields) isn't a
+        // cacheable success — clear the future so the next init() call
+        // retries instead of forever replaying this failed attempt.
+        if (id == null) _initFuture = null;
         return id;
       },
       onError: (Object _) {
@@ -95,6 +103,17 @@ class DeviceIdentityService {
   /// process lifetime. Exposed for future write-flow retry logic.
   void resetFailedInit() {
     if (_cached == null) _initFuture = null;
+  }
+
+  /// Drops the cached identity and its persisted credential, so the next
+  /// [init] call re-registers from scratch. Used when the backend rejects
+  /// a previously-valid-looking stored token (401) — the stale credential
+  /// must not keep being replayed on every retry.
+  Future<void> invalidate() async {
+    _cached = null;
+    _initFuture = null;
+    await _storage.delete(_keyDeviceId);
+    await _storage.delete(_keyDeviceToken);
   }
 
   Future<DeviceIdentity?> _loadOrRegister() async {
