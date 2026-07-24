@@ -1,12 +1,12 @@
 name: implementation
-description: define maintainer-approved implementation work for copilot coding agent
+description: define ready maintainer-approved implementation work for copilot coding agent
 title: ""
 labels: []
 body:
   - type: markdown
     attributes:
       value: |
-        use this form only after product and technical decisions are sufficiently clear. it is not a feature-request form.
+        use this form only after product and technical decisions are sufficiently clear. it is not a feature-request form. unresolved decisions must be called out explicitly before assignment.
   - type: textarea
     id: problem
     attributes:
@@ -25,14 +25,14 @@ body:
     id: product-decisions
     attributes:
       label: product decisions
-      description: list the accepted product and ux decisions relevant to this issue.
+      description: list accepted product and ux decisions. identify any decision still pending.
     validations:
       required: true
   - type: textarea
     id: technical-constraints
     attributes:
       label: technical constraints
-      description: list required architecture, api, schema, security, or dependency boundaries.
+      description: list required architecture, api, schema, security, privacy, compatibility, or dependency boundaries.
     validations:
       required: true
   - type: textarea
@@ -53,8 +53,26 @@ body:
   - type: textarea
     id: test-expectations
     attributes:
-      label: test expectations
-      description: name required unit, integration, widget, migration, and manual checks.
+      label: test and evidence expectations
+      description: name required unit, integration, widget, migration, manual checks, screenshots, or demo states.
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: expected risk
+      description: choose the highest expected risk for this change.
+      options:
+        - "low — isolated and easily reversible"
+        - "medium — contract, behavior, or cross-layer change"
+        - "high — migration, auth, permission, location, media, destructive action, breaking api, notification, or user data"
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: compatibility, recovery, and privacy notes
+      description: describe existing-data safety, client compatibility, rollback/recovery, privacy, or abuse implications; write "not applicable" when none.
     validations:
       required: true
   - type: textarea
@@ -76,7 +94,7 @@ body:
   - type: textarea
     id: dependencies
     attributes:
-      label: dependencies
-      description: link blocking issues or pull requests, or write "none".
+      label: dependencies and unresolved decisions
+      description: link blocking issues or pull requests and list any unresolved decision; write "none" only when ready for assignment.
     validations:
       required: true
