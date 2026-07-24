@@ -37,7 +37,9 @@ class _FakeDioAdapter implements HttpClientAdapter {
     return ResponseBody.fromString(
       _encodeJson(body),
       statusCode,
-      headers: {'content-type': ['application/json']},
+      headers: {
+        'content-type': ['application/json'],
+      },
     );
   }
 
@@ -52,10 +54,7 @@ class _ErrorDioAdapter implements HttpClientAdapter {
     Stream<List<int>>? requestStream,
     Future<void>? cancelFuture,
   ) async {
-    throw DioException(
-      requestOptions: options,
-      message: 'network error',
-    );
+    throw DioException(requestOptions: options, message: 'network error');
   }
 
   @override
@@ -63,10 +62,12 @@ class _ErrorDioAdapter implements HttpClientAdapter {
 }
 
 String _encodeJson(Map<String, dynamic> m) {
-  final entries = m.entries.map((e) {
-    final val = e.value is String ? '"${e.value}"' : '${e.value}';
-    return '"${e.key}":$val';
-  }).join(',');
+  final entries = m.entries
+      .map((e) {
+        final val = e.value is String ? '"${e.value}"' : '${e.value}';
+        return '"${e.key}":$val';
+      })
+      .join(',');
   return '{$entries}';
 }
 
@@ -162,43 +163,46 @@ void main() {
       expect(r2!.deviceId, 'did-c');
     });
 
-    test('cached identity returned synchronously after init succeeds', () async {
-      final storage = _FakeStorage();
-      final adapter = _FakeDioAdapter(
-        statusCode: 201,
-        body: {'device_id': 'did-d', 'device_token': 'tok-d'},
-      );
-      final svc = DeviceIdentityService(
-        storage: storage,
-        dio: _fakeDio(adapter),
-      );
+    test(
+      'cached identity returned synchronously after init succeeds',
+      () async {
+        final storage = _FakeStorage();
+        final adapter = _FakeDioAdapter(
+          statusCode: 201,
+          body: {'device_id': 'did-d', 'device_token': 'tok-d'},
+        );
+        final svc = DeviceIdentityService(
+          storage: storage,
+          dio: _fakeDio(adapter),
+        );
 
-      await svc.init();
+        await svc.init();
 
-      expect(svc.cached, isNotNull);
-      expect(svc.cached!.deviceId, 'did-d');
-    });
+        expect(svc.cached, isNotNull);
+        expect(svc.cached!.deviceId, 'did-d');
+      },
+    );
 
     test('cached is null before init completes', () async {
       final storage = _FakeStorage();
-      final svc = DeviceIdentityService(
-        storage: storage,
-        dio: _errorDio(),
-      );
+      final svc = DeviceIdentityService(storage: storage, dio: _errorDio());
 
       expect(svc.cached, isNull);
     });
 
-    test('registration failure returns null and leaves browsing available', () async {
-      final svc = DeviceIdentityService(
-        storage: _FakeStorage(),
-        dio: _errorDio(),
-      );
+    test(
+      'registration failure returns null and leaves browsing available',
+      () async {
+        final svc = DeviceIdentityService(
+          storage: _FakeStorage(),
+          dio: _errorDio(),
+        );
 
-      final identity = await svc.init();
-      expect(identity, isNull);
-      expect(svc.cached, isNull);
-    });
+        final identity = await svc.init();
+        expect(identity, isNull);
+        expect(svc.cached, isNull);
+      },
+    );
 
     test('malformed response returns null without crashing', () async {
       final storage = _FakeStorage();

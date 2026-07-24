@@ -57,8 +57,8 @@ class DeviceIdentityService {
   DeviceIdentityService({
     required DeviceKeyValueStorage storage,
     required Dio dio,
-  })  : _storage = storage,
-        _dio = dio;
+  }) : _storage = storage,
+       _dio = dio;
 
   final DeviceKeyValueStorage _storage;
   final Dio _dio;
@@ -75,14 +75,17 @@ class DeviceIdentityService {
   /// browsing must continue unaffected.
   Future<DeviceIdentity?> init() {
     if (_cached != null) return Future.value(_cached);
-    _initFuture ??= _loadOrRegister().then((id) {
-      _cached = id;
-      return id;
-    }, onError: (Object _) {
-      // Clear the future so a controlled retry is possible later.
-      _initFuture = null;
-      return null;
-    });
+    _initFuture ??= _loadOrRegister().then(
+      (id) {
+        _cached = id;
+        return id;
+      },
+      onError: (Object _) {
+        // Clear the future so a controlled retry is possible later.
+        _initFuture = null;
+        return null;
+      },
+    );
     return _initFuture!;
   }
 

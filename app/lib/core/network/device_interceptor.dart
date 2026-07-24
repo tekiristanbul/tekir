@@ -17,8 +17,8 @@ class DeviceInterceptor extends Interceptor {
   DeviceInterceptor({
     required DeviceIdentityService service,
     required String apiBaseUrl,
-  })  : _service = service,
-        _apiOrigin = _originOf(apiBaseUrl);
+  }) : _service = service,
+       _apiOrigin = _originOf(apiBaseUrl);
 
   final DeviceIdentityService _service;
   final String _apiOrigin;
