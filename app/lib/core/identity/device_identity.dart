@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -55,10 +55,9 @@ class FlutterSecureKeyValueStorage implements DeviceKeyValueStorage {
 /// registration never recursively waits for the credential it is creating.
 class DeviceIdentityService {
   DeviceIdentityService({
-    required DeviceKeyValueStorage storage,
-    required Dio dio,
-  }) : _storage = storage,
-       _dio = dio;
+    required DeviceKeyValueStorage this._storage,
+    required Dio this._dio,
+  });
 
   final DeviceKeyValueStorage _storage;
   final Dio _dio;
@@ -133,8 +132,10 @@ class DeviceIdentityService {
 
   static String _currentPlatform() {
     if (kIsWeb) return 'web';
-    if (Platform.isIOS) return 'ios';
-    return 'android';
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.iOS => 'ios',
+      _ => 'android',
+    };
   }
 }
 

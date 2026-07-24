@@ -249,6 +249,37 @@ func TestRequireDeviceToken_EmptyHeader(t *testing.T) {
 	}
 }
 
+func TestRequireDeviceToken_WhitespaceOnlyHeader(t *testing.T) {
+	mw := handler.RequireDeviceToken(fakeResolver{})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Device-Token", "   ")
+	mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("inner handler must not be reached")
+	})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestRequireDeviceToken_MultipleHeaderValues(t *testing.T) {
+	mw := handler.RequireDeviceToken(fakeResolver{})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Add("X-Device-Token", "token-a")
+	req.Header.Add("X-Device-Token", "token-b")
+	mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("inner handler must not be reached")
+	})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
 func TestRequireDeviceToken_UnknownToken(t *testing.T) {
 	mw := handler.RequireDeviceToken(fakeResolver{err: service.ErrDeviceNotFound})
 

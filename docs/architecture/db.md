@@ -25,8 +25,8 @@ create table devices (
   revoked_at       timestamptz,
   created_at       timestamptz not null default now()
 );
--- user_id (references users) is intentionally absent: users does not exist yet.
--- a later migration adds it as a foreign key once users lands (issue #32).
+-- user_id (references users) is intentionally absent from the implemented
+-- 00007 migration because account/user migrations are not part of issue #32 yet.
 
 create table refresh_tokens (
   id           uuid primary key default gen_random_uuid(),

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/tekiristanbul/tekir/backend/internal/service"
 )
@@ -25,7 +26,13 @@ type DeviceTokenResolver interface {
 func RequireDeviceToken(svc DeviceTokenResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := r.Header.Get("X-Device-Token")
+			values := r.Header.Values("X-Device-Token")
+			if len(values) != 1 {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing device token"})
+				return
+			}
+
+			token := strings.TrimSpace(values[0])
 			if token == "" {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing device token"})
 				return
