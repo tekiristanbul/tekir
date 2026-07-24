@@ -34,7 +34,7 @@ POST /v1/cats            (Bearer required)  { area, photo(multipart), name?, con
                                              → 201 { cat }  or  409 { candidates:[...] } (when confirmed_new is absent and nearby matches exist — not yet implemented)
 ```
 
-`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it omits `followed_by_me` from the earlier sketch above — there's no follow/account feature yet. `photos[]` is `primary_photo` (nullable) for now — there's no `media` table yet (see [[db]]), so a cat has exactly one photo column. unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
+`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it still omits `followed_by_me` from the earlier sketch above — follow/unfollow/list exist as of issue #44 (see "follows / notifications" below), but folding follow status into this read path was left out of that issue's scope. `photos[]` is `primary_photo` (nullable) for now — there's no `media` table yet (see [[db]]), so a cat has exactly one photo column. unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
 
 `active_alert` (both endpoints, issue #4/#23) is `null` unless the cat has a currently-active needs-help alert:
 
@@ -73,14 +73,18 @@ POST /v1/media           (Bearer required)  multipart file → { media_id, url }
 ### follows / notifications
 
 ```
-POST   /v1/cats/{cat_id}/follow      (X-Device-Token is enough)   → 204
-DELETE /v1/cats/{cat_id}/follow                                  → 204
-GET    /v1/me/follows                                            → [cat...]
+POST   /v1/cats/{cat_id}/follow      (X-Device-Token required)   → 204   (implemented — issue #44)
+DELETE /v1/cats/{cat_id}/follow      (X-Device-Token required)   → 204   (implemented — issue #44)
+GET    /v1/me/follows                (X-Device-Token required)   → [{ id, name, primary_photo, area{lat,lng}, area_label|null, active_alert|null, last_update_at }]   (implemented — issue #44)
 GET    /v1/me/notifications?cursor=                               → [{ id, cat_id, update_id, read, created_at }]
 POST   /v1/me/notifications/{id}/read                             → 204
 ```
 
-push delivery is not client-facing. every `POST /v1/cats/{cat_id}/updates` write enqueues a row to `notification_outbox` (see [[db]]) explicitly, in the same transaction as the update itself — this is currently the only write path that does, since it's the only implemented update-creation endpoint; the worker (see [[backend]]) polls that table and fans it out to followers. delivery is **at-most-once**: the `notifications` unique constraint (see [[db]]) guarantees a push is never sent twice for the same device/update pair, but it does not guarantee a push is sent at all — a crash between recording the notification and actually sending it loses that push silently. accepted as a small loss window for mvp, not claimed as crash-safe or exactly-once.
+follow/unfollow/list (issue #44) are device-owned like an ordinary update: `X-Device-Token` alone is enough, no `Bearer` required, matching [[trust]]'s "guests can follow a cat" decision. ownership is derived only from the resolved device identity (`DeviceFromContext`, never a client-supplied device id anywhere in the request) — the same convention `POST /v1/cats/{cat_id}/updates` uses for `author_device_id`. both `follow` and `unfollow` are idempotent: following an already-followed cat, or unfollowing a cat this device doesn't follow, still answers `204` rather than an error — `follows`'s `(device_id, cat_id)` primary key with an on-conflict-do-nothing insert makes this safe even under concurrent duplicate requests (see [[db]]). unknown `cat_id` → `404` for both; malformed (non-uuid) `cat_id` → `400`.
+
+`GET /v1/me/follows` returns the resolved device's own followed cats in the exact same cat-summary shape as `GET /v1/cats?bbox=` — no bespoke follows-only representation, and no invented social metrics (follower counts, etc.) beyond what the map/detail views already expose. ordered by most recent cat activity (`last_update_at desc`, nulls last — a followed cat with no updates yet sorts after every cat with real activity), with `id desc` as an explicit tie-breaker for cats sharing the same `last_update_at` (including two never-updated cats). a device only ever sees its own follows; there is no cross-device visibility. the list is a plain array with no pagination — a single device's own follows are bounded by human attention, unlike the public update-history endpoint above. when a device is later linked to an account (`POST /v1/auth/otp/verify`), its `follows` rows are preserved as-is — linking is keyed on the same `device_id`, no merge step needed.
+
+push delivery is not client-facing. every `POST /v1/cats/{cat_id}/updates` write enqueues a row to `notification_outbox` (see [[db]]) explicitly, in the same transaction as the update itself — this is currently the only write path that does, since it's the only implemented update-creation endpoint; the worker (see [[backend]]) polls that table and fans it out to followers. delivery is **at-most-once**: the `notifications` unique constraint (see [[db]]) guarantees a push is never sent twice for the same device/update pair, but it does not guarantee a push is sent at all — a crash between recording the notification and actually sending it loses that push silently. accepted as a small loss window for mvp, not claimed as crash-safe or exactly-once. issue #44 does not touch this path: it neither enqueues notifications nor handles push tokens.
 
 ### modeling notes
 

@@ -21,6 +21,11 @@ type Querier interface {
 	// persisted here — the raw token is returned to the caller once and
 	// never stored (see docs/architecture/db.md). push_token is optional.
 	CreateDevice(ctx context.Context, arg CreateDeviceParams) (CreateDeviceRow, error)
+	// idempotent by construction: on conflict do nothing means a repeat follow
+	// for the same (device_id, cat_id) pair — including two concurrent
+	// duplicate requests — leaves exactly one row, never an error or a
+	// duplicate (issue #44).
+	CreateFollow(ctx context.Context, arg CreateFollowParams) error
 	// issue #38: explicit enqueue replaces the removed updates_enqueue_outbox
 	// trigger (migration 00009) — Store.CreateOrdinaryUpdate is now the only
 	// caller, inside the same transaction as the update/statuses/last_update_at
@@ -46,6 +51,9 @@ type Querier interface {
 	// leave it null.
 	CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error)
 	CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatusParams) error
+	// idempotent: unfollowing a cat this device doesn't currently follow
+	// deletes zero rows and succeeds silently rather than erroring (issue #44).
+	DeleteFollow(ctx context.Context, arg DeleteFollowParams) error
 	// traits are fetched separately via ListCatTraits (join against the traits
 	// vocabulary) rather than aggregated in here, so each trait can carry its
 	// display_name without hand-rolling composite-type aggregation in sql. the
@@ -87,6 +95,18 @@ type Querier interface {
 	// ListNearby (service layer) is the one that decides active-vs-expired,
 	// against an injected clock, not this query's own now().
 	ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error)
+	// issue #44: a device's followed cats, ordered by most recent cat activity.
+	// last_update_at desc nulls last puts a cat that has never had an update
+	// after every cat that has, however old — no activity is never "fresher"
+	// than old activity. c.id desc is the deterministic tie-breaker for equal
+	// last_update_at, including the shared-null case, since last_update_at
+	// alone can't order two never-updated cats against each other. joins cats
+	// (not just follows) so the response carries the same cat-summary shape as
+	// the map/detail endpoints, including each cat's latest needs-help update
+	// via the same unfiltered-by-expiry lateral join as ListCatsInBounds/
+	// GetCatByID — the service layer decides active-vs-expired against its own
+	// injected clock, never this query's own now().
+	ListFollowedCats(ctx context.Context, deviceID pgtype.UUID) ([]ListFollowedCatsRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
 	// issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
 	// so a new ordinary update and the cat's last_update_at commit atomically.

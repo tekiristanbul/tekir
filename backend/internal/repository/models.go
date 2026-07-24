@@ -33,6 +33,12 @@ type Device struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type Follow struct {
+	DeviceID  pgtype.UUID        `json:"device_id"`
+	CatID     pgtype.UUID        `json:"cat_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type NotificationOutbox struct {
 	ID          pgtype.UUID        `json:"id"`
 	UpdateID    pgtype.UUID        `json:"update_id"`

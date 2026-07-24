@@ -225,13 +225,17 @@ func NewCatsService(db CatsStore, opts ...CatsServiceOption) *CatsService {
 // deriveActiveAlert turns a (possibly absent, possibly expired) latest
 // needs-help update into the alert a client should render — nil whenever
 // there is no needs-help update at all, or the one that exists has expired
-// as of s.clock(). This is the one place "active" gets decided; the
-// database and the client both stay out of that decision entirely.
-func (s *CatsService) deriveActiveAlert(category pgtype.Text, createdAt, expiresAt pgtype.Timestamptz) *ActiveAlert {
+// as of clock(). This is the one place "active" gets decided; the database
+// and the client both stay out of that decision entirely. Package-level
+// (not a CatsService method) so FollowsService's own ListFollows — which
+// needs the identical map/detail cat-summary shape, per issue #44 — derives
+// active-vs-expired the same way, against its own injected clock, without
+// duplicating this logic.
+func deriveActiveAlert(clock func() time.Time, category pgtype.Text, createdAt, expiresAt pgtype.Timestamptz) *ActiveAlert {
 	if !category.Valid || !expiresAt.Valid {
 		return nil
 	}
-	if !expiresAt.Time.After(s.clock()) {
+	if !expiresAt.Time.After(clock()) {
 		return nil
 	}
 	return &ActiveAlert{
@@ -267,7 +271,7 @@ func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds) ([]CatMarke
 			Lat:          r.Lat,
 			Lng:          r.Lng,
 			AreaLabel:    textPtr(r.AreaLabel),
-			ActiveAlert:  s.deriveActiveAlert(r.NeedsHelpCategory, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt),
+			ActiveAlert:  deriveActiveAlert(s.clock, r.NeedsHelpCategory, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt),
 			LastUpdateAt: timestamptzPtr(r.LastUpdateAt),
 		})
 	}
@@ -324,7 +328,7 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		PrimaryPhoto: textPtr(row.PhotoUrl),
 		CreatedAt:    row.CreatedAt.Time,
 		LastUpdateAt: timestamptzPtr(row.LastUpdateAt),
-		ActiveAlert:  s.deriveActiveAlert(row.NeedsHelpCategory, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),
+		ActiveAlert:  deriveActiveAlert(s.clock, row.NeedsHelpCategory, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),
 	}, nil
 }
 
