@@ -13,7 +13,7 @@ import (
 	"github.com/tekiristanbul/tekir/backend/internal/handler"
 )
 
-func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, traits *handler.TraitsHandler, corsOrigins []string) http.Handler {
+func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, traits *handler.TraitsHandler, devices *handler.DevicesHandler, corsOrigins []string) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -39,6 +39,8 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.Get("/v1/cats/{cat_id}", cats.Detail)
 	r.Get("/v1/cats/{cat_id}/updates", cats.UpdateHistory)
 	r.Get("/v1/traits", traits.List)
+
+	r.Post("/v1/devices", devices.Register)
 
 	return r
 }

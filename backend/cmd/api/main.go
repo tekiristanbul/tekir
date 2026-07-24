@@ -52,7 +52,9 @@ func run() error {
 	catsHandler := handler.NewCatsHandler(catsSvc)
 	traitsSvc := service.NewTraitsService(store)
 	traitsHandler := handler.NewTraitsHandler(traitsSvc)
-	router := server.NewRouter(logger, healthHandler, catsHandler, traitsHandler, cfg.CORSOrigins)
+	devicesSvc := service.NewDevicesService(store)
+	devicesHandler := handler.NewDevicesHandler(devicesSvc)
+	router := server.NewRouter(logger, healthHandler, catsHandler, traitsHandler, devicesHandler, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

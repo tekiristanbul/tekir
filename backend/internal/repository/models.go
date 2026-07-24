@@ -24,6 +24,15 @@ type CatTrait struct {
 	TraitKey string      `json:"trait_key"`
 }
 
+type Device struct {
+	ID        pgtype.UUID        `json:"id"`
+	TokenHash string             `json:"token_hash"`
+	PushToken pgtype.Text        `json:"push_token"`
+	Platform  string             `json:"platform"`
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Trait struct {
 	Key         string             `json:"key"`
 	DisplayName string             `json:"display_name"`
