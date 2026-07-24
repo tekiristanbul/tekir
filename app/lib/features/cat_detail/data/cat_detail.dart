@@ -6,20 +6,6 @@ import '../../../core/models/active_alert.dart';
 
 export '../../../core/models/active_alert.dart' show ActiveAlert;
 
-/// One entry of the controlled trait vocabulary (issue #21): a stable key
-/// plus its current display label. Not a fixed/closed set — see
-/// docs/product/cats.md.
-class CatTrait {
-  const CatTrait({required this.key, required this.label});
-
-  final String key;
-  final String label;
-
-  factory CatTrait.fromJson(Map<String, dynamic> json) {
-    return CatTrait(key: json['key'] as String, label: json['label'] as String);
-  }
-}
-
 class CatDetail {
   const CatDetail({
     required this.id,
@@ -28,7 +14,6 @@ class CatDetail {
     required this.lng,
     required this.areaLabel,
     required this.primaryPhoto,
-    required this.traits,
     required this.createdAt,
     required this.lastUpdateAt,
     this.activeAlert,
@@ -45,7 +30,6 @@ class CatDetail {
   /// one set.
   final String? areaLabel;
   final String? primaryPhoto;
-  final List<CatTrait> traits;
   final DateTime createdAt;
   final DateTime? lastUpdateAt;
   final ActiveAlert? activeAlert;
@@ -61,9 +45,6 @@ class CatDetail {
       lng: (area['lng'] as num).toDouble(),
       areaLabel: json['area_label'] as String?,
       primaryPhoto: json['primary_photo'] as String?,
-      traits: (json['traits'] as List<dynamic>)
-          .map((e) => CatTrait.fromJson(e as Map<String, dynamic>))
-          .toList(),
       createdAt: DateTime.parse(json['created_at'] as String),
       lastUpdateAt: rawLastUpdate != null
           ? DateTime.parse(rawLastUpdate)

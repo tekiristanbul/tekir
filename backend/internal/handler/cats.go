@@ -53,15 +53,9 @@ type catDetailResponse struct {
 	Area         areaLatLng           `json:"area"`
 	AreaLabel    *string              `json:"area_label"`
 	PrimaryPhoto *string              `json:"primary_photo"`
-	Traits       []traitResponse      `json:"traits"`
 	CreatedAt    time.Time            `json:"created_at"`
 	LastUpdateAt *time.Time           `json:"last_update_at"`
 	ActiveAlert  *activeAlertResponse `json:"active_alert"`
-}
-
-type traitResponse struct {
-	Key   string `json:"key"`
-	Label string `json:"label"`
 }
 
 // updateResponse is one entry of a cat's newest-first history — either an
@@ -143,18 +137,12 @@ func (h *CatsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	traits := make([]traitResponse, 0, len(detail.Traits))
-	for _, t := range detail.Traits {
-		traits = append(traits, traitResponse{Key: t.Key, Label: t.Label})
-	}
-
 	writeJSON(w, http.StatusOK, catDetailResponse{
 		ID:           detail.ID,
 		Name:         detail.Name,
 		Area:         areaLatLng{Lat: detail.Lat, Lng: detail.Lng},
 		AreaLabel:    detail.AreaLabel,
 		PrimaryPhoto: detail.PrimaryPhoto,
-		Traits:       traits,
 		CreatedAt:    detail.CreatedAt,
 		LastUpdateAt: detail.LastUpdateAt,
 		ActiveAlert:  toActiveAlertResponse(detail.ActiveAlert),

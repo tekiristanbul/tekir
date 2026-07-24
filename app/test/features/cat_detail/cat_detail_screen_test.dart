@@ -15,14 +15,13 @@ const _catId = 'cat-1';
 // in _HeroPlaceholder) directly — there's no separate "photo loads
 // successfully" path that can be exercised without a real or intercepted
 // network call.
-final _detailWithTraits = CatDetail(
+final _detail = CatDetail(
   id: _catId,
   name: 'tekir',
   lat: 41.0256,
   lng: 28.9744,
   areaLabel: 'Galata Kulesi çevresi, Beyoğlu',
   primaryPhoto: null,
-  traits: const [CatTrait(key: 'friendly', label: 'Friendly')],
   createdAt: DateTime.utc(2026, 1, 1),
   lastUpdateAt: DateTime.utc(2026, 1, 2),
 );
@@ -34,7 +33,6 @@ final _detailMissingPhoto = CatDetail(
   lng: 28.9745,
   areaLabel: null,
   primaryPhoto: null,
-  traits: const [],
   createdAt: DateTime.utc(2026, 1, 1),
   lastUpdateAt: null,
 );
@@ -106,12 +104,12 @@ void main() {
   });
 
   testWidgets(
-    'populated: shows name, area label, traits, and turkish status history — never raw coordinates',
+    'populated: shows name, area label, and turkish status history — never raw coordinates, never a trait chip',
     (tester) async {
       await _pump(
         tester,
         CatDetailState(
-          detail: _detailWithTraits,
+          detail: _detail,
           updates: [
             CatUpdateEntry(
               id: 'u1',
@@ -126,7 +124,6 @@ void main() {
 
       expect(find.text('tekir'), findsWidgets);
       expect(find.text('Galata Kulesi çevresi, Beyoğlu'), findsOneWidget);
-      expect(find.text('Friendly'), findsOneWidget);
       // structured statuses render as turkish tags, the comment as
       // separate (non-italic) body text — both present, never merged.
       expect(find.text('görüldü'), findsOneWidget);
@@ -135,6 +132,9 @@ void main() {
       // raw lat/lng must never render anywhere on the detail screen.
       expect(find.textContaining('41.0256'), findsNothing);
       expect(find.textContaining('28.9744'), findsNothing);
+      // permanent trait chips are not part of the mvp surface (issue #42).
+      expect(find.textContaining(RegExp(r'^\+\d+ daha$')), findsNothing);
+      expect(find.text('daha az göster'), findsNothing);
     },
   );
 
@@ -143,11 +143,7 @@ void main() {
   ) async {
     await _pump(
       tester,
-      CatDetailState(
-        detail: _detailWithTraits,
-        updates: const [],
-        hasLoadedOnce: true,
-      ),
+      CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
     );
 
     expect(find.text('Henüz güncelleme yok'), findsOneWidget);
@@ -184,7 +180,7 @@ void main() {
     await _pump(
       tester,
       CatDetailState(
-        detail: _detailWithTraits,
+        detail: _detail,
         updates: [
           CatUpdateEntry(
             id: 'u1',
@@ -214,7 +210,6 @@ void main() {
         lng: 28.9744,
         areaLabel: 'Galata Kulesi çevresi, Beyoğlu',
         primaryPhoto: null,
-        traits: const [],
         createdAt: DateTime.utc(2026, 1, 1),
         lastUpdateAt: null,
         activeAlert: ActiveAlert(
@@ -237,11 +232,7 @@ void main() {
   testWidgets('no active alert shows no alert banner', (tester) async {
     await _pump(
       tester,
-      CatDetailState(
-        detail: _detailWithTraits,
-        updates: const [],
-        hasLoadedOnce: true,
-      ),
+      CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
     );
 
     expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
@@ -254,7 +245,7 @@ void main() {
       await _pump(
         tester,
         CatDetailState(
-          detail: _detailWithTraits,
+          detail: _detail,
           updates: [
             CatUpdateEntry(
               id: 'u1',
@@ -279,92 +270,4 @@ void main() {
       expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
     },
   );
-
-  testWidgets('more than three traits collapse to "+n daha" until expanded', (
-    tester,
-  ) async {
-    final detail = CatDetail(
-      id: _catId,
-      name: 'minnoş',
-      lat: 41.0256,
-      lng: 28.9744,
-      areaLabel: null,
-      primaryPhoto: null,
-      traits: const [
-        CatTrait(key: 'playful', label: 'Oyuncu'),
-        CatTrait(key: 'calm', label: 'Sakin'),
-        CatTrait(key: 'curious', label: 'Meraklı'),
-        CatTrait(key: 'friendly', label: 'İnsanlara yakın'),
-      ],
-      createdAt: DateTime.utc(2026, 1, 1),
-      lastUpdateAt: null,
-    );
-    await _pump(
-      tester,
-      CatDetailState(detail: detail, updates: const [], hasLoadedOnce: true),
-    );
-
-    expect(find.text('Oyuncu'), findsOneWidget);
-    expect(find.text('Sakin'), findsOneWidget);
-    expect(find.text('Meraklı'), findsOneWidget);
-    expect(find.text('İnsanlara yakın'), findsNothing);
-    expect(find.text('+1 daha'), findsOneWidget);
-
-    await tester.tap(find.text('+1 daha'));
-    await tester.pump();
-
-    expect(find.text('İnsanlara yakın'), findsOneWidget);
-    expect(find.text('daha az göster'), findsOneWidget);
-
-    await tester.tap(find.text('daha az göster'));
-    await tester.pump();
-
-    expect(find.text('İnsanlara yakın'), findsNothing);
-    expect(find.text('+1 daha'), findsOneWidget);
-  });
-
-  testWidgets('three or fewer traits never show a "+n daha" entry', (
-    tester,
-  ) async {
-    await _pump(
-      tester,
-      CatDetailState(
-        detail: _detailWithTraits,
-        updates: const [],
-        hasLoadedOnce: true,
-      ),
-    );
-
-    expect(find.textContaining('daha'), findsNothing);
-  });
-
-  testWidgets('a long trait list does not overflow the layout', (tester) async {
-    final detail = CatDetail(
-      id: _catId,
-      name: 'çok özellikli kedi',
-      lat: 41.0256,
-      lng: 28.9744,
-      areaLabel: null,
-      primaryPhoto: null,
-      traits: const [
-        CatTrait(key: 'a', label: 'Oyuncu'),
-        CatTrait(key: 'b', label: 'Sakin'),
-        CatTrait(key: 'c', label: 'Meraklı'),
-        CatTrait(key: 'd', label: 'Hareketli'),
-        CatTrait(key: 'e', label: 'Bağımsız'),
-        CatTrait(key: 'f', label: 'Konuşkan'),
-        CatTrait(key: 'g', label: 'Dokunulmaktan hoşlanmaz'),
-      ],
-      createdAt: DateTime.utc(2026, 1, 1),
-      lastUpdateAt: null,
-    );
-    await _pump(
-      tester,
-      CatDetailState(detail: detail, updates: const [], hasLoadedOnce: true),
-    );
-    await tester.tap(find.text('+4 daha'));
-    await tester.pump();
-
-    expect(tester.takeException(), isNull);
-  });
 }

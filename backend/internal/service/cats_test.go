@@ -27,9 +27,6 @@ type fakeCatsLister struct {
 	updateRows []repository.ListCatUpdatesRow
 	updatesErr error
 
-	traitRows []repository.ListCatTraitsRow
-	traitsErr error
-
 	createRow repository.CreateUpdateRow
 	createErr error
 	// captured, if non-nil, records the arg the last CreateOrdinaryUpdate
@@ -52,10 +49,6 @@ func (f fakeCatsLister) CatExists(ctx context.Context, id pgtype.UUID) (bool, er
 
 func (f fakeCatsLister) ListCatUpdates(ctx context.Context, arg repository.ListCatUpdatesParams) ([]repository.ListCatUpdatesRow, error) {
 	return f.updateRows, f.updatesErr
-}
-
-func (f fakeCatsLister) ListCatTraits(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatTraitsRow, error) {
-	return f.traitRows, f.traitsErr
 }
 
 func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error) {
@@ -153,10 +146,6 @@ func TestCatsService_GetCatDetail(t *testing.T) {
 			PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
 			CreatedAt: pgtype.Timestamptz{Time: created, Valid: true},
 		},
-		traitRows: []repository.ListCatTraitsRow{
-			{Key: "friendly", DisplayName: "Friendly"},
-			{Key: "playful", DisplayName: "Playful"},
-		},
 	})
 
 	detail, err := svc.GetCatDetail(context.Background(), id.String())
@@ -175,26 +164,11 @@ func TestCatsService_GetCatDetail(t *testing.T) {
 	if detail.AreaLabel == nil || *detail.AreaLabel != "Galata Kulesi çevresi, Beyoğlu" {
 		t.Errorf("unexpected area label: %v", detail.AreaLabel)
 	}
-	if len(detail.Traits) != 2 || detail.Traits[0].Key != "friendly" || detail.Traits[0].Label != "Friendly" {
-		t.Errorf("expected [friendly/Friendly playful/Playful], got %v", detail.Traits)
-	}
 	if !detail.CreatedAt.Equal(created) {
 		t.Errorf("expected created_at %v, got %v", created, detail.CreatedAt)
 	}
 	if detail.LastUpdateAt != nil {
 		t.Errorf("expected nil last_update_at, got %v", detail.LastUpdateAt)
-	}
-}
-
-func TestCatsService_GetCatDetail_TraitsRepositoryFailure(t *testing.T) {
-	svc := NewCatsService(fakeCatsLister{
-		catRow:    repository.GetCatByIDRow{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}},
-		traitsErr: errors.New("connection refused"),
-	})
-
-	_, err := svc.GetCatDetail(context.Background(), uuid.New().String())
-	if err == nil {
-		t.Fatal("expected an error, got nil")
 	}
 }
 
