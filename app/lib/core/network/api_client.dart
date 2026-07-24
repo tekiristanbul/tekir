@@ -15,7 +15,7 @@ import 'device_interceptor.dart';
 /// shared client.
 class ApiClient {
   ApiClient({Dio? dio, DeviceIdentityService? identityService})
-      : dio = _buildDio(dio, identityService);
+    : dio = _buildDio(dio, identityService);
 
   final Dio dio;
 
@@ -48,4 +48,3 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   final svc = ref.watch(deviceIdentityServiceProvider);
   return ApiClient(identityService: svc);
 });
-

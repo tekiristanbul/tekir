@@ -120,59 +120,65 @@ void main() {
       );
     });
 
-    test('does not attach token to requests targeting a different origin', () async {
-      const identity = DeviceIdentity(deviceId: 'did', deviceToken: 'tok');
-      final svc = await _buildServiceWithIdentity(identity);
-      final capturing = _CapturingAdapter();
+    test(
+      'does not attach token to requests targeting a different origin',
+      () async {
+        const identity = DeviceIdentity(deviceId: 'did', deviceToken: 'tok');
+        final svc = await _buildServiceWithIdentity(identity);
+        final capturing = _CapturingAdapter();
 
-      final dio = Dio(BaseOptions());
-      dio.interceptors.add(
-        DeviceInterceptor(service: svc, apiBaseUrl: apiBaseUrl),
-      );
-      dio.httpClientAdapter = capturing;
+        final dio = Dio(BaseOptions());
+        dio.interceptors.add(
+          DeviceInterceptor(service: svc, apiBaseUrl: apiBaseUrl),
+        );
+        dio.httpClientAdapter = capturing;
 
-      await dio.get<void>('http://other-host.example.com/some-path');
+        await dio.get<void>('http://other-host.example.com/some-path');
 
-      expect(
-        capturing.lastOptions?.headers.containsKey('X-Device-Token'),
-        isFalse,
-        reason: 'token must not be sent to a different origin',
-      );
-    });
+        expect(
+          capturing.lastOptions?.headers.containsKey('X-Device-Token'),
+          isFalse,
+          reason: 'token must not be sent to a different origin',
+        );
+      },
+    );
 
-    test('registration Dio bypass: POST /v1/devices does not carry X-Device-Token', () async {
-      // The registration Dio inside DeviceIdentityService is a separate instance
-      // with no interceptors. We verify that the registration request itself never
-      // carries an X-Device-Token header (which would be circular / wrong).
-      final registrationCapturing = _CapturingAdapter();
-      final registrationDio = Dio(BaseOptions(baseUrl: apiBaseUrl));
-      registrationDio.httpClientAdapter = _InspectingFixedAdapter(
-        identity: const DeviceIdentity(deviceId: 'did-bypass', deviceToken: 'tok-bypass'),
-        capturing: registrationCapturing,
-      );
+    test(
+      'registration Dio bypass: POST /v1/devices does not carry X-Device-Token',
+      () async {
+        // The registration Dio inside DeviceIdentityService is a separate instance
+        // with no interceptors. We verify that the registration request itself never
+        // carries an X-Device-Token header (which would be circular / wrong).
+        final registrationCapturing = _CapturingAdapter();
+        final registrationDio = Dio(BaseOptions(baseUrl: apiBaseUrl));
+        registrationDio.httpClientAdapter = _InspectingFixedAdapter(
+          identity: const DeviceIdentity(
+            deviceId: 'did-bypass',
+            deviceToken: 'tok-bypass',
+          ),
+          capturing: registrationCapturing,
+        );
 
-      final svc = DeviceIdentityService(
-        storage: _FakeStorage(),
-        dio: registrationDio,
-      );
-      await svc.init();
+        final svc = DeviceIdentityService(
+          storage: _FakeStorage(),
+          dio: registrationDio,
+        );
+        await svc.init();
 
-      final opts = registrationCapturing.lastOptions;
-      expect(opts, isNotNull);
-      expect(
-        opts!.headers.containsKey('X-Device-Token'),
-        isFalse,
-        reason: 'registration request must not carry a device token',
-      );
-    });
+        final opts = registrationCapturing.lastOptions;
+        expect(opts, isNotNull);
+        expect(
+          opts!.headers.containsKey('X-Device-Token'),
+          isFalse,
+          reason: 'registration request must not carry a device token',
+        );
+      },
+    );
   });
 }
 
 class _InspectingFixedAdapter implements HttpClientAdapter {
-  _InspectingFixedAdapter({
-    required this.identity,
-    required this.capturing,
-  });
+  _InspectingFixedAdapter({required this.identity, required this.capturing});
 
   final DeviceIdentity identity;
   final _CapturingAdapter capturing;
@@ -196,4 +202,3 @@ class _InspectingFixedAdapter implements HttpClientAdapter {
   @override
   void close({bool force = false}) {}
 }
-
