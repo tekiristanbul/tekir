@@ -2,20 +2,26 @@
 
 ## goal
 
-define what makes the product's information reliable.
+define what makes the product's information reliable without making contribution unnecessarily difficult.
 
 ## decisions
 
-- guests (not logged in) can view cats on the map, read comments and updates, and see labels.
-- guests can also follow a cat and post a text-only update (no photo/video) without logging in. this revises the original decision below — logging in is required only for adding a photo or video, which includes adding a new cat, since a photo is mandatory there. the reasoning: contribution friction should scale with risk (a photo/video is the abuse vector phone verification exists for), not apply uniformly to every action.
-- phone verification is required for users who add photos, and for users who add a new cat (a photo is required when a cat is first added). this is so the team can identify or block abusive users, for example someone uploading inappropriate content.
-- creating a needs-help alert ([[alerts]]) always requires being logged in, even though it carries no photo — an exception to "friction scales with photo/video risk" above. a false or spammy help alert has an outsized cost (it pages every follower), so this one action is authenticated regardless of media.
-- wrong information gets corrected by users posting new updates, not by editing or deleting old ones.
+- the guiding principle is: contribution should be easier than avoiding every possible mistake.
+- guests (not logged in) can view cats on the map, read updates and comments, and see labels.
+- guests can follow/favorite a cat and post a text-only update without logging in.
+- phone verification is required for users who add photos or videos, and for users who add a new cat, because a photo is required when a cat is first added.
+- creating a needs-help alert ([[alerts]]) always requires being logged in because false or spammy alerts have an outsized cost.
+- ordinary users cannot delete cats; cat deletion is an admin action.
+- users may correct or remove their own update only during the short grace period defined by the update experience ([[updates]]). after that, newer updates provide the current state.
+- the product should not block cat creation with duplicate-detection warnings. duplicate correction and merging happen later through admin or moderator tools.
+- trust is expressed through visible, public contribution history rather than follower counts or people-centric popularity.
 
 ## open questions
 
-- how a "trusted contributor" is defined is not decided. some context was shared but not a decision: cat-feeding is common and localized in turkey — for example, 20-30 cats within 1km of one person's home, usually staying in the same spots and fed regularly by locals.
+- how a "trusted contributor" is defined is not decided.
+- the exact update correction/removal grace period is not decided.
 
 ## out of scope
 
-- not discussed further in this part of the workshop.
+- people-following.
+- public popularity ranking or leaderboards in mvp.
