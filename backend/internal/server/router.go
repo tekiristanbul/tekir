@@ -13,7 +13,7 @@ import (
 	"github.com/tekiristanbul/tekir/backend/internal/handler"
 )
 
-func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, deviceTokens handler.DeviceTokenResolver, corsOrigins []string) http.Handler {
+func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, deviceTokens handler.DeviceTokenResolver, corsOrigins []string) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -39,6 +39,9 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.Get("/v1/cats/{cat_id}", cats.Detail)
 	r.Get("/v1/cats/{cat_id}/updates", cats.UpdateHistory)
 	r.With(handler.RequireDeviceToken(deviceTokens)).Post("/v1/cats/{cat_id}/updates", cats.CreateUpdate)
+	r.With(handler.RequireDeviceToken(deviceTokens)).Post("/v1/cats/{cat_id}/follow", follows.Follow)
+	r.With(handler.RequireDeviceToken(deviceTokens)).Delete("/v1/cats/{cat_id}/follow", follows.Unfollow)
+	r.With(handler.RequireDeviceToken(deviceTokens)).Get("/v1/me/follows", follows.ListFollows)
 
 	r.Post("/v1/devices", devices.Register)
 
