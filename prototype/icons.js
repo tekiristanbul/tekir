@@ -5,7 +5,6 @@
 var ICONS = {
   pin: '<path d="M12 21s-7-6.1-7-11.5A7 7 0 0 1 19 9.5C19 14.9 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.4"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-3.6-3.6"/>',
-  filter: '<path d="M4 6h16"/><path d="M7 12h10"/><path d="M10 18h4"/>',
   plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
   bell: '<path d="M6 9a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 13 6 9Z"/><path d="M9.5 17.5a2.5 2.5 0 0 0 5 0"/>',
   user: '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.4-3.6 4.4-5.4 7.5-5.4S18.1 16.4 19.5 20"/>',
@@ -24,11 +23,7 @@ var ICONS = {
   edit: '<path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.8-2.8L5 17.4Z"/><path d="m14 7 3 3"/>',
   logout: '<path d="M9 5H5.5A1.5 1.5 0 0 0 4 6.5v11A1.5 1.5 0 0 0 5.5 19H9"/><path d="M14 15.5 18.5 11 14 6.5"/><path d="M18 11H9"/>',
   phone: '<path d="M6 4.5c0-.6.5-1 1-1h2.2c.4 0 .8.3.9.7l1 3a1 1 0 0 1-.3 1L9 9.5c.9 2 2.5 3.6 4.5 4.5l1.3-1.8a1 1 0 0 1 1-.3l3 1c.4.1.7.5.7.9V16c0 .6-.4 1-1 1h-.5C11.6 17 6 11.4 6 5.5Z"/>',
-  location: '<path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><circle cx="12" cy="12" r="4.5"/>',
-  photoStack: '<rect x="4" y="7" width="14" height="12" rx="1.6"/><path d="M8 7V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H17"/><circle cx="11" cy="13" r="2.3"/>',
-  /* solid paw print — used as the marker "needs help" glyph and as the dot of the "i" in the
-     logo wordmark proposal. deliberately a paw (round toe pads), not a chess pawn. */
-  pawprint: '<circle cx="12" cy="16.3" r="5.1" fill="currentColor" stroke="none"/><circle cx="5.6" cy="9.2" r="2.5" fill="currentColor" stroke="none"/><circle cx="12" cy="5.9" r="2.7" fill="currentColor" stroke="none"/><circle cx="18.4" cy="9.2" r="2.5" fill="currentColor" stroke="none"/>'
+  location: '<path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><circle cx="12" cy="12" r="4.5"/>'
 };
 
 function icon(name, opts){

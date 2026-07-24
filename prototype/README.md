@@ -63,3 +63,13 @@ goes empty. this fallback is exercised by both the synchronous init-failure path
   error + "retry" state; subsequent attempts succeed normally.
 - the "add cat: location" screen starts centered near an existing cat (Portakal) on purpose, so the
   "is this cat already registered here?" duplicate-check modal is reachable on the very first try.
+- per `docs/product/cats.md` / issue #42: permanent personality traits (the "physical characteristics"
+  chip picker on add-cat, and the trait chip row on cat detail) are removed. no replacement
+  identification model is implemented — physical identification fields remain an open product
+  decision, not invented here.
+- an unnamed cat's display name no longer falls back to a trait-derived label (that data no longer
+  exists). it now shows a plain "İsimsiz kedi" placeholder — a structural adaptation, not a naming
+  feature; `docs/product/cats.md`'s "friendly random name" assignment idea is a separate, later
+  product decision.
+- per `docs/product/cats.md` ("a user-provided name is optional"): the add-cat name field no longer
+  blocks saving, and is labeled "opsiyonel" to match the design system's own input demo.
