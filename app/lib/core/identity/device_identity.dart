@@ -143,8 +143,8 @@ class DeviceIdentityService {
 /// own [Dio] instance (not the intercepted api client) for registration.
 final deviceIdentityServiceProvider = Provider<DeviceIdentityService>((ref) {
   return DeviceIdentityService(
-    storage: const FlutterSecureKeyValueStorage(FlutterSecureStorage()),
-    dio: Dio(
+    _storage: const FlutterSecureKeyValueStorage(FlutterSecureStorage()),
+    _dio: Dio(
       BaseOptions(
         baseUrl: Env.apiBaseUrl,
         connectTimeout: const Duration(seconds: 10),
