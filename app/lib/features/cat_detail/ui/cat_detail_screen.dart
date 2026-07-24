@@ -7,6 +7,8 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../data/cat_detail.dart';
 import 'cat_detail_notifier.dart';
+import 'cat_update_composer_notifier.dart';
+import 'cat_update_sheet.dart';
 
 const _heroHeight = 280.0;
 
@@ -19,8 +21,10 @@ const _statusLabelsTr = {
 /// Cat-detail view reached from the map's marker-preview sheet
 /// (docs/product/map.md, docs/design/implementation-contract.md): an
 /// edge-to-edge hero photo, a compact last-update line, and a newest-first
-/// status-update timeline. Read-only — posting an update, editing the cat,
-/// and follow are out of scope for issue #21.
+/// status-update timeline. Posting an ordinary status update (issue #43,
+/// one-tap "seen" or the compact multi-status composition sheet) is in
+/// scope; editing the cat, needs-help creation, and follow remain out of
+/// scope.
 /// Permanent trait chips are not part of the mvp surface (issue #42) —
 /// behavioral observations belong in update comments instead. Matches
 /// prototype/app.js's renderDetail visual hierarchy; never shows raw
@@ -105,8 +109,10 @@ class _CatDetailBody extends ConsumerWidget {
               ],
               if (detail.lastUpdateAt != null) ...[
                 _LastUpdateRow(time: detail.lastUpdateAt!),
-                const SizedBox(height: AppSpacing.s6),
+                const SizedBox(height: AppSpacing.s4),
               ],
+              _UpdateActionsRow(catId: detail.id),
+              const SizedBox(height: AppSpacing.s6),
               Text(
                 'Son güncellemeler',
                 style: Theme.of(context).textTheme.titleMedium,
@@ -370,6 +376,99 @@ class _LastUpdateRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// The two approved ordinary-update entry points (issue #43): a one-tap
+/// "Gördüm" shortcut that submits `seen` immediately, and a secondary
+/// action that opens the compact multi-status composition sheet. Both
+/// share [catUpdateComposerProvider]'s in-flight guard, so a submission
+/// from either button disables both while it's outstanding.
+class _UpdateActionsRow extends ConsumerWidget {
+  const _UpdateActionsRow({required this.catId});
+
+  final String catId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final busy = ref.watch(
+      catUpdateComposerProvider(catId).select((s) => s.isSubmitting),
+    );
+
+    return Row(
+      children: [
+        Expanded(
+          child: SizedBox(
+            height: kTapMin,
+            child: ElevatedButton.icon(
+              onPressed: busy ? null : () => _submitSeen(context, ref),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.primaryInk,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                textStyle: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              icon: const Icon(Icons.visibility_outlined, size: 18),
+              label: const Text('Gördüm'),
+            ),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s3),
+        Expanded(
+          child: SizedBox(
+            height: kTapMin,
+            child: OutlinedButton.icon(
+              onPressed: busy ? null : () => _openComposer(context),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.ink,
+                side: const BorderSide(color: AppColors.lineStrong),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                textStyle: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: const Text('Güncelleme ekle'),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _submitSeen(BuildContext context, WidgetRef ref) async {
+    final notifier = ref.read(catUpdateComposerProvider(catId).notifier);
+    final ok = await notifier.submit(statusesOverride: const ['seen']);
+    if (!context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    if (ok) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Güncelleme paylaşıldı')),
+      );
+      return;
+    }
+    final error = ref.read(catUpdateComposerProvider(catId)).error;
+    if (error != null) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(updateSubmitErrorMessageTr(error))),
+      );
+    }
+  }
+
+  Future<void> _openComposer(BuildContext context) async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => CatUpdateSheet(catId: catId),
+    );
+    if (result == true && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Güncelleme paylaşıldı')));
+    }
   }
 }
 

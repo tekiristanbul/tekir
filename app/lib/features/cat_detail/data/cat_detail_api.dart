@@ -11,6 +11,34 @@ class CatNotFoundException implements Exception {
   const CatNotFoundException();
 }
 
+/// Thrown when `POST .../updates` answers 400 — an empty, unlisted, or
+/// duplicate status set, or a comment-only body. The composition ui
+/// already prevents submitting an empty selection, so this mainly guards
+/// against a stale client/server contract rather than a routine path.
+class UpdateValidationException implements Exception {
+  const UpdateValidationException();
+}
+
+/// Thrown when `POST .../updates` answers 401 — the device token is
+/// missing, unresolvable, or revoked. Retrying after the device identity
+/// re-initializes is the expected recovery path (issue #43).
+class UpdateUnauthorizedException implements Exception {
+  const UpdateUnauthorizedException();
+}
+
+/// Thrown for connection failures (offline, timeout) submitting an update —
+/// distinct from [UpdateServerException] so the ui can suggest checking
+/// connectivity rather than a generic "try again later".
+class UpdateNetworkException implements Exception {
+  const UpdateNetworkException();
+}
+
+/// Thrown for a 5xx or otherwise unmapped response submitting an update —
+/// retryable, but not attributable to the client's own connectivity.
+class UpdateServerException implements Exception {
+  const UpdateServerException();
+}
+
 class CatDetailApi {
   CatDetailApi(this._apiClient);
 
@@ -38,6 +66,44 @@ class CatDetailApi {
       queryParameters: {'cursor': ?cursor},
     );
     return UpdatesPage.fromJson(response.data!);
+  }
+
+  /// Submits an ordinary status update (issue #43): one or more of the
+  /// fixed mvp statuses plus an optional free-text comment, attributed to
+  /// the caller's device identity via the shared [ApiClient]'s
+  /// `X-Device-Token` interceptor. The caller is responsible for making
+  /// sure a device identity is initialized first — this method does not
+  /// trigger registration itself, so a not-yet-initialized identity
+  /// surfaces as a plain [UpdateUnauthorizedException] rather than a
+  /// silent retry.
+  Future<CatUpdateEntry> createUpdate(
+    String catId, {
+    required List<String> statuses,
+    String? comment,
+  }) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '/v1/cats/$catId/updates',
+        data: {'statuses': statuses, 'comment': comment},
+      );
+      return CatUpdateEntry.fromJson(response.data!);
+    } on DioException catch (e) {
+      throw _mapCreateUpdateError(e);
+    }
+  }
+
+  Exception _mapCreateUpdateError(DioException e) {
+    final status = e.response?.statusCode;
+    switch (status) {
+      case 400:
+        return const UpdateValidationException();
+      case 401:
+        return const UpdateUnauthorizedException();
+      case 404:
+        return const CatNotFoundException();
+    }
+    if (status != null) return const UpdateServerException();
+    return const UpdateNetworkException();
   }
 }
 

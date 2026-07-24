@@ -53,6 +53,13 @@ class _FakeCatDetailApi implements CatDetailApi {
     _updatesCalls++;
     return page;
   }
+
+  @override
+  Future<CatUpdateEntry> createUpdate(
+    String catId, {
+    required List<String> statuses,
+    String? comment,
+  }) => throw UnimplementedError();
 }
 
 ProviderContainer _containerWith(_FakeCatDetailApi api) {
@@ -169,4 +176,41 @@ void main() {
       expect(state.hasNextPage, isFalse);
     },
   );
+
+  test(
+    'prependUpdate (issue #43) inserts newest-first and refreshes lastUpdateAt',
+    () async {
+      final container = _containerWith(
+        _FakeCatDetailApi(
+          detail: _detail,
+          updatesPages: [
+            UpdatesPage(items: [_update('u1')], nextCursor: null),
+          ],
+        ),
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      final freshEntry = _update('u2', comment: 'az önce görüldü');
+      notifier.prependUpdate(freshEntry);
+
+      final state = container.read(catDetailProvider(_catId));
+      expect(state.updates.map((u) => u.id), ['u2', 'u1']);
+      expect(state.detail?.lastUpdateAt, freshEntry.createdAt);
+    },
+  );
+
+  test('prependUpdate is a no-op before detail has loaded', () async {
+    final container = _containerWith(_FakeCatDetailApi());
+    addTearDown(container.dispose);
+
+    final notifier = container.read(catDetailProvider(_catId).notifier);
+    notifier.prependUpdate(_update('u1'));
+
+    final state = container.read(catDetailProvider(_catId));
+    expect(state.updates, isEmpty);
+    expect(state.detail, isNull);
+  });
 }

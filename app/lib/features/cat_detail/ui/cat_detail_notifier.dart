@@ -108,6 +108,31 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
       state = state.copyWith(isLoadingMore: false);
     }
   }
+
+  /// Inserts a just-created update (issue #43) at the front of the
+  /// newest-first timeline. Uses the server-confirmed entry from the
+  /// create response directly rather than re-fetching, so the
+  /// exactly-one-new-entry guarantee never races [loadMoreUpdates]. No-op
+  /// if detail hasn't loaded yet — the ui only offers a way to submit once
+  /// it has.
+  void prependUpdate(CatUpdateEntry entry) {
+    final detail = state.detail;
+    if (detail == null) return;
+    state = state.copyWith(
+      updates: [entry, ...state.updates],
+      detail: CatDetail(
+        id: detail.id,
+        name: detail.name,
+        lat: detail.lat,
+        lng: detail.lng,
+        areaLabel: detail.areaLabel,
+        primaryPhoto: detail.primaryPhoto,
+        createdAt: detail.createdAt,
+        lastUpdateAt: entry.createdAt,
+        activeAlert: detail.activeAlert,
+      ),
+    );
+  }
 }
 
 final catDetailProvider =
