@@ -25,6 +25,14 @@ func isCheckViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23514"
 }
 
+// isUniqueViolation reports whether err is a postgres unique-constraint
+// failure (sqlstate 23505) — notification_outbox_update_id_key (migration
+// 00009) uses this to reject a duplicate enqueue for the same update.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
 func createNeedsHelpUpdate(t *testing.T, ctx context.Context, store *repository.Store, catID pgtype.UUID, createdAt time.Time, category string) {
 	t.Helper()
 	_, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
@@ -417,10 +425,12 @@ func rawPool(t *testing.T) *pgxpool.Pool {
 
 // TestStore_CreateOrdinaryUpdate_Success exercises issue #36's atomic write
 // end to end against real postgres: the update row, its statuses, the
-// cat's last_update_at, and the notification_outbox row the
-// updates_enqueue_outbox trigger (migration 00008) produces all need to
-// commit together, and the new update needs to surface correctly through
-// the existing ListCatUpdates pagination path.
+// cat's last_update_at, and the notification_outbox row
+// Store.CreateOrdinaryUpdate enqueues explicitly (issue #38, migration
+// 00009 — no trigger is involved anymore) all need to commit together, and
+// the new update needs to surface correctly through the existing
+// ListCatUpdates pagination path. Uses a fixed timestamp rather than
+// time.Now() so the test is deterministic (issue #38).
 func TestStore_CreateOrdinaryUpdate_Success(t *testing.T) {
 	store := newTestStore(t)
 	pool := rawPool(t)
@@ -436,7 +446,7 @@ func TestStore_CreateOrdinaryUpdate_Success(t *testing.T) {
 		t.Fatalf("create device: %v", err)
 	}
 
-	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	createdAt := time.Date(2026, 2, 1, 9, 30, 0, 0, time.UTC)
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	row, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:             updateID,
@@ -471,7 +481,7 @@ func TestStore_CreateOrdinaryUpdate_Success(t *testing.T) {
 		t.Errorf("expected last_update_at %v, got %v", createdAt, cat.LastUpdateAt.Time)
 	}
 
-	// exactly one notification_outbox row was enqueued by the trigger.
+	// exactly one notification_outbox row was enqueued explicitly.
 	var outboxCount int
 	if err := pool.QueryRow(ctx, "select count(*) from notification_outbox where update_id = $1", row.ID).Scan(&outboxCount); err != nil {
 		t.Fatalf("count outbox rows: %v", err)
@@ -506,7 +516,8 @@ func TestStore_CreateOrdinaryUpdate_Success(t *testing.T) {
 // transaction is a real, all-or-nothing unit rather than a best-effort
 // sequence of writes: an update_statuses check-constraint violation (a real
 // postgres failure, not a mock) must leave no trace of the update row, no
-// cats.last_update_at change, and no notification_outbox row.
+// cats.last_update_at change, and no notification_outbox row. Uses a fixed
+// timestamp rather than time.Now() so the test is deterministic (issue #38).
 func TestStore_CreateOrdinaryUpdate_RollsBackOnInvalidStatus(t *testing.T) {
 	store := newTestStore(t)
 	pool := rawPool(t)
@@ -522,7 +533,7 @@ func TestStore_CreateOrdinaryUpdate_RollsBackOnInvalidStatus(t *testing.T) {
 	_, err = store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:        updateID,
 		CatID:     catID,
-		CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		CreatedAt: pgtype.Timestamptz{Time: time.Date(2026, 2, 1, 9, 31, 0, 0, time.UTC), Valid: true},
 		Statuses:  []string{"not_a_real_status"},
 	})
 	if !isCheckViolation(err) {
@@ -547,13 +558,144 @@ func TestStore_CreateOrdinaryUpdate_RollsBackOnInvalidStatus(t *testing.T) {
 		t.Errorf("expected last_update_at to stay %v, got %v", before.LastUpdateAt, after.LastUpdateAt)
 	}
 
-	// no outbox row: the trigger fires on insert, but that insert rolled back too.
+	// no outbox row: the enqueue runs inside the same transaction as the
+	// insert that rolled back, so it never committed either.
 	var outboxCount int
 	if err := pool.QueryRow(ctx, "select count(*) from notification_outbox where update_id = $1", updateID).Scan(&outboxCount); err != nil {
 		t.Fatalf("count outbox rows: %v", err)
 	}
 	if outboxCount != 0 {
 		t.Errorf("expected no notification_outbox row after rollback, got %d", outboxCount)
+	}
+}
+
+// TestStore_CreateOrdinaryUpdate_DuplicateEnqueueRollsBack verifies
+// notification_outbox_update_id_key (migration 00009) does its job: retrying
+// CreateOrdinaryUpdate with the same update id must fail the enqueue with a
+// unique-constraint violation and roll the whole retried write back, rather
+// than silently duplicating notification work.
+func TestStore_CreateOrdinaryUpdate_DuplicateEnqueueRollsBack(t *testing.T) {
+	store := newTestStore(t)
+	pool := rawPool(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "duplicate enqueue target")
+	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	createdAt := time.Date(2026, 2, 1, 9, 32, 0, 0, time.UTC)
+	params := repository.CreateOrdinaryUpdateParams{
+		ID:        updateID,
+		CatID:     catID,
+		CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+		Statuses:  []string{"seen"},
+	}
+
+	if _, err := store.CreateOrdinaryUpdate(ctx, params); err != nil {
+		t.Fatalf("first create ordinary update: %v", err)
+	}
+
+	// retry with the same update id: CreateUpdate's on-conflict upsert lets
+	// the update/statuses writes succeed again, but the outbox insert for
+	// the same update_id must now hit the unique constraint.
+	retryCreatedAt := createdAt.Add(time.Minute)
+	retryParams := params
+	retryParams.CreatedAt = pgtype.Timestamptz{Time: retryCreatedAt, Valid: true}
+	_, err := store.CreateOrdinaryUpdate(ctx, retryParams)
+	if !isUniqueViolation(err) {
+		t.Fatalf("expected a unique-constraint violation on retry, got %v", err)
+	}
+
+	// exactly one outbox row exists — the retry's enqueue never committed.
+	var outboxCount int
+	if err := pool.QueryRow(ctx, "select count(*) from notification_outbox where update_id = $1", updateID).Scan(&outboxCount); err != nil {
+		t.Fatalf("count outbox rows: %v", err)
+	}
+	if outboxCount != 1 {
+		t.Errorf("expected exactly 1 notification_outbox row, got %d", outboxCount)
+	}
+
+	// the retried transaction rolled back entirely: last_update_at still
+	// reflects the first call, not the retry's later timestamp.
+	cat, err := store.GetCatByID(ctx, catID)
+	if err != nil {
+		t.Fatalf("get cat: %v", err)
+	}
+	if !cat.LastUpdateAt.Valid || !cat.LastUpdateAt.Time.Equal(createdAt) {
+		t.Errorf("expected last_update_at to stay %v, got %v", createdAt, cat.LastUpdateAt.Time)
+	}
+}
+
+// TestStore_CreateUpdate_DirectInsertProducesNoOutboxRow guards the boundary
+// issue #38 introduces: only Store.CreateOrdinaryUpdate enqueues
+// notification_outbox work now that migration 00009 removed the table-wide
+// insert trigger. A direct CreateUpdate call — the path seed/fixtures and
+// other repository writes use — must never produce an outbox row.
+func TestStore_CreateUpdate_DirectInsertProducesNoOutboxRow(t *testing.T) {
+	store := newTestStore(t)
+	pool := rawPool(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "direct insert target")
+	row, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:     catID,
+		Kind:      "ordinary",
+		CreatedAt: pgtype.Timestamptz{Time: time.Date(2026, 2, 1, 9, 33, 0, 0, time.UTC), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("create update: %v", err)
+	}
+
+	var outboxCount int
+	if err := pool.QueryRow(ctx, "select count(*) from notification_outbox where update_id = $1", row.ID).Scan(&outboxCount); err != nil {
+		t.Fatalf("count outbox rows: %v", err)
+	}
+	if outboxCount != 0 {
+		t.Errorf("expected no notification_outbox row for a direct insert, got %d", outboxCount)
+	}
+}
+
+// TestStore_UpdateCatLastUpdateAt_Monotonic verifies issue #38's freshness
+// fix: committing an older-timestamped update after a newer one must not
+// move a cat's last_update_at backwards. Both writes use fixed timestamps
+// applied in a deliberately out-of-order sequence, so the assertion is
+// deterministic rather than depending on real concurrency or sleeps.
+func TestStore_UpdateCatLastUpdateAt_Monotonic(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "monotonic freshness target")
+	newer := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	older := newer.Add(-time.Hour)
+
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:     catID,
+		CreatedAt: pgtype.Timestamptz{Time: newer, Valid: true},
+		Statuses:  []string{"seen"},
+	}); err != nil {
+		t.Fatalf("create ordinary update: %v", err)
+	}
+	cat, err := store.GetCatByID(ctx, catID)
+	if err != nil {
+		t.Fatalf("get cat: %v", err)
+	}
+	if !cat.LastUpdateAt.Valid || !cat.LastUpdateAt.Time.Equal(newer) {
+		t.Fatalf("expected last_update_at %v after first write, got %v", newer, cat.LastUpdateAt.Time)
+	}
+
+	if err := store.UpdateCatLastUpdateAt(ctx, repository.UpdateCatLastUpdateAtParams{
+		ID:           catID,
+		LastUpdateAt: pgtype.Timestamptz{Time: older, Valid: true},
+	}); err != nil {
+		t.Fatalf("update last_update_at with an older timestamp: %v", err)
+	}
+
+	cat, err = store.GetCatByID(ctx, catID)
+	if err != nil {
+		t.Fatalf("get cat: %v", err)
+	}
+	if !cat.LastUpdateAt.Valid || !cat.LastUpdateAt.Time.Equal(newer) {
+		t.Errorf("expected last_update_at to stay at the newer value %v, got %v", newer, cat.LastUpdateAt.Time)
 	}
 }
 

@@ -142,29 +142,20 @@ create table update_statuses (
 -- follower), then sets processed_at. decoupled from `notifications` itself
 -- because one update can produce many notification rows.
 --
--- this table, the trigger below, and updates.author_device_id are
--- implemented as of migration 00008 (issue #36's write path); the worker
--- that polls this table, and the follows/notifications tables it reads,
--- are not — see design notes below.
+-- this table and updates.author_device_id are implemented as of migration
+-- 00008 (issue #36's write path); the worker that polls this table, and the
+-- follows/notifications tables it reads, are not — see design notes below.
+-- 00008 originally enqueued a row via a table-wide `updates` insert trigger;
+-- migration 00009 (issue #38) removed it in favor of an explicit enqueue
+-- inside Store.CreateOrdinaryUpdate's transaction — see design notes.
 create table notification_outbox (
   id           uuid primary key default gen_random_uuid(),
-  update_id    uuid not null references updates(id),
+  update_id    uuid not null references updates(id) unique,
   cat_id       uuid not null references cats(id),
   processed_at timestamptz,
   created_at   timestamptz not null default now()
 );
 create index outbox_unprocessed_idx on notification_outbox (created_at) where processed_at is null;
-
-create function enqueue_notification_outbox() returns trigger as $$
-begin
-  insert into notification_outbox (update_id, cat_id) values (new.id, new.cat_id);
-  return new;
-end;
-$$ language plpgsql;
-
-create trigger updates_enqueue_outbox
-  after insert on updates
-  for each row execute function enqueue_notification_outbox();
 
 create table follows (
   device_id  uuid not null references devices(id),
@@ -191,7 +182,7 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 - `devices.token_hash`: the client never sends a self-chosen identifier. `POST /v1/devices` (see [[api]]) generates the token server-side and returns it once; only its hash (sha-256, lower-hex) is stored, the same way a password would be. `devices.revoked_at` invalidates that one credential — it doesn't ban a person or a physical device, since nothing stops a client from calling `POST /v1/devices` again for a fresh identity. it's a mitigation for a single bad session, not an identity ban. `platform` accepts `'ios'`, `'android'`, and `'web'` (`'web'` is required because the flutter application has a web target). `user_id` is intentionally absent from the implemented migration (00007): it will be added as a foreign key once the `users` table lands.
 - `refresh_tokens`: backs the `access_token`/`refresh_token` pair in [[api]] — short-lived jwts plus a revocable, hashed refresh token, so login doesn't require a fresh otp on every app open.
 - `updates.author_device_id`: implemented (migration 00008) as nullable, not the `not null` sketched above — every update row seeded before issue #36's write path existed (and every needs-help row, since issue #23/#4's own write path still doesn't exist) predates authenticated writes and has no real device to attribute. mirrors the same deferral already used for `cats.created_by_device_id` (00003) and `devices.user_id` (00007): the column exists once its write path does, populated in full from then on, rather than forcing a fabricated backfill value onto rows never actually authored by a device. `POST /v1/cats/{cat_id}/updates` ([[api]]) is the only code path that populates it today, and always does.
-- `notification_outbox` + the `updates_enqueue_outbox` trigger: this is what the notification worker in [[backend]] actually polls. it exists separately from `notifications` because one update fans out to N follower rows, and the trigger guarantees every update gets enqueued exactly once, at the database level, regardless of which code path inserted it. **delivery semantics: at-most-once, not exactly-once.** the worker must `insert into notifications (...) on conflict (device_id, update_id) do nothing returning id` for each follower *before* sending that follower's push, sending only if a row was actually returned — this guarantees no follower is ever pushed twice. it does **not** guarantee every push is sent: if the worker crashes after that insert commits but before the push actually goes out, a retry of the same outbox row hits the conflict and skips the follower, so the push is silently lost rather than retried. for mvp this small loss window is accepted as-is. a stronger guarantee (no loss) would need a recoverable per-notification delivery state (e.g. `sent_at`/`attempts` on `notifications`) and a real retry protocol, not just "the row exists" as a proxy for "the push was sent" — not worth building until it's needed.
+- `notification_outbox`: this is what the notification worker in [[backend]] actually polls. it exists separately from `notifications` because one update fans out to N follower rows. as of migration 00009 (issue #38), the outbox row is enqueued explicitly inside `Store.CreateOrdinaryUpdate`'s own transaction — not by a table-wide `updates` insert trigger — so only that authenticated write path ever produces outbox work; a seed fixture, test, or any other direct `CreateUpdate` call never does. `notification_outbox.update_id` is unique, so retrying (or otherwise repeating) an enqueue for the same update fails loudly and rolls the whole write back instead of duplicating it. **delivery semantics: at-most-once, not exactly-once.** the worker must `insert into notifications (...) on conflict (device_id, update_id) do nothing returning id` for each follower *before* sending that follower's push, sending only if a row was actually returned — this guarantees no follower is ever pushed twice. it does **not** guarantee every push is sent: if the worker crashes after that insert commits but before the push actually goes out, a retry of the same outbox row hits the conflict and skips the follower, so the push is silently lost rather than retried. for mvp this small loss window is accepted as-is. a stronger guarantee (no loss) would need a recoverable per-notification delivery state (e.g. `sent_at`/`attempts` on `notifications`) and a real retry protocol, not just "the row exists" as a proxy for "the push was sent" — not worth building until it's needed.
 - `update_statuses` + `updates.comment`: an update carries one or more structured statuses from the fixed mvp vocabulary (`seen`/`fed`/`water_provided`, approved on issue #3) plus an optional free-text comment. `updates.seq` is a monotonic tie-breaker for [[api]]'s keyset pagination — needed because two updates can share the same `created_at` under fast writes/seeding, and `created_at` alone wouldn't order them deterministically.
 - `traits`/`cat_traits`/`trait_groups`: the trait vocabulary is data, not code — adding, relabeling, regrouping, or retiring a trait is a row change, never a migration or app release. `cat_traits.trait_key` references `traits.key`, so a cat can only carry a trait that exists in the vocabulary; retiring a trait (`traits.active = false`) removes it from future selection (`ListActiveTraits`) but never deletes the row or a cat's existing association, preserving history. `traits.group_key` is nullable — an ungrouped trait is still valid vocabulary, just not sorted into a picker section; `ListActiveTraits`/`ListCatTraits` order group-then-trait, with an ungrouped trait sorting after every grouped one.
 - `cats.area` is a point; the ~50m "area" concept from [[cats]] is expressed at query time via `st_dwithin(area, point, 50)` rather than a separate area table — that table would add complexity with no behavior it doesn't already give.

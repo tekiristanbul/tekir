@@ -179,7 +179,7 @@ func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsPara
 }
 
 const updateCatLastUpdateAt = `-- name: UpdateCatLastUpdateAt :exec
-update cats set last_update_at = $1 where id = $2
+update cats set last_update_at = greatest(last_update_at, $1) where id = $2
 `
 
 type UpdateCatLastUpdateAtParams struct {
@@ -189,6 +189,11 @@ type UpdateCatLastUpdateAtParams struct {
 
 // issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
 // so a new ordinary update and the cat's last_update_at commit atomically.
+// issue #38: monotonic — greatest() already ignores a null argument
+// (postgres greatest/least ignore nulls, returning null only when every
+// argument is null), so a cat's first-ever update still sets last_update_at
+// correctly. this keeps an out-of-order commit (an older update committing
+// after a newer one) from moving a cat's displayed freshness backwards.
 func (q *Queries) UpdateCatLastUpdateAt(ctx context.Context, arg UpdateCatLastUpdateAtParams) error {
 	_, err := q.db.Exec(ctx, updateCatLastUpdateAt, arg.LastUpdateAt, arg.ID)
 	return err
