@@ -20,7 +20,7 @@ const _statusLabelsTr = {
 /// (docs/product/map.md, docs/design/implementation-contract.md): an
 /// edge-to-edge hero photo, a compact last-update line, and a newest-first
 /// status-update timeline. Read-only — posting an update, editing the cat,
-/// follow, and needs-help rendering are out of scope for issue #21.
+/// and follow are out of scope for issue #21.
 /// Permanent trait chips are not part of the mvp surface (issue #42) —
 /// behavioral observations belong in update comments instead. Matches
 /// prototype/app.js's renderDetail visual hierarchy; never shows raw

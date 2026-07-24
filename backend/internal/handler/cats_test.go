@@ -244,6 +244,10 @@ func TestCatsHandler_Detail_NoTraitsField(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String(), nil)
 	routerFor(h).ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("decode response: %v", err)

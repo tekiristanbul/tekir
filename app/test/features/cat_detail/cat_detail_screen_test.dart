@@ -133,7 +133,8 @@ void main() {
       expect(find.textContaining('41.0256'), findsNothing);
       expect(find.textContaining('28.9744'), findsNothing);
       // permanent trait chips are not part of the mvp surface (issue #42).
-      expect(find.textContaining('daha'), findsNothing);
+      expect(find.textContaining(RegExp(r'^\+\d+ daha$')), findsNothing);
+      expect(find.text('daha az göster'), findsNothing);
     },
   );
 
