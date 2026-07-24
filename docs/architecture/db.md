@@ -107,7 +107,7 @@ create table updates (
   kind                   text not null default 'ordinary' check (kind in ('ordinary', 'needs_help')),
   comment                text,
   media_id               uuid references media(id),
-  author_device_id       uuid not null references devices(id),
+  author_device_id       uuid not null references devices(id), -- as implemented (migration 00008), this column is nullable: see design notes below
   created_at             timestamptz not null default now(),
   seq                    bigserial,
   needs_help_category    text check (
@@ -141,6 +141,11 @@ create table update_statuses (
 -- one out to the cat's followers (one `notifications` row + one push per
 -- follower), then sets processed_at. decoupled from `notifications` itself
 -- because one update can produce many notification rows.
+--
+-- this table, the trigger below, and updates.author_device_id are
+-- implemented as of migration 00008 (issue #36's write path); the worker
+-- that polls this table, and the follows/notifications tables it reads,
+-- are not — see design notes below.
 create table notification_outbox (
   id           uuid primary key default gen_random_uuid(),
   update_id    uuid not null references updates(id),
@@ -185,6 +190,7 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 
 - `devices.token_hash`: the client never sends a self-chosen identifier. `POST /v1/devices` (see [[api]]) generates the token server-side and returns it once; only its hash (sha-256, lower-hex) is stored, the same way a password would be. `devices.revoked_at` invalidates that one credential — it doesn't ban a person or a physical device, since nothing stops a client from calling `POST /v1/devices` again for a fresh identity. it's a mitigation for a single bad session, not an identity ban. `platform` accepts `'ios'`, `'android'`, and `'web'` (`'web'` is required because the flutter application has a web target). `user_id` is intentionally absent from the implemented migration (00007): it will be added as a foreign key once the `users` table lands.
 - `refresh_tokens`: backs the `access_token`/`refresh_token` pair in [[api]] — short-lived jwts plus a revocable, hashed refresh token, so login doesn't require a fresh otp on every app open.
+- `updates.author_device_id`: implemented (migration 00008) as nullable, not the `not null` sketched above — every update row seeded before issue #36's write path existed (and every needs-help row, since issue #23/#4's own write path still doesn't exist) predates authenticated writes and has no real device to attribute. mirrors the same deferral already used for `cats.created_by_device_id` (00003) and `devices.user_id` (00007): the column exists once its write path does, populated in full from then on, rather than forcing a fabricated backfill value onto rows never actually authored by a device. `POST /v1/cats/{cat_id}/updates` ([[api]]) is the only code path that populates it today, and always does.
 - `notification_outbox` + the `updates_enqueue_outbox` trigger: this is what the notification worker in [[backend]] actually polls. it exists separately from `notifications` because one update fans out to N follower rows, and the trigger guarantees every update gets enqueued exactly once, at the database level, regardless of which code path inserted it. **delivery semantics: at-most-once, not exactly-once.** the worker must `insert into notifications (...) on conflict (device_id, update_id) do nothing returning id` for each follower *before* sending that follower's push, sending only if a row was actually returned — this guarantees no follower is ever pushed twice. it does **not** guarantee every push is sent: if the worker crashes after that insert commits but before the push actually goes out, a retry of the same outbox row hits the conflict and skips the follower, so the push is silently lost rather than retried. for mvp this small loss window is accepted as-is. a stronger guarantee (no loss) would need a recoverable per-notification delivery state (e.g. `sent_at`/`attempts` on `notifications`) and a real retry protocol, not just "the row exists" as a proxy for "the push was sent" — not worth building until it's needed.
 - `update_statuses` + `updates.comment`: an update carries one or more structured statuses from the fixed mvp vocabulary (`seen`/`fed`/`water_provided`, approved on issue #3) plus an optional free-text comment. `updates.seq` is a monotonic tie-breaker for [[api]]'s keyset pagination — needed because two updates can share the same `created_at` under fast writes/seeding, and `created_at` alone wouldn't order them deterministically.
 - `traits`/`cat_traits`/`trait_groups`: the trait vocabulary is data, not code — adding, relabeling, regrouping, or retiring a trait is a row change, never a migration or app release. `cat_traits.trait_key` references `traits.key`, so a cat can only carry a trait that exists in the vocabulary; retiring a trait (`traits.active = false`) removes it from future selection (`ListActiveTraits`) but never deletes the row or a cat's existing association, preserving history. `traits.group_key` is nullable — an ungrouped trait is still valid vocabulary, just not sorted into a picker section; `ListActiveTraits`/`ListCatTraits` order group-then-trait, with an ungrouped trait sorting after every grouped one.
@@ -201,7 +207,7 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 - cat-inactivity threshold.
 - the specific trait vocabulary content (labels/grouping) is pending product-owner review; the storage model itself (keyed, extensible, data not enum, grouped) is decided.
 - duplicate-cat merge mechanism and whether it needs a `merged_into` column or something richer.
-- two update-content invariants from issue #3 aren't enforced at the database level yet: an ordinary update must carry at least one `update_statuses` row, and a needs-help update must carry none. `updates` and `update_statuses` are written as separate inserts with no transaction/trigger tying them together, so today's schema permits a zero-status ordinary update or a needs-help update with statuses attached. not a concern for issue #23 (there's no write endpoint yet to produce either), but the future `POST /v1/cats/{cat_id}/updates` write path ([[api]]) must enforce this itself — in a single transaction, a trigger, or both — before it's safe to treat as a real invariant rather than a documented intent.
+- two update-content invariants from issue #3 still aren't enforced at the database level: an ordinary update must carry at least one `update_statuses` row, and a needs-help update must carry none. for the ordinary side, issue #36's `POST /v1/cats/{cat_id}/updates` write path now enforces the "at least one status" half at the application layer — the service rejects an empty/unknown/duplicate status set with `400` before ever opening the transaction, and `Store.CreateOrdinaryUpdate` writes the update row and its statuses (plus `cats.last_update_at`) together as one transaction, so a partial write can't land even though there's no db-level constraint tying the two tables together. the needs-help half (a needs-help update must carry no statuses) remains genuinely unenforced anywhere, since issue #23/#4's own write path still doesn't exist.
 
 ## out of scope
 

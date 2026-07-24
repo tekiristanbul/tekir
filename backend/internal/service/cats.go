@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -32,10 +33,27 @@ var ErrInvalidCursor = errors.New("invalid cursor")
 // ErrInvalidLimit means the requested page size is non-positive or exceeds maxUpdatesLimit.
 var ErrInvalidLimit = errors.New("invalid limit")
 
+// ErrInvalidStatuses means the submitted status set is empty, contains a
+// value outside the closed mvp vocabulary, or repeats a value — issue #36
+// requires all three to reject with the same 400, so one sentinel is
+// enough; the handler doesn't need to distinguish which rule failed.
+var ErrInvalidStatuses = errors.New("invalid statuses")
+
 const (
 	defaultUpdatesLimit = 20
 	maxUpdatesLimit     = 50
 )
+
+// approvedStatuses is the closed mvp status vocabulary (issue #3/#36,
+// docs/product/updates.md): the only values an ordinary update's
+// update_statuses rows may carry. Also enforced by the database's own check
+// constraint on update_statuses.status — this copy lets the service reject
+// an invalid submission with a 400 before ever reaching the database.
+var approvedStatuses = map[string]bool{
+	"seen":           true,
+	"fed":            true,
+	"water_provided": true,
+}
 
 // needsHelpCategoryLabels is the fixed, closed mvp help-category vocabulary
 // and its turkish display label (product-owner decision on issue #4) — a
@@ -169,18 +187,19 @@ type updatesCursor struct {
 	seq       int64
 }
 
-// CatsLister is satisfied by repository.Store; kept as an interface here so
+// CatsStore is satisfied by repository.Store; kept as an interface here so
 // CatsService stays testable without a real database connection.
-type CatsLister interface {
+type CatsStore interface {
 	ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error)
 	GetCatByID(ctx context.Context, id pgtype.UUID) (repository.GetCatByIDRow, error)
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	ListCatUpdates(ctx context.Context, arg repository.ListCatUpdatesParams) ([]repository.ListCatUpdatesRow, error)
 	ListCatTraits(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatTraitsRow, error)
+	CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error)
 }
 
 type CatsService struct {
-	db    CatsLister
+	db    CatsStore
 	clock func() time.Time
 }
 
@@ -197,7 +216,7 @@ func WithClock(clock func() time.Time) CatsServiceOption {
 	return func(s *CatsService) { s.clock = clock }
 }
 
-func NewCatsService(db CatsLister, opts ...CatsServiceOption) *CatsService {
+func NewCatsService(db CatsStore, opts ...CatsServiceOption) *CatsService {
 	s := &CatsService{db: db, clock: time.Now}
 	for _, opt := range opts {
 		opt(s)
@@ -401,6 +420,88 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 		page.NextCursor = encodeUpdatesCursor(updatesCursor{createdAt: last.CreatedAt.Time, seq: last.Seq.Int64})
 	}
 	return page, nil
+}
+
+// CreateOrdinaryUpdate records a new ordinary status update for cat id,
+// attributed to the device identified by deviceID (issue #36 — a valid
+// server-issued X-Device-Token is all this endpoint requires; no bearer
+// auth). statuses must be a non-empty set drawn from the closed mvp
+// vocabulary with no duplicates; comment is optional and never sufficient
+// on its own. kind, media, needs-help fields, timestamps, sequence, and
+// author identity are never accepted from the caller — kind is always
+// "ordinary" here, created_at/author_device_id are server-derived, and the
+// update row, its statuses, and the cat's last_update_at commit as one
+// transaction (see repository.Store.CreateOrdinaryUpdate).
+func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, deviceID string, statuses []string, comment *string) (CatUpdate, error) {
+	catID, err := parseCatID(id)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
+	if err := validateStatuses(statuses); err != nil {
+		return CatUpdate{}, err
+	}
+
+	// deviceID comes from the authenticated device context the
+	// device-token middleware places on the request — it is always a
+	// well-formed uuid the middleware itself generated, never
+	// client-supplied input to re-validate against a sentinel error here.
+	authorID, err := uuid.Parse(deviceID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
+	exists, err := s.db.CatExists(ctx, catID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+	if !exists {
+		return CatUpdate{}, ErrCatNotFound
+	}
+
+	sorted := append([]string(nil), statuses...)
+	sort.Strings(sorted)
+
+	createdAt := s.clock()
+	row, err := s.db.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:          catID,
+		AuthorDeviceID: pgtype.UUID{Bytes: authorID, Valid: true},
+		Comment:        nullableText(comment),
+		CreatedAt:      pgtype.Timestamptz{Time: createdAt, Valid: true},
+		Statuses:       sorted,
+	})
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
+	return CatUpdate{
+		ID:        uuid.UUID(row.ID.Bytes).String(),
+		Kind:      "ordinary",
+		Statuses:  sorted,
+		Comment:   comment,
+		CreatedAt: createdAt,
+	}, nil
+}
+
+// validateStatuses enforces issue #36's status-set rules: at least one
+// status, every value drawn from the closed mvp vocabulary, no duplicates.
+// All three collapse to the same 400 via ErrInvalidStatuses.
+func validateStatuses(statuses []string) error {
+	if len(statuses) == 0 {
+		return ErrInvalidStatuses
+	}
+	seen := make(map[string]bool, len(statuses))
+	for _, st := range statuses {
+		if !approvedStatuses[st] {
+			return ErrInvalidStatuses
+		}
+		if seen[st] {
+			return ErrInvalidStatuses
+		}
+		seen[st] = true
+	}
+	return nil
 }
 
 // encodeUpdatesCursor and decodeUpdatesCursor keep the (created_at, seq)

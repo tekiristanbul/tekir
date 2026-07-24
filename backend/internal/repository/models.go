@@ -33,6 +33,14 @@ type Device struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type NotificationOutbox struct {
+	ID          pgtype.UUID        `json:"id"`
+	UpdateID    pgtype.UUID        `json:"update_id"`
+	CatID       pgtype.UUID        `json:"cat_id"`
+	ProcessedAt pgtype.Timestamptz `json:"processed_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type Trait struct {
 	Key         string             `json:"key"`
 	DisplayName string             `json:"display_name"`
@@ -57,6 +65,7 @@ type Update struct {
 	Kind               string             `json:"kind"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
+	AuthorDeviceID     pgtype.UUID        `json:"author_device_id"`
 }
 
 type UpdateStatus struct {

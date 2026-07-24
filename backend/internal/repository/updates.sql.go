@@ -12,7 +12,7 @@ import (
 )
 
 const createUpdate = `-- name: CreateUpdate :one
-insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at)
+insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id)
 values (
   $1,
   $2,
@@ -20,14 +20,16 @@ values (
   $4,
   $5,
   $6,
-  $7
+  $7,
+  $8
 )
 on conflict (id) do update set
   kind = excluded.kind,
   comment = excluded.comment,
   created_at = excluded.created_at,
   needs_help_category = excluded.needs_help_category,
-  needs_help_expires_at = excluded.needs_help_expires_at
+  needs_help_expires_at = excluded.needs_help_expires_at,
+  author_device_id = excluded.author_device_id
 returning id, seq
 `
 
@@ -39,6 +41,7 @@ type CreateUpdateParams struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
+	AuthorDeviceID     pgtype.UUID        `json:"author_device_id"`
 }
 
 type CreateUpdateRow struct {
@@ -57,7 +60,10 @@ type CreateUpdateRow struct {
 // in sql, for the same determinism reason. upserts on id (like UpsertCat) so
 // re-running the seed script with fixed ids stays idempotent instead of
 // erroring on a duplicate key; seq is never touched by the update branch,
-// so a row's tie-breaker position is stable.
+// so a row's tie-breaker position is stable. author_device_id is nullable
+// (see 00008) — set only by the write path introduced in issue #36, from
+// authenticated device context, never client-supplied; seed/needs-help rows
+// leave it null.
 func (q *Queries) CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error) {
 	row := q.db.QueryRow(ctx, createUpdate,
 		arg.ID,
@@ -67,6 +73,7 @@ func (q *Queries) CreateUpdate(ctx context.Context, arg CreateUpdateParams) (Cre
 		arg.CreatedAt,
 		arg.NeedsHelpCategory,
 		arg.NeedsHelpExpiresAt,
+		arg.AuthorDeviceID,
 	)
 	var i CreateUpdateRow
 	err := row.Scan(&i.ID, &i.Seq)

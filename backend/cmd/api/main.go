@@ -54,7 +54,7 @@ func run() error {
 	traitsHandler := handler.NewTraitsHandler(traitsSvc)
 	devicesSvc := service.NewDevicesService(store)
 	devicesHandler := handler.NewDevicesHandler(devicesSvc)
-	router := server.NewRouter(logger, healthHandler, catsHandler, traitsHandler, devicesHandler, cfg.CORSOrigins)
+	router := server.NewRouter(logger, healthHandler, catsHandler, traitsHandler, devicesHandler, devicesSvc, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

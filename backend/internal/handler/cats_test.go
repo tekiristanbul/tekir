@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,13 @@ type fakeCatsLister struct {
 
 	traitRows []repository.ListCatTraitsRow
 	traitsErr error
+
+	createRow repository.CreateUpdateRow
+	createErr error
+	// captured, if non-nil, records the arg the last CreateOrdinaryUpdate
+	// call received — a pointer field so the write is visible through the
+	// copy of fakeCatsLister that ends up inside the service.
+	captured *repository.CreateOrdinaryUpdateParams
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
@@ -54,13 +62,47 @@ func (f fakeCatsLister) ListCatTraits(ctx context.Context, catID pgtype.UUID) ([
 	return f.traitRows, f.traitsErr
 }
 
+func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error) {
+	if f.captured != nil {
+		*f.captured = arg
+	}
+	return f.createRow, f.createErr
+}
+
+// fakeDeviceResolver stands in for service.DevicesService in tests that
+// exercise CreateUpdate through the real RequireDeviceToken middleware
+// rather than by injecting a device identity directly into context.
+type fakeDeviceResolver struct {
+	identity service.DeviceIdentity
+	err      error
+}
+
+func (f fakeDeviceResolver) ResolveToken(_ context.Context, _ string) (service.DeviceIdentity, error) {
+	return f.identity, f.err
+}
+
 // routerFor wires h behind a real chi router so chi.URLParam (used by
-// Detail/UpdateHistory) is populated the same way it is in production.
+// Detail/UpdateHistory/CreateUpdate) is populated the same way it is in
+// production. The POST route runs behind RequireDeviceToken, exactly as
+// server.NewRouter wires it, so a request without a valid X-Device-Token
+// never reaches the handler.
 func routerFor(h *CatsHandler) http.Handler {
+	return routerForWithResolver(h, fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.NewString()}})
+}
+
+func routerForWithResolver(h *CatsHandler, resolver DeviceTokenResolver) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/v1/cats/{cat_id}", h.Detail)
 	r.Get("/v1/cats/{cat_id}/updates", h.UpdateHistory)
+	r.With(RequireDeviceToken(resolver)).Post("/v1/cats/{cat_id}/updates", h.CreateUpdate)
 	return r
+}
+
+// withDeviceToken sets the header RequireDeviceToken reads, so requests
+// through routerFor authenticate as the fake device it was built with.
+func withDeviceToken(req *http.Request) *http.Request {
+	req.Header.Set("X-Device-Token", "test-token")
+	return req
 }
 
 func TestCatsHandler_Nearby(t *testing.T) {
@@ -440,5 +482,261 @@ func TestCatsHandler_UpdateHistory_NeedsHelpEntry(t *testing.T) {
 	// remain in history, but never with active emphasis.
 	if item.NeedsHelpActive == nil || *item.NeedsHelpActive {
 		t.Errorf("expected an expired (inactive) needs-help entry, got %v", item.NeedsHelpActive)
+	}
+}
+
+// ── CreateUpdate (POST /v1/cats/{cat_id}/updates, issue #36) ─────────────────
+
+func newCreateUpdateRequest(catID, body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/v1/cats/"+catID+"/updates", strings.NewReader(body))
+	return withDeviceToken(req)
+}
+
+func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
+	catID := uuid.New()
+	deviceID := uuid.New()
+	created := time.Date(2026, 1, 3, 10, 0, 0, 0, time.UTC)
+	returnedID := uuid.New()
+	var captured repository.CreateOrdinaryUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists:    true,
+		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		captured:  &captured,
+	}, service.WithClock(func() time.Time { return created })))
+
+	r := routerForWithResolver(h, fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: deviceID.String()}})
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(catID.String(), `{"statuses":["seen"]}`)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body updateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.ID != returnedID.String() {
+		t.Errorf("unexpected id: %q", body.ID)
+	}
+	if body.Kind != "ordinary" {
+		t.Errorf("expected kind ordinary, got %q", body.Kind)
+	}
+	if len(body.Statuses) != 1 || body.Statuses[0] != "seen" {
+		t.Errorf("unexpected statuses: %v", body.Statuses)
+	}
+	if body.Comment != nil {
+		t.Errorf("expected nil comment, got %v", *body.Comment)
+	}
+	if !body.CreatedAt.Equal(created) {
+		t.Errorf("unexpected created_at: %v", body.CreatedAt)
+	}
+
+	if uuid.UUID(captured.CatID.Bytes).String() != catID.String() {
+		t.Errorf("unexpected captured cat id: %v", captured.CatID)
+	}
+	if uuid.UUID(captured.AuthorDeviceID.Bytes).String() != deviceID.String() {
+		t.Errorf("unexpected captured author device id: %v", captured.AuthorDeviceID)
+	}
+	if captured.Comment.Valid {
+		t.Errorf("expected no comment captured, got %v", captured.Comment)
+	}
+	if len(captured.Statuses) != 1 || captured.Statuses[0] != "seen" {
+		t.Errorf("unexpected captured statuses: %v", captured.Statuses)
+	}
+}
+
+func TestCatsHandler_CreateUpdate_WithCommentAndMultipleStatuses(t *testing.T) {
+	returnedID := uuid.New()
+	var captured repository.CreateOrdinaryUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists:    true,
+		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		captured:  &captured,
+	}))
+
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["fed","seen"],"comment":"mama verildi"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body updateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Statuses) != 2 {
+		t.Errorf("unexpected statuses: %v", body.Statuses)
+	}
+	if body.Comment == nil || *body.Comment != "mama verildi" {
+		t.Errorf("unexpected comment: %v", body.Comment)
+	}
+	if !captured.Comment.Valid || captured.Comment.String != "mama verildi" {
+		t.Errorf("unexpected captured comment: %v", captured.Comment)
+	}
+}
+
+func TestCatsHandler_CreateUpdate_EmptyStatuses(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":[]}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateUpdate_MissingStatuses(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateUpdate_CommentOnly(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{"comment":"mama verildi"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateUpdate_UnknownStatusValue(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["flying"]}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateUpdate_DuplicateStatus(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["seen","seen"]}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateUpdate_MalformedJSON(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCatsHandler_CreateUpdate_RejectsUnknownFields covers issue #36's
+// requirement that kind, media, needs-help, timestamp, sequence, and author
+// fields are never accepted from the caller — DisallowUnknownFields rejects
+// the whole request the moment any field outside {statuses, comment} shows
+// up, rather than silently ignoring it.
+func TestCatsHandler_CreateUpdate_RejectsUnknownFields(t *testing.T) {
+	bodies := map[string]string{
+		"kind":                  `{"statuses":["seen"],"kind":"needs_help"}`,
+		"media":                 `{"statuses":["seen"],"media":["https://example.com/a.jpg"]}`,
+		"needs_help_category":   `{"statuses":["seen"],"needs_help_category":"injured_or_sick"}`,
+		"needs_help_expires_at": `{"statuses":["seen"],"needs_help_expires_at":"2026-01-01T00:00:00Z"}`,
+		"timestamp":             `{"statuses":["seen"],"timestamp":"2026-01-01T00:00:00Z"}`,
+		"created_at":            `{"statuses":["seen"],"created_at":"2026-01-01T00:00:00Z"}`,
+		"sequence":              `{"statuses":["seen"],"sequence":5}`,
+		"seq":                   `{"statuses":["seen"],"seq":5}`,
+		"author":                `{"statuses":["seen"],"author":"someone"}`,
+		"author_device_id":      `{"statuses":["seen"],"author_device_id":"` + uuid.New().String() + `"}`,
+	}
+
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+			rec := httptest.NewRecorder()
+			req := newCreateUpdateRequest(uuid.New().String(), body)
+			routerFor(h).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestCatsHandler_CreateUpdate_CatNotFound(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: false}))
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["seen"]}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateUpdate_InvalidCatID(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest("not-a-uuid", `{"statuses":["seen"]}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateUpdate_RepositoryFailure(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true, createErr: errors.New("connection refused")}))
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["seen"]}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCatsHandler_CreateUpdate_RequiresDeviceToken proves the route is
+// actually gated by RequireDeviceToken in the same way server.NewRouter
+// wires it; the exhaustive missing/unknown/revoked/malformed-token matrix
+// lives in devices_test.go against the middleware directly.
+func TestCatsHandler_CreateUpdate_RequiresDeviceToken(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}))
+	r := routerForWithResolver(h, fakeDeviceResolver{})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/updates", strings.NewReader(`{"statuses":["seen"]}`))
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateUpdate_UnknownDeviceToken(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}))
+	r := routerForWithResolver(h, fakeDeviceResolver{err: service.ErrDeviceNotFound})
+
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["seen"]}`)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

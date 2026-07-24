@@ -32,7 +32,10 @@ type Querier interface {
 	// in sql, for the same determinism reason. upserts on id (like UpsertCat) so
 	// re-running the seed script with fixed ids stays idempotent instead of
 	// erroring on a duplicate key; seq is never touched by the update branch,
-	// so a row's tie-breaker position is stable.
+	// so a row's tie-breaker position is stable. author_device_id is nullable
+	// (see 00008) — set only by the write path introduced in issue #36, from
+	// authenticated device context, never client-supplied; seed/needs-help rows
+	// leave it null.
 	CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error)
 	CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatusParams) error
 	// traits are fetched separately via ListCatTraits (join against the traits
@@ -77,6 +80,9 @@ type Querier interface {
 	// against an injected clock, not this query's own now().
 	ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
+	// issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
+	// so a new ordinary update and the cat's last_update_at commit atomically.
+	UpdateCatLastUpdateAt(ctx context.Context, arg UpdateCatLastUpdateAtParams) error
 	UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UUID, error)
 	// loads/updates the vocabulary itself (seed data only for now — there's no
 	// admin endpoint). upserting on key lets seed re-runs adjust display_name/

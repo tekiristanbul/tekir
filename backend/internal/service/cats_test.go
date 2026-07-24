@@ -29,6 +29,13 @@ type fakeCatsLister struct {
 
 	traitRows []repository.ListCatTraitsRow
 	traitsErr error
+
+	createRow repository.CreateUpdateRow
+	createErr error
+	// captured, if non-nil, records the arg the last CreateOrdinaryUpdate
+	// call received — a pointer field so the write is visible through the
+	// copy of fakeCatsLister that ends up inside CatsService.
+	captured *repository.CreateOrdinaryUpdateParams
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
@@ -49,6 +56,13 @@ func (f fakeCatsLister) ListCatUpdates(ctx context.Context, arg repository.ListC
 
 func (f fakeCatsLister) ListCatTraits(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatTraitsRow, error) {
 	return f.traitRows, f.traitsErr
+}
+
+func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error) {
+	if f.captured != nil {
+		*f.captured = arg
+	}
+	return f.createRow, f.createErr
 }
 
 func TestCatsService_ListNearby(t *testing.T) {
@@ -484,5 +498,122 @@ func TestCatsService_ListCatUpdates_OrdinaryEntryHasNoNeedsHelpFields(t *testing
 	item := page.Items[0]
 	if item.NeedsHelpCategory != nil || item.NeedsHelpCategoryLabel != nil || item.NeedsHelpExpiresAt != nil || item.NeedsHelpActive != nil {
 		t.Errorf("expected no needs-help fields on an ordinary entry, got %+v", item)
+	}
+}
+
+// ── CreateOrdinaryUpdate (issue #36) ──────────────────────────────────────────
+
+func TestCatsService_CreateOrdinaryUpdate_Success(t *testing.T) {
+	catID := uuid.New()
+	deviceID := uuid.New()
+	returnedID := uuid.New()
+	fixedNow := time.Date(2026, 1, 5, 8, 0, 0, 0, time.UTC)
+	var captured repository.CreateOrdinaryUpdateParams
+	svc := NewCatsService(fakeCatsLister{
+		exists:    true,
+		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		captured:  &captured,
+	}, WithClock(func() time.Time { return fixedNow }))
+
+	comment := "mama verildi, su tazelendi"
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), deviceID.String(), []string{"water_provided", "fed"}, &comment)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if update.ID != returnedID.String() {
+		t.Errorf("expected id %s, got %s", returnedID.String(), update.ID)
+	}
+	if update.Kind != "ordinary" {
+		t.Errorf("expected kind ordinary, got %q", update.Kind)
+	}
+	if update.Comment == nil || *update.Comment != comment {
+		t.Errorf("unexpected comment: %v", update.Comment)
+	}
+	if !update.CreatedAt.Equal(fixedNow) {
+		t.Errorf("expected server-derived created_at %v, got %v", fixedNow, update.CreatedAt)
+	}
+	// statuses come back sorted, regardless of submission order.
+	if len(update.Statuses) != 2 || update.Statuses[0] != "fed" || update.Statuses[1] != "water_provided" {
+		t.Errorf("expected sorted statuses [fed water_provided], got %v", update.Statuses)
+	}
+
+	if uuid.UUID(captured.CatID.Bytes).String() != catID.String() {
+		t.Errorf("unexpected repository cat id: %v", captured.CatID)
+	}
+	if uuid.UUID(captured.AuthorDeviceID.Bytes).String() != deviceID.String() {
+		t.Errorf("unexpected repository author device id: %v", captured.AuthorDeviceID)
+	}
+	if !captured.CreatedAt.Time.Equal(fixedNow) {
+		t.Errorf("expected repository created_at %v, got %v", fixedNow, captured.CreatedAt.Time)
+	}
+	if !captured.Comment.Valid || captured.Comment.String != comment {
+		t.Errorf("unexpected repository comment: %v", captured.Comment)
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_NoComment(t *testing.T) {
+	var captured repository.CreateOrdinaryUpdateParams
+	svc := NewCatsService(fakeCatsLister{exists: true, captured: &captured})
+
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if update.Comment != nil {
+		t.Errorf("expected nil comment, got %v", *update.Comment)
+	}
+	if captured.Comment.Valid {
+		t.Errorf("expected repository comment to stay unset, got %v", captured.Comment)
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_InvalidStatuses(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{exists: true})
+
+	cases := []struct {
+		name     string
+		statuses []string
+	}{
+		{"empty", []string{}},
+		{"nil", nil},
+		{"unknown value", []string{"flying"}},
+		{"duplicate", []string{"seen", "seen"}},
+		{"one valid one unknown", []string{"seen", "flying"}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), c.statuses, nil); !errors.Is(err, ErrInvalidStatuses) {
+				t.Fatalf("expected ErrInvalidStatuses, got %v", err)
+			}
+		})
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_InvalidCatID(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{})
+
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), "not-a-uuid", uuid.New().String(), []string{"seen"}, nil)
+	if !errors.Is(err, ErrInvalidCatID) {
+		t.Fatalf("expected ErrInvalidCatID, got %v", err)
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_UnknownCat(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{exists: false})
+
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	if !errors.Is(err, ErrCatNotFound) {
+		t.Fatalf("expected ErrCatNotFound, got %v", err)
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_RepositoryFailure(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{exists: true, createErr: errors.New("connection refused")})
+
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
 	}
 }

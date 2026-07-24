@@ -85,3 +85,8 @@ where c.id = sqlc.arg(id);
 -- lets the updates-history endpoint 404 on an unknown cat instead of
 -- silently returning an empty page indistinguishable from "no history yet".
 select exists(select 1 from cats where id = sqlc.arg(id)) as exists;
+
+-- name: UpdateCatLastUpdateAt :exec
+-- issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
+-- so a new ordinary update and the cat's last_update_at commit atomically.
+update cats set last_update_at = sqlc.arg(last_update_at) where id = sqlc.arg(id);
