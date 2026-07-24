@@ -15,7 +15,7 @@ import 'package:app/core/identity/device_identity.dart';
 /// origin, preventing accidental credential leakage to third-party endpoints.
 class DeviceInterceptor extends Interceptor {
   DeviceInterceptor({
-    required DeviceIdentityService this._service,
+    required this._service,
     required String apiBaseUrl,
   }) : _apiOrigin = _originOf(apiBaseUrl);
 

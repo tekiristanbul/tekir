@@ -55,8 +55,8 @@ class FlutterSecureKeyValueStorage implements DeviceKeyValueStorage {
 /// registration never recursively waits for the credential it is creating.
 class DeviceIdentityService {
   DeviceIdentityService({
-    required DeviceKeyValueStorage this._storage,
-    required Dio this._dio,
+    required this._storage,
+    required this._dio,
   });
 
   final DeviceKeyValueStorage _storage;
