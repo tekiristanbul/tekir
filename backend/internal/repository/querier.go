@@ -17,6 +17,10 @@ type Querier interface {
 	// no endpoint sets this yet — trait selection is out of scope for issue #21
 	// and belongs to the future add/edit-cat flow. used by seed data only.
 	CreateCatTrait(ctx context.Context, arg CreateCatTraitParams) error
+	// stores a new device row; only the sha-256 hash of the raw token is
+	// persisted here — the raw token is returned to the caller once and
+	// never stored (see docs/architecture/db.md). push_token is optional.
+	CreateDevice(ctx context.Context, arg CreateDeviceParams) (CreateDeviceRow, error)
 	// kind discriminates an ordinary status update from a needs-help one (issue
 	// #23); needs_help_category/needs_help_expires_at are null for an ordinary
 	// update and required for a needs-help one — enforced by
@@ -37,6 +41,10 @@ type Querier interface {
 	// lateral join is the same latest-needs-help-update lookup as
 	// ListCatsInBounds, unfiltered by expiry for the same reason.
 	GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error)
+	// resolves an inbound X-Device-Token to its non-secret device_id.
+	// the middleware calls this after hashing the presented token; only
+	// the non-secret fields are returned — the hash is never echoed back.
+	GetDeviceByTokenHash(ctx context.Context, tokenHash string) (GetDeviceByTokenHashRow, error)
 	// the selectable vocabulary: what the future grouped multi-select picker
 	// (product-owner decision on issue #21/#23) renders as options, ordered
 	// group-then-trait so a client can render section headers without its own
