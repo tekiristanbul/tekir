@@ -440,7 +440,7 @@ class _UpdateActionsRow extends ConsumerWidget {
 
   Future<void> _submitSeen(BuildContext context, WidgetRef ref) async {
     final notifier = ref.read(catUpdateComposerProvider(catId).notifier);
-    final ok = await notifier.submit(statusesOverride: const ['seen']);
+    final ok = await notifier.submitSeen();
     if (!context.mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     if (ok) {

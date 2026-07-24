@@ -44,6 +44,19 @@ class _FakeStorage implements DeviceKeyValueStorage {
   Future<void> write(String key, String value) async => _data[key] = value;
 }
 
+// Empty storage forces DeviceIdentityService through registration on every
+// init() call whose result isn't cached — used to exercise the
+// fails-then-succeeds retry path.
+class _EmptyStorage implements DeviceKeyValueStorage {
+  final _data = <String, String>{};
+
+  @override
+  Future<String?> read(String key) async => _data[key];
+
+  @override
+  Future<void> write(String key, String value) async => _data[key] = value;
+}
+
 class _FakeCatDetailApi implements CatDetailApi {
   int createUpdateCalls = 0;
   List<String>? lastStatuses;
@@ -79,15 +92,49 @@ class _FakeCatDetailApi implements CatDetailApi {
   }
 }
 
-ProviderContainer _containerWith(_FakeCatDetailApi api) {
+// Returns a malformed (missing device_id/device_token) body on the first
+// call and a valid one afterwards, mirroring device_identity_service_test's
+// _CountingAdapter — used to exercise DeviceIdentityService's registration
+// retry from within the composer's submit flow.
+class _FlakyDeviceAdapter implements HttpClientAdapter {
+  int callCount = 0;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    callCount++;
+    final body = callCount == 1
+        ? '{"unexpected":"shape"}'
+        : '{"device_id":"did-retry","device_token":"tok-retry"}';
+    return ResponseBody.fromString(
+      body,
+      201,
+      headers: {
+        'content-type': ['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+ProviderContainer _containerWith(
+  _FakeCatDetailApi api, {
+  DeviceIdentityService? deviceIdentityService,
+}) {
   final container = ProviderContainer(
     overrides: [
       catDetailApiProvider.overrideWithValue(api),
       deviceIdentityServiceProvider.overrideWithValue(
-        DeviceIdentityService(
-          storage: _FakeStorage(),
-          dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080')),
-        ),
+        deviceIdentityService ??
+            DeviceIdentityService(
+              storage: _FakeStorage(),
+              dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080')),
+            ),
       ),
     ],
   );
@@ -113,7 +160,7 @@ void main() {
     });
   });
 
-  test('submit with no selection and no override is a no-op', () async {
+  test('submit with no selection is a no-op', () async {
     final api = _FakeCatDetailApi();
     final container = _containerWith(api);
     addTearDown(container.dispose);
@@ -165,28 +212,50 @@ void main() {
     await container.read(catDetailProvider(_catId).notifier).load();
 
     final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+    notifier.toggleStatus('seen');
     notifier.setComment('   ');
-    await notifier.submit(statusesOverride: const ['seen']);
+    await notifier.submit();
 
     expect(api.lastComment, isNull);
   });
 
   test(
-    'statusesOverride (one-tap seen) bypasses the current selection',
+    'submitSeen always sends statuses: [seen], ignoring any selection',
     () async {
       final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
       final container = _containerWith(api);
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
 
-      final ok = await container
-          .read(catUpdateComposerProvider(_catId).notifier)
-          .submit(statusesOverride: const ['seen']);
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      notifier.toggleStatus('fed');
+
+      final ok = await notifier.submitSeen();
 
       expect(ok, isTrue);
       expect(api.lastStatuses, ['seen']);
     },
   );
+
+  test('submitSeen never sends a dismissed composer draft comment', () async {
+    final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+    final container = _containerWith(api);
+    addTearDown(container.dispose);
+    await container.read(catDetailProvider(_catId).notifier).load();
+
+    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+    // Simulates: sheet opened, a comment typed, sheet dismissed without
+    // submitting — the composer's draft state outlives the dismissal.
+    notifier.setComment('bu görülmemeliydi');
+
+    final ok = await notifier.submitSeen();
+
+    expect(ok, isTrue);
+    expect(api.lastComment, isNull);
+    expect(api.lastStatuses, ['seen']);
+  });
 
   test('duplicate taps while submitting create at most one request', () async {
     final gate = Completer<void>();
@@ -199,8 +268,8 @@ void main() {
 
     final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
 
-    final first = notifier.submit(statusesOverride: const ['seen']);
-    final second = notifier.submit(statusesOverride: const ['seen']);
+    final first = notifier.submitSeen();
+    final second = notifier.submitSeen();
 
     expect(
       container.read(catUpdateComposerProvider(_catId)).isSubmitting,
@@ -213,6 +282,47 @@ void main() {
     expect(api.createUpdateCalls, 1);
     expect(results, [true, false]);
   });
+
+  test(
+    'a device identity that fails to resolve surfaces as a retryable unauthorized error, without calling the update api',
+    () async {
+      final deviceService = DeviceIdentityService(
+        storage: _EmptyStorage(),
+        dio: (Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
+          ..httpClientAdapter = _FlakyDeviceAdapter()),
+      );
+      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+      final container = _containerWith(
+        api,
+        deviceIdentityService: deviceService,
+      );
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+
+      final firstOk = await notifier.submitSeen();
+      expect(firstOk, isFalse);
+      expect(
+        container.read(catUpdateComposerProvider(_catId)).error,
+        UpdateSubmitError.unauthorized,
+      );
+      expect(
+        api.createUpdateCalls,
+        0,
+        reason: 'must not call the update api without a resolved identity',
+      );
+
+      // Retryable: the previously failed registration is retried, not
+      // replayed from a stuck completed-null future.
+      final secondOk = await notifier.submitSeen();
+      expect(secondOk, isTrue);
+      expect(api.createUpdateCalls, 1);
+      expect(container.read(catUpdateComposerProvider(_catId)).error, isNull);
+    },
+  );
 
   for (final entry in {
     const UpdateValidationException(): UpdateSubmitError.validation,
@@ -232,7 +342,7 @@ void main() {
         final notifier = container.read(
           catUpdateComposerProvider(_catId).notifier,
         );
-        final ok = await notifier.submit(statusesOverride: const ['seen']);
+        final ok = await notifier.submitSeen();
 
         expect(ok, isFalse);
         final state = container.read(catUpdateComposerProvider(_catId));
@@ -248,7 +358,7 @@ void main() {
         api
           ..nextError = null
           ..nextResult = _entry('upd-2');
-        final retryOk = await notifier.submit(statusesOverride: const ['seen']);
+        final retryOk = await notifier.submitSeen();
         expect(retryOk, isTrue);
         expect(container.read(catUpdateComposerProvider(_catId)).error, isNull);
       },
@@ -265,7 +375,7 @@ void main() {
 
       final ok = await container
           .read(catUpdateComposerProvider(_catId).notifier)
-          .submit(statusesOverride: const ['seen']);
+          .submitSeen();
 
       expect(ok, isFalse);
       expect(

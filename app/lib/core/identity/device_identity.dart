@@ -74,6 +74,10 @@ class DeviceIdentityService {
     _initFuture ??= _loadOrRegister().then(
       (id) {
         _cached = id;
+        // A null result (malformed response, missing fields) isn't a
+        // cacheable success — clear the future so the next init() call
+        // retries instead of forever replaying this failed attempt.
+        if (id == null) _initFuture = null;
         return id;
       },
       onError: (Object _) {

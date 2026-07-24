@@ -89,29 +89,40 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     state = const CatUpdateComposerState();
   }
 
-  /// Submits [statusesOverride] (used by the one-tap "seen" shortcut) or
-  /// the current selection when omitted. Returns true on success; on
-  /// failure, [state.error] carries the mapped, turkish-ready failure for
-  /// the caller to read via [updateSubmitErrorMessageTr].
-  Future<bool> submit({List<String>? statusesOverride}) async {
-    if (state.isSubmitting) return false;
-    final statuses = statusesOverride ?? state.selectedStatuses.toList();
-    if (statuses.isEmpty) return false;
-
-    state = state.copyWith(isSubmitting: true, clearError: true);
+  /// Submits the current selection and draft comment from the composition
+  /// sheet. Returns true on success; on failure, [state.error] carries the
+  /// mapped, turkish-ready failure for the caller to read via
+  /// [updateSubmitErrorMessageTr].
+  Future<bool> submit() {
+    final statuses = state.selectedStatuses.toList();
+    if (statuses.isEmpty) return Future.value(false);
     final trimmedComment = state.comment.trim();
+    return _submit(statuses, trimmedComment.isEmpty ? null : trimmedComment);
+  }
+
+  /// The one-tap "seen" shortcut. Deliberately bypasses [state.comment] —
+  /// a draft typed into the composition sheet and then dismissed without
+  /// submitting must never be attached to an unrelated one-tap update.
+  Future<bool> submitSeen() => _submit(const ['seen'], null);
+
+  Future<bool> _submit(List<String> statuses, String? comment) async {
+    if (state.isSubmitting) return false;
+    state = state.copyWith(isSubmitting: true, clearError: true);
     try {
       // Lazily initializes (or awaits an in-flight, or retries a
       // previously failed) device identity — never triggered merely by
       // viewing the read-only cat-detail screen, only by an actual submit.
-      await ref.read(deviceIdentityServiceProvider).init();
+      final identity = await ref.read(deviceIdentityServiceProvider).init();
+      if (identity == null) {
+        state = state.copyWith(
+          isSubmitting: false,
+          error: UpdateSubmitError.unauthorized,
+        );
+        return false;
+      }
       final entry = await ref
           .read(catDetailApiProvider)
-          .createUpdate(
-            catId,
-            statuses: statuses,
-            comment: trimmedComment.isEmpty ? null : trimmedComment,
-          );
+          .createUpdate(catId, statuses: statuses, comment: comment);
       ref.read(catDetailProvider(catId).notifier).prependUpdate(entry);
       state = const CatUpdateComposerState();
       return true;
