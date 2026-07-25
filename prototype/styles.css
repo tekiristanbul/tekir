@@ -182,7 +182,7 @@ button, input, textarea{ color:inherit; }
 .chip{
   position:relative;
   display:inline-flex; align-items:center; gap:var(--space-1);
-  height:32px; padding:0 var(--space-3); border-radius:var(--radius-full);
+  min-height:32px; padding:0 var(--space-3); border-radius:var(--radius-full);
   border:1px solid var(--color-line-strong); background:var(--color-surface);
   font-size:var(--text-sm); font-weight:600; color:var(--color-muted);
   cursor:pointer; user-select:none; -webkit-tap-highlight-color:transparent;
@@ -204,13 +204,15 @@ button, input, textarea{ color:inherit; }
 .chip-row{ display:flex; flex-wrap:wrap; gap:var(--space-3); }
 
 /* ============================================================ badges */
-.badge{ display:inline-flex; align-items:center; gap:5px; height:24px; padding:0 var(--space-2); border-radius:var(--radius-full); font-size:var(--text-2xs); font-weight:700; letter-spacing:.01em; }
+.badge{ display:inline-flex; align-items:center; gap:5px; min-height:24px; padding:0 var(--space-2); border-radius:var(--radius-full); font-size:var(--text-2xs); font-weight:700; letter-spacing:.01em; }
 .badge svg{ width:13px; height:13px; }
 .badge-help{ background:var(--color-help); color:var(--color-help-ink); }
 .badge-help.is-soft{ background:var(--color-help-soft); color:var(--color-help-strong); }
 .badge-fresh{ background:var(--color-accent-soft); color:var(--color-accent-strong); font-weight:800; }
 .badge-neutral{ background:var(--color-surface-alt); color:var(--color-muted); }
-.badge-stale{ background:var(--color-surface-alt); color:var(--color-faint); }
+/* muted, not faint — a stale-freshness label is still meaningful information, not a
+   tertiary/decorative label, and needs to clear 4.5:1 against its surface-alt background */
+.badge-stale{ background:var(--color-surface-alt); color:var(--color-muted); }
 .badge-dot{ width:7px; height:7px; border-radius:50%; background:currentColor; flex:none; }
 
 /* ============================================================ map markers */
@@ -276,10 +278,10 @@ button, input, textarea{ color:inherit; }
 }
 .cat-card__photo{ width:52px; height:52px; border-radius:var(--radius-md); object-fit:cover; flex:none; background:var(--color-surface-alt); }
 .cat-card__body{ flex:1; min-width:0; }
-.cat-card__name{ font-family:var(--font-display); font-weight:600; font-size:var(--text-base); color:var(--color-ink); }
+.cat-card__name{ font-family:var(--font-display); font-weight:600; font-size:var(--text-base); color:var(--color-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .cat-card__meta{ font-size:var(--text-xs); color:var(--color-muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .cat-card__aside{ display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex:none; }
-.cat-card__distance{ font-size:var(--text-2xs); color:var(--color-faint); font-weight:600; }
+.cat-card__distance{ font-size:var(--text-2xs); color:var(--color-muted); font-weight:600; }
 
 /* ============================================================ bottom sheet */
 .sheet-scrim{ position:absolute; inset:0; background:var(--color-overlay); opacity:0; pointer-events:none; transition:opacity .22s var(--ease); z-index:20; }
@@ -312,7 +314,7 @@ button, input, textarea{ color:inherit; }
 .info-row__icon{ width:36px; height:36px; border-radius:var(--radius-md); background:var(--color-primary-soft); color:var(--color-primary-strong); display:flex; align-items:center; justify-content:center; flex:none; }
 .info-row__icon svg{ width:18px; height:18px; }
 .info-row.is-warm .info-row__icon{ background:var(--color-help-soft); color:var(--color-help-strong); }
-.info-row__label{ font-size:var(--text-2xs); font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--color-faint); }
+.info-row__label{ font-size:var(--text-2xs); font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--color-muted); }
 .info-row__value{ font-size:var(--text-base); color:var(--color-ink); margin-top:2px; line-height:1.4; }
 
 /* ============================================================ action row */
@@ -331,7 +333,7 @@ button, input, textarea{ color:inherit; }
 .timeline-item__body{ flex:1; padding-bottom:2px; }
 .timeline-item__head{ display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-2); }
 .timeline-item__type{ font-size:var(--text-sm); font-weight:700; color:var(--color-ink); }
-.timeline-item__time{ font-size:var(--text-2xs); color:var(--color-faint); white-space:nowrap; }
+.timeline-item__time{ font-size:var(--text-2xs); color:var(--color-muted); white-space:nowrap; }
 .timeline-item__comment{ font-size:var(--text-sm); color:var(--color-muted); margin-top:3px; line-height:1.45; }
 .timeline-item__photo{ width:64px; height:64px; border-radius:var(--radius-sm); object-fit:cover; margin-top:var(--space-2); }
 
@@ -423,7 +425,7 @@ button, input, textarea{ color:inherit; }
 .dup-candidate__body{ flex:1; min-width:0; }
 .dup-candidate__name{ font-weight:700; font-size:var(--text-sm); }
 .dup-candidate__meta{ font-size:var(--text-xs); color:var(--color-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.dup-candidate svg{ flex:none; color:var(--color-faint); }
+.dup-candidate svg{ flex:none; color:var(--color-muted); }
 
 /* ============================================================ toast */
 .toast{
@@ -506,7 +508,7 @@ button, input, textarea{ color:inherit; }
 }
 .nav-item{
   flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; padding:6px 2px;
-  background:none; border:none; color:var(--color-faint); cursor:pointer; -webkit-tap-highlight-color:transparent;
+  background:none; border:none; color:var(--color-muted); cursor:pointer; -webkit-tap-highlight-color:transparent;
 }
 .nav-item svg{ width:22px; height:22px; }
 .nav-item span{ font-size:var(--text-2xs); font-weight:600; }
@@ -516,11 +518,15 @@ button, input, textarea{ color:inherit; }
   width:46px; height:46px; border-radius:50%; background:var(--color-primary); color:#fff;
   display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-md);
 }
-.nav-item.nav-fab span{ color:var(--color-faint); margin-top:1px; }
+.nav-item.nav-fab span{ margin-top:1px; }
 
 /* discover */
 .segmented{ display:flex; background:var(--color-surface-alt); border-radius:var(--radius-full); padding:3px; }
-.segmented button{ flex:1; border:none; background:none; padding:8px 4px; border-radius:var(--radius-full); font-size:var(--text-sm); font-weight:700; color:var(--color-muted); cursor:pointer; }
+.segmented button{
+  flex:1; display:flex; align-items:center; justify-content:center; min-height:var(--tap-min);
+  border:none; background:none; padding:8px 4px; border-radius:var(--radius-full);
+  font-size:var(--text-sm); font-weight:700; color:var(--color-muted); cursor:pointer;
+}
 .segmented button.is-on{ background:var(--color-surface); color:var(--color-ink); box-shadow:var(--shadow-sm); }
 .list-divider{ border-top:1px solid var(--color-line); }
 
@@ -529,9 +535,12 @@ button, input, textarea{ color:inherit; }
 .notif-item:last-child{ border-bottom:none; }
 .notif-item__photo{ width:44px; height:44px; border-radius:50%; object-fit:cover; flex:none; }
 .notif-item__body{ flex:1; min-width:0; }
-.notif-item__title{ font-size:var(--text-sm); font-weight:700; }
+/* unread state is carried by weight + color together, not the dot alone, so it still
+   reads correctly for anyone who can't distinguish the dot by color */
+.notif-item__title{ font-size:var(--text-sm); font-weight:600; color:var(--color-muted); }
+.notif-item.is-unread .notif-item__title{ font-weight:700; color:var(--color-ink); }
 .notif-item__desc{ font-size:var(--text-xs); color:var(--color-muted); margin-top:2px; }
-.notif-item__time{ font-size:var(--text-2xs); color:var(--color-faint); flex:none; }
+.notif-item__time{ font-size:var(--text-2xs); color:var(--color-muted); flex:none; }
 .notif-item.is-unread .notif-item__title::before{ content:''; display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--color-primary); margin-right:6px; vertical-align:middle; }
 
 /* account */
@@ -540,7 +549,7 @@ button, input, textarea{ color:inherit; }
   padding:var(--space-3) var(--space-4); font-size:var(--text-xs); color:var(--color-muted);
   display:flex; gap:var(--space-2); align-items:flex-start; line-height:1.5;
 }
-.future-note svg{ flex:none; margin-top:1px; color:var(--color-faint); }
+.future-note svg{ flex:none; margin-top:1px; color:var(--color-muted); }
 .future-note b{ color:var(--color-ink); }
 
 /* photo hero (cat detail) */
@@ -609,4 +618,14 @@ button, input, textarea{ color:inherit; }
 @media (max-width:430px){
   .viewport-wrap{ padding:0; }
   .device{ width:100vw; height:100dvh; border-radius:0; border-width:0; }
+}
+
+/* respects the OS/browser-level reduced-motion preference: every transition and
+   animation in this file collapses to near-instant, end-state-only changes —
+   nothing is removed, interactions just stop animating through the states. */
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after{
+    animation-duration:.001ms !important; animation-iteration-count:1 !important;
+    transition-duration:.001ms !important; scroll-behavior:auto !important;
+  }
 }

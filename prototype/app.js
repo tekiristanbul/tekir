@@ -883,7 +883,7 @@ function renderDiscover(){
         '<div>' + list.map(function(r,i){
           var c = r.cat;
           return (i>0?'<div class="list-divider"></div>':'') +
-          '<div class="cat-card" data-action="open-detail" data-cat="'+c.id+'">' +
+          '<div class="cat-card" data-action="open-detail" data-cat="'+c.id+'" role="button" tabindex="0">' +
             '<img class="cat-card__photo" src="'+c.photo+'" alt="" onerror="onImgErr(this)">' +
             '<div class="cat-card__body"><div class="cat-card__name">'+esc(catDisplayName(c))+'</div><div class="cat-card__meta">'+esc(c.areaLabel)+'</div></div>' +
             '<div class="cat-card__aside">' + freshnessBadge(c) + '<span class="cat-card__distance">'+formatDistance(r.distance)+'</span></div>' +
@@ -919,7 +919,7 @@ function renderNotif(){
     '<div class="screen-body no-pad-x">' +
       (items.length ?
         '<div style="padding:0 var(--space-5);">' + items.map(function(n){
-          return '<div class="notif-item'+(n.unread?' is-unread':'')+'" data-action="open-detail" data-cat="'+n.cat.id+'">' +
+          return '<div class="notif-item'+(n.unread?' is-unread':'')+'" data-action="open-detail" data-cat="'+n.cat.id+'" role="button" tabindex="0">' +
             '<img class="notif-item__photo" src="'+n.cat.photo+'" alt="" onerror="onImgErr(this)">' +
             '<div class="notif-item__body"><div class="notif-item__title">'+esc(n.title)+'</div>' +
               '<div class="notif-item__desc">'+ (n.help?'<span class="badge badge-help is-soft">'+icon('alertTriangle',{size:11})+' yardım</span> ':'') + esc(n.desc)+'</div></div>' +
@@ -1112,6 +1112,20 @@ document.addEventListener('click', function(e){
     case 'do-login': doLogin(); break;
     case 'cancel-login': cancelLogin(); break;
   }
+});
+
+// role="button" elements (map markers, the cluster marker, cat-card rows, notif rows) rely
+// on click for their actual behavior — unlike a native <button>, a div doesn't turn
+// Enter/Space into a click on its own, so that mapping is added here once for every such
+// element instead of per-element, keeping every custom "button" keyboard-operable without
+// duplicating logic. covers both the document click-delegation switch above (data-action)
+// and leaflet's own native click listeners on the map markers (no data-action needed there).
+document.addEventListener('keydown', function(e){
+  if(e.key !== 'Enter' && e.key !== ' ') return;
+  var t = e.target.closest('[role="button"]');
+  if(!t) return;
+  e.preventDefault();
+  t.click();
 });
 
 document.addEventListener('input', function(e){
