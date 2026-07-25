@@ -32,7 +32,7 @@ var STATUS_VOCAB = [
 /* ============================================================ seed data — cats around kadıköy / moda */
 var CATS = [
   {
-    id:'portakal', name:'Portakal', traits:['sarman','kısa tüylü','dost canlısı'],
+    id:'portakal', name:'Portakal',
     photo:PHOTOS.kabatas, photos:[PHOTOS.kabatas, PHOTOS.kabatas],
     mapPos:{lat:40.9797,lng:29.0256}, fallbackPos:{top:'40%',left:'26%'},
     areaLabel:'Moda Sahili, Kadıköy',
@@ -48,7 +48,7 @@ var CATS = [
     ]
   },
   {
-    id:'zeytin', name:'Zeytin', traits:['kızıl','kısa tüylü'],
+    id:'zeytin', name:'Zeytin',
     photo:PHOTOS.kadikoy, photos:[PHOTOS.kadikoy],
     mapPos:{lat:40.9889,lng:29.0331}, fallbackPos:{top:'22%',left:'62%'},
     areaLabel:'Yeldeğirmeni, Kadıköy',
@@ -63,7 +63,7 @@ var CATS = [
     ]
   },
   {
-    id:'sultan', name:'Sultan', traits:['tekir','kısa tüylü','sakin'],
+    id:'sultan', name:'Sultan',
     photo:PHOTOS.sultanahmet, photos:[PHOTOS.sultanahmet],
     mapPos:{lat:40.9793,lng:29.0287}, fallbackPos:{top:'56%',left:'70%'},
     areaLabel:'Moda, çay bahçesi çevresi',
@@ -78,7 +78,7 @@ var CATS = [
     ]
   },
   {
-    id:'balat-beyaz', name:null, traits:['beyaz-kızıl','uzun tüylü'],
+    id:'balat-beyaz', name:null,
     photo:PHOTOS.oldistanbul, photos:[PHOTOS.oldistanbul],
     mapPos:{lat:40.9857,lng:29.0276}, fallbackPos:{top:'30%',left:'46%'},
     areaLabel:'Caferağa, Kadıköy',
@@ -92,7 +92,7 @@ var CATS = [
     ]
   },
   {
-    id:'yavru', name:'Yavru', traits:['tekir','kısa tüylü','ürkek'],
+    id:'yavru', name:'Yavru',
     photo:PHOTOS.fatih, photos:[PHOTOS.fatih],
     mapPos:{lat:40.9838,lng:29.0305}, fallbackPos:{top:'68%',left:'38%'},
     areaLabel:'Osmanağa, Kadıköy',
@@ -106,7 +106,7 @@ var CATS = [
     ]
   },
   {
-    id:'kaplan', name:'Kaplan', traits:['tekir','kısa tüylü'],
+    id:'kaplan', name:'Kaplan',
     photo:PHOTOS.brickwall, photos:[PHOTOS.brickwall],
     mapPos:{lat:40.9812,lng:29.0344}, fallbackPos:{top:'78%',left:'60%'},
     areaLabel:'Kadıköy, Damga Sokak',
@@ -123,7 +123,7 @@ var CATS = [
   // they stay hidden behind the cluster until the map is zoomed past CLUSTER_ZOOM_THRESHOLD
   // (see renderLeafletMarkers()), so tapping the cluster and zooming in actually reveals them.
   {
-    id:'minnos', name:'Minnoş', traits:['tekir','kısa tüylü','sakin'], inCluster:true,
+    id:'minnos', name:'Minnoş', inCluster:true,
     photo:PHOTOS.sultanahmet, photos:[PHOTOS.sultanahmet],
     mapPos:{lat:40.9862,lng:29.0308}, fallbackPos:{top:'26%',left:'76%'},
     areaLabel:'Yeldeğirmeni, Kadıköy',
@@ -135,7 +135,7 @@ var CATS = [
     updates:[{ type:'sighting', comment:'Apartman girişinde uyuyordu.', photo:null, timeText:'bugün 13:10' }]
   },
   {
-    id:'boncuk', name:'Boncuk', traits:['beyaz-kızıl','uzun tüylü','dost canlısı'], inCluster:true,
+    id:'boncuk', name:'Boncuk', inCluster:true,
     photo:PHOTOS.oldistanbul, photos:[PHOTOS.oldistanbul],
     mapPos:{lat:40.9868,lng:29.0309}, fallbackPos:{top:'22%',left:'84%'},
     areaLabel:'Yeldeğirmeni, Kadıköy',
@@ -147,7 +147,7 @@ var CATS = [
     updates:[{ type:'food', comment:'', photo:null, timeText:'dün 20:15' }]
   },
   {
-    id:'duman', name:'Duman', traits:['gri','kısa tüylü','çekingen'], inCluster:true,
+    id:'duman', name:'Duman', inCluster:true,
     photo:PHOTOS.fatih, photos:[PHOTOS.fatih],
     mapPos:{lat:40.9863,lng:29.0316}, fallbackPos:{top:'30%',left:'80%'},
     areaLabel:'Yeldeğirmeni, Kadıköy',
@@ -159,7 +159,7 @@ var CATS = [
     updates:[{ type:'sighting', comment:'Bodrum kat penceresinden izliyordu.', photo:null, timeText:'5 gün önce' }]
   },
   {
-    id:'pamuk', name:'Pamuk', traits:['beyaz','uzun tüylü','dost canlısı'], inCluster:true,
+    id:'pamuk', name:'Pamuk', inCluster:true,
     photo:PHOTOS.brickwall, photos:[PHOTOS.brickwall],
     mapPos:{lat:40.9868,lng:29.0315}, fallbackPos:{top:'20%',left:'88%'},
     areaLabel:'Yeldeğirmeni, Kadıköy',
@@ -186,7 +186,7 @@ var MAP_MIN_ZOOM = 11;
 var DUPLICATE_DEMO_CAT_ID = 'portakal'; // add-cat location picker starts near this cat, to demo the duplicate check
 
 function findCat(id){ for(var i=0;i<CATS.length;i++) if(CATS[i].id===id) return CATS[i]; return null; }
-function catDisplayName(cat){ return cat.name || (cat.traits[0].charAt(0).toUpperCase()+cat.traits[0].slice(1)+' kedi'); }
+function catDisplayName(cat){ return cat.name || 'İsimsiz kedi'; }
 function statusVocabOf(id){ for(var i=0;i<STATUS_VOCAB.length;i++) if(STATUS_VOCAB[i].id===id) return STATUS_VOCAB[i]; return null; }
 
 /* ============================================================ app state */
@@ -540,8 +540,6 @@ function renderDetail(){
         '<div class="hero-dots">'+cat.photos.map(function(_,i){ return '<span class="'+(i===idx?'is-on':'')+'"></span>'; }).join('')+'</div>' +
       '</div>' +
       '<div class="screen-body mt-4">' +
-        '<div class="chip-row mb-4">'+cat.traits.map(function(t){ return '<span class="chip">'+esc(t)+'</span>'; }).join('')+'</div>' +
-
         '<div class="info-row">' +
           '<div class="info-row__icon">'+icon('clock',{size:18})+'</div>' +
           '<div><div class="info-row__label">Son görülme</div><div class="info-row__value">'+esc(cat.lastSeenFull)+'</div></div>' +
@@ -694,7 +692,7 @@ function renderAddLoc(){
   var el = screenEl('add-loc');
   if(!state.draftCat){
     var seed = findCat(DUPLICATE_DEMO_CAT_ID);
-    state.draftCat = { lat:seed.mapPos.lat, lng:seed.mapPos.lng, geoError:'', photo:null, traits:[], name:'', saving:false };
+    state.draftCat = { lat:seed.mapPos.lat, lng:seed.mapPos.lng, geoError:'', photo:null, name:'', saving:false };
   }
   var d = state.draftCat;
   // this screen has no dataset.built cache (unlike the map screen) — it's rebuilt every time
@@ -793,7 +791,7 @@ function openDuplicateModal(cats){
         return '<button class="dup-candidate" data-action="dup-yes" data-cat="'+cat.id+'">' +
           '<img class="dup-candidate__photo" src="'+cat.photo+'" alt="" onerror="onImgErr(this)">' +
           '<div class="dup-candidate__body"><div class="dup-candidate__name">'+esc(catDisplayName(cat))+'</div>' +
-          '<div class="dup-candidate__meta">'+esc(cat.traits.join(', '))+' · '+dist+'</div></div>' +
+          '<div class="dup-candidate__meta">'+esc(cat.areaLabel)+' · '+dist+'</div></div>' +
           icon('chevronRight',{size:16}) +
         '</button>';
       }).join('') +
@@ -807,8 +805,7 @@ function closeDuplicateModal(){ var m=$('#dupModal'); if(m) m.classList.remove('
 /* ============================================================ SCREEN: add cat — details */
 function renderAddDetail(){
   var el = screenEl('add-detail');
-  var d = state.draftCat || { photo:null, traits:[], name:'', saving:false };
-  var TRAIT_OPTIONS = ['sarman','tekir','siyah-beyaz','kızıl','uzun tüylü','kısa tüylü','dost canlısı','çekingen'];
+  var d = state.draftCat || { photo:null, name:'', saving:false };
   el.innerHTML =
     topbar('Kedi ekle', { back:true }) +
     '<div class="screen-body">' +
@@ -820,12 +817,8 @@ function renderAddDetail(){
           '<input type="file" accept="image/*" data-action="cat-photo" aria-label="kedi fotoğrafı ekle">' +
         '</label>' +
       '</div>' +
-      '<div class="field-label mb-2">Fiziksel özellikler</div>' +
-      '<div class="chip-row mb-4">' +
-        TRAIT_OPTIONS.map(function(t){ return '<button class="chip'+(d.traits.indexOf(t)>-1?' is-on':'')+'" data-action="toggle-trait" data-trait="'+t+'">'+esc(t)+'</button>'; }).join('') +
-      '</div>' +
       '<div class="field mb-6">' +
-        '<span class="field-label">İsim</span>' +
+        '<span class="field-label">İsim (opsiyonel)</span>' +
         '<input class="input" type="text" placeholder="Örn. Boncuk, Minnoş…" value="'+esc(d.name)+'" data-action="cat-name">' +
       '</div>' +
       '<button class="btn btn-primary btn-block" data-action="save-cat"'+(d.saving?' aria-disabled="true"':'')+'>' +
@@ -836,7 +829,6 @@ function renderAddDetail(){
 function saveCat(){
   var d = state.draftCat; if(!d || d.saving) return;
   if(!d.photo){ toast('Kaydetmeden önce bir fotoğraf ekle', {icon:'alertTriangle'}); return; }
-  if(!d.name.trim()){ toast('Kaydetmeden önce bir isim yaz', {icon:'alertTriangle'}); return; }
   if(!state.session.loggedIn){
     requireLogin('Yeni kedi eklemek için giriş yap', { type:'save-cat' });
     return;
@@ -845,7 +837,7 @@ function saveCat(){
   setTimeout(function(){
     var id = 'yeni-kedi-'+(state.newCatSeq++);
     var newCat = {
-      id:id, name: d.name.trim(), traits: d.traits.length ? d.traits : ['sokak kedisi'],
+      id:id, name: d.name.trim() || null,
       photo:d.photo, photos:[d.photo],
       mapPos:{lat:d.lat, lng:d.lng}, fallbackPos:{top:'50%',left:'50%'},
       areaLabel:'Kadıköy çevresi',
@@ -893,7 +885,7 @@ function renderDiscover(){
           return (i>0?'<div class="list-divider"></div>':'') +
           '<div class="cat-card" data-action="open-detail" data-cat="'+c.id+'">' +
             '<img class="cat-card__photo" src="'+c.photo+'" alt="" onerror="onImgErr(this)">' +
-            '<div class="cat-card__body"><div class="cat-card__name">'+esc(catDisplayName(c))+'</div><div class="cat-card__meta">'+esc(c.traits.join(', '))+'</div></div>' +
+            '<div class="cat-card__body"><div class="cat-card__name">'+esc(catDisplayName(c))+'</div><div class="cat-card__meta">'+esc(c.areaLabel)+'</div></div>' +
             '<div class="cat-card__aside">' + freshnessBadge(c) + '<span class="cat-card__distance">'+formatDistance(r.distance)+'</span></div>' +
           '</div>';
         }).join('') + '</div>'
@@ -1105,12 +1097,6 @@ document.addEventListener('click', function(e){
     case 'confirm-location': confirmLocation(); break;
     case 'dup-yes': closeDuplicateModal(); state.selectedCatId = t.getAttribute('data-cat'); navigate('detail', {root:true}); break;
     case 'dup-no': closeDuplicateModal(); navigate('add-detail'); break;
-    case 'toggle-trait': {
-      var trait = t.getAttribute('data-trait'); var d = state.draftCat;
-      var idx = d.traits.indexOf(trait);
-      if(idx>-1) d.traits.splice(idx,1); else d.traits.push(trait);
-      renderAddDetail(); break;
-    }
     case 'save-cat': saveCat(); break;
     case 'discover-tab': state.discoverTab = t.getAttribute('data-tab'); renderDiscover(); break;
     case 'toggle-discover-help-filter': state.discoverHelpFilter = !state.discoverHelpFilter; renderDiscover(); break;
