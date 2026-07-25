@@ -6,14 +6,18 @@ define who uses the product and why.
 
 ## decisions
 
-- the workshop did not treat user types as a separate topic. what a user can do based on login status is decided in [[trust]].
-- why users open and return to the app is decided in [[vision]].
+- tekir has one mvp product experience rather than separate tourist, resident, feeder, or volunteer modes.
+- tourists, residents, and people who regularly help cats use the same map, cat detail, contribution, and following flows.
+- language, current map position, and the user's own followed cats may change what is shown, but they do not create separate product roles.
+- guests may browse public information. authenticated users may follow cats and contribute, as defined in [[trust]].
+- authenticated users have the minimal public profile defined in [[community]] and [[badges]].
 
 ## open questions
 
-- no clear user types were defined. tourists and people who want to help cats are both mentioned, but it's not clear if they need different experiences.
-- are user profiles needed? unresolved — see [[community]].
+- none for mvp.
 
 ## out of scope
 
-- not covered as its own topic in the workshop.
+- persona-specific onboarding or navigation.
+- organization, shelter, veterinarian, or rescue-team account types.
+- separate tourist and resident applications.

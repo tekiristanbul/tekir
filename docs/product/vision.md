@@ -10,11 +10,18 @@ define what tekir is, in one sentence, and why it exists.
 - problem it solves: it makes the city more interesting for tourists, who can share photos of cats they meet. it also makes a cat that needs help visible on the map, so people who want to help can find it.
 - why a user opens the app for the first time: curiosity about which cats are nearby. out of curiosity, a user can go find a cat, take its photo, and upload it. this is fun and engaging.
 - why a user opens the app again the next day: to check on nearby cats. did they get fed or given water? was a new cat added or named?
+- mvp success is measured by useful, recurring care information rather than cat-count growth alone. the primary signals are:
+  - the percentage of visible cats that receive at least one update.
+  - the percentage of cats that receive another update within 30 days.
+  - weekly active authenticated contributors.
+  - the percentage of active needs-help updates viewed by at least one follower.
+  - the duplicate-cat rate, used as a quality signal rather than a growth goal.
+- reaching approximately 1,000 cat records is a scale milestone, not a sufficient success definition by itself.
 
 ## open questions
 
-- how do we know the product is successful? not decided. one idea: something like 1,000 cats added, with updates being entered properly.
+- none for mvp.
 
 ## out of scope
 
-- not discussed in this part of the workshop.
+- revenue, advertising, or growth-loop targets as mvp success criteria.

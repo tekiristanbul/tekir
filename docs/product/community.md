@@ -2,19 +2,25 @@
 
 ## goal
 
-define how the community contributes and interacts.
+define how the community contributes and interacts without turning tekir into a people-centric social network.
 
 ## decisions
 
-- following a cat is needed, for users who want updates or alerts about that cat.
+- following a cat is needed for users who want to save it, see recent activity, or receive eligible alerts.
+- authenticated users have a minimal public profile with a display name, one of the curated profile avatars, earned badges, contribution totals, and recent public contributions.
+- badges celebrate real contributions as defined in [[badges]].
+- there is no point system.
+- there are no public rankings or leaderboards.
+- users follow cats, not people.
+- profiles do not include follower counts, direct messages, social feeds, or popularity metrics.
 
 ## open questions
 
-- what motivates people to contribute is not decided. ideas raised: a badge system, or a leaderboard of top contributors.
-- are user profiles needed? unresolved — leaning toward "yes, if we build community features," but explicitly not a first priority.
-- is a point system needed? unresolved, and depends on what the points would mean.
-- is a badge system needed? unresolved.
+- none for mvp.
 
 ## out of scope
 
-- not discussed further in this part of the workshop.
+- people-following.
+- competitive contribution systems.
+- private messaging.
+- general-purpose community discussion unrelated to a cat.

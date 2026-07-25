@@ -8,17 +8,17 @@ define the mobile app architecture consuming [[api]], scoped to mvp — no more 
 
 ### stack
 
-- **state/di**: `flutter_riverpod`, plain `Notifier`/`AsyncNotifier` without codegen.
-- **routing**: `go_router` — tabs plus modal routes for add update, add cat, and login.
-- **network**: `dio` behind one `ApiClient`. `DeviceInterceptor` attaches `X-Device-Token` when available. a separate auth interceptor attaches `Authorization: Bearer` for authenticated contribution routes.
-- **map**: `google_maps_flutter` with native clustering and a local quiet map style.
+- **state/di**: `flutter_riverpod`, plain `Notifier`/`AsyncNotifier` without code generation.
+- **routing**: `go_router` for tabs and modal contribution/auth flows.
+- **network**: `dio` behind one `ApiClient`; device and bearer credentials use separate interceptors and headers.
+- **map**: `google_maps_flutter` with native clustering. clusters separate into individual cat markers as users zoom in; colonies are not a separate mvp entity.
 - **push**: `firebase_messaging`.
 - **secure storage**: `flutter_secure_storage` for device, access, and refresh tokens.
-- **media**: `image_picker` and `cached_network_image`.
+- **media**: `image_picker` for capture/selection and `cached_network_image` for display.
 
-### structure (feature-first, two layers)
+### structure
 
-```
+```text
 lib/
   core/
     network/
@@ -34,27 +34,26 @@ lib/
     notifications/
     account/
     auth/
-  main.dart
 ```
 
-feature `data/` directories own api/model mapping; `ui/` owns widgets and riverpod state. no separate domain layer for mvp.
+- each feature has a small `data/` and `ui/` boundary; no separate domain layer is required for mvp.
+- the approved interactive mvp prototype and `docs/design/implementation-contract.md` are the source of truth for final visual tokens and component behavior.
+- `app_theme.dart` implements those approved tokens; visual choices are not left as an architecture open question.
+- production maps api keys are injected by the github actions → digitalocean app platform deployment pipeline and restricted separately from development keys.
 
 ### identity / auth flow
 
-- startup initializes a server-issued device identity without blocking public browsing.
-- every request may carry `X-Device-Token` for device association; the token is sent only to the tekir api origin.
-- successful otp verification stores access and refresh tokens. a 401 attempts one silent refresh before routing to login.
-- every contribution action checks for a valid access token before submission. this includes ordinary updates, needs-help updates, media uploads, and new-cat creation.
-- when a logged-out user starts a contribution, `go_router` opens login and returns them to the original flow after successful verification.
-- follow/favorite remains device-owned for mvp and does not require account login.
+- device registration remains non-blocking so public browsing works from first launch.
+- authenticated actions redirect to phone otp login and return the user to the interrupted flow after success.
+- following, ordinary updates, needs-help, media uploads, and new-cat creation require an authenticated account.
+- notification permission is requested after following or an explicit notification opt-in, not on first launch.
 
 ## open questions
 
-- final visual design / `app_theme.dart` contents.
-- pin-clustering behavior once colony vs. individual cat is resolved.
-- production maps api key injection through ci/deployment.
+- none for mvp. exact visual values come from the approved prototype and implementation contract.
 
 ## out of scope
 
-- offline-first sync.
-- automated widget/golden testing setup until the ui stabilizes.
+- offline-first synchronization.
+- colony modeling.
+- automated golden-test infrastructure before the mvp ui stabilizes.
