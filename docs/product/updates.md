@@ -7,6 +7,7 @@ define how information about a cat stays current and leads to practical help.
 ## decisions
 
 - an update records a contribution or observation about a cat.
+- posting any update requires a phone-verified authenticated account, as defined in [[trust]].
 - the initial structured-status vocabulary is `seen`, `fed`, and `water_provided` (approved for mvp).
 - `seen` should be available as a one-tap action. a note or photo is not required.
 - an update may contain one or more structured statuses plus an optional free-text comment.
