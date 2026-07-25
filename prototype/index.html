@@ -16,22 +16,34 @@
 <div class="viewport-wrap">
   <div class="device" id="device">
 
+    <div class="screen" id="screen-splash"></div>
+    <div class="screen" id="screen-perm"></div>
     <div class="screen" id="screen-map"></div>
     <div class="screen" id="screen-detail"></div>
+    <div class="screen" id="screen-history"></div>
     <div class="screen" id="screen-add-update"></div>
+    <div class="screen" id="screen-help"></div>
     <div class="screen" id="screen-add-loc"></div>
     <div class="screen" id="screen-add-detail"></div>
     <div class="screen" id="screen-discover"></div>
-    <div class="screen" id="screen-notif"></div>
-    <div class="screen" id="screen-account"></div>
+    <div class="screen" id="screen-profile"></div>
+    <div class="screen" id="screen-badges"></div>
+    <div class="screen" id="screen-badge-detail"></div>
+    <div class="screen" id="screen-settings"></div>
     <div class="screen" id="screen-login"></div>
 
+    <!-- device-level overlays: usable from any screen -->
+    <div class="modal-scrim" id="authSheet"></div>
+    <div class="modal-scrim" id="notifPermModal"></div>
+    <div class="offline-banner" id="offlineBanner" hidden></div>
     <div class="toast" id="toast"></div>
   </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="icons.js"></script>
+<script src="data.js"></script>
+<script src="map.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

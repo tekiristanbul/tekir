@@ -23,7 +23,13 @@ var ICONS = {
   edit: '<path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.8-2.8L5 17.4Z"/><path d="m14 7 3 3"/>',
   logout: '<path d="M9 5H5.5A1.5 1.5 0 0 0 4 6.5v11A1.5 1.5 0 0 0 5.5 19H9"/><path d="M14 15.5 18.5 11 14 6.5"/><path d="M18 11H9"/>',
   phone: '<path d="M6 4.5c0-.6.5-1 1-1h2.2c.4 0 .8.3.9.7l1 3a1 1 0 0 1-.3 1L9 9.5c.9 2 2.5 3.6 4.5 4.5l1.3-1.8a1 1 0 0 1 1-.3l3 1c.4.1.7.5.7.9V16c0 .6-.4 1-1 1h-.5C11.6 17 6 11.4 6 5.5Z"/>',
-  location: '<path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><circle cx="12" cy="12" r="4.5"/>'
+  location: '<path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><circle cx="12" cy="12" r="4.5"/>',
+  eye: '<path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/>',
+  paw: '<path d="M12 12.5c-3.3 0-5.5 2.2-5.5 4.4 0 1.1.8 1.9 1.9 1.9 1.4 0 2-.8 3.6-.8s2.2.8 3.6.8c1.1 0 1.9-.8 1.9-1.9 0-2.2-2.2-4.4-5.5-4.4Z"/><circle cx="7.6" cy="10.2" r="1.7"/><circle cx="12" cy="8.2" r="1.8"/><circle cx="16.4" cy="10.2" r="1.7"/><circle cx="4.6" cy="14" r="1.5"/><circle cx="19.4" cy="14" r="1.5"/>',
+  award: '<circle cx="12" cy="9.5" r="5.5"/><path d="m8.8 14 -1.6 6 4.8-2.6L16.8 20l-1.6-6"/>',
+  sliders: '<path d="M4 7h9"/><circle cx="16.5" cy="7" r="2.2"/><path d="M20 7h.5"/><path d="M4 16.5h3"/><circle cx="10.5" cy="16.5" r="2.2"/><path d="M14 16.5h6.5"/>',
+  trash: '<path d="M5 7h14"/><path d="M9.5 7V5.2c0-.6.5-1.2 1.2-1.2h2.6c.7 0 1.2.6 1.2 1.2V7"/><path d="M6.5 7 7.3 19a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4L17.5 7"/>',
+  info: '<circle cx="12" cy="12" r="8.2"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".4" fill="currentColor" stroke="none"/>'
 };
 
 function icon(name, opts){
