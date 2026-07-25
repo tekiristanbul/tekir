@@ -495,14 +495,6 @@ button, input, textarea{ color:inherit; }
 .map-topbar .chip-row .chip:not(.is-on){ background:rgba(255,255,255,.94); }
 #mapMarkers .marker, #mapMarkers .marker-cluster{ position:absolute; transform:translate(-50%,-50%); }
 
-.fab{
-  width:56px; height:56px; border-radius:50%; background:var(--color-primary); color:#fff; border:none;
-  display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-md); cursor:pointer;
-  -webkit-tap-highlight-color:transparent; transition:transform .12s var(--ease);
-  z-index:5; /* same reasoning as .bottom-nav — sits over #leafletMap's z-index:1, its inline position:absolute alone isn't enough */
-}
-.fab:active{ transform:scale(.93); }
-
 /* required osm credit, rendered outside #leafletMap. the bottom sheet can cover up to
    78% of the screen height, so any bottom-anchored attribution would sit underneath it
    whenever a cat is selected — placed in the top band instead, which the sheet never

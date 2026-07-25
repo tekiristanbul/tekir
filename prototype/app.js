@@ -304,7 +304,6 @@ function renderMap(){
         '<div class="search-field">'+icon('search',{size:17})+'<input type="text" placeholder="Mahalle veya sokak ara" aria-label="konum ara"></div>' +
         '<div class="chip-row" id="mapChipRow"></div>' +
       '</div>' +
-      '<button class="fab" data-action="go-add-cat" aria-label="yeni kedi ekle" style="position:absolute;right:20px;bottom:104px;">'+icon('plus',{size:24})+'</button>' +
       '<a class="map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>' +
     '</div>' +
     '<div class="sheet-scrim" id="sheetScrim" data-action="close-sheet"></div>' +
