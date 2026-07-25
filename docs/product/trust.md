@@ -8,7 +8,7 @@ define what makes the product's information reliable without making contribution
 
 - the guiding principle is: contribution should be easy, but every contribution must remain attributable to an authenticated account.
 - guests (not logged in) can view cats on the map, read updates and comments, and see labels.
-- guests can follow/favorite a cat without logging in; follows remain device-owned for mvp.
+- following/favoriting a cat requires an authenticated account ([[notifications]]).
 - posting any update requires a phone-verified authenticated account. this includes ordinary structured-status updates and needs-help updates.
 - adding photos or videos and adding a new cat also require a phone-verified authenticated account.
 - ordinary users cannot delete cats; cat deletion is an admin action.

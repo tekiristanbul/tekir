@@ -208,10 +208,12 @@ button, input, textarea{ color:inherit; }
 .badge svg{ width:13px; height:13px; }
 .badge-help{ background:var(--color-help); color:var(--color-help-ink); }
 .badge-help.is-soft{ background:var(--color-help-soft); color:var(--color-help-strong); }
-.badge-fresh{ background:var(--color-accent-soft); color:var(--color-accent-strong); font-weight:800; }
-.badge-neutral{ background:var(--color-surface-alt); color:var(--color-muted); }
-.badge-stale{ background:var(--color-surface-alt); color:var(--color-faint); }
+.badge-today{ background:var(--color-accent-soft); color:var(--color-accent-strong); font-weight:800; }
+.badge-week{ background:var(--color-surface-alt); color:var(--color-ink); }
+.badge-month{ background:var(--color-surface-alt); color:var(--color-muted); }
+.badge-long{ background:var(--color-surface-alt); color:var(--color-faint); }
 .badge-dot{ width:7px; height:7px; border-radius:50%; background:currentColor; flex:none; }
+.badge-help.is-expired{ background:var(--color-surface-alt); color:var(--color-faint); }
 
 /* ============================================================ map markers */
 .marker{
@@ -234,14 +236,15 @@ button, input, textarea{ color:inherit; }
   width:max(var(--tap-min), 100%); height:max(var(--tap-min), 100%);
   transform:translate(-50%,-50%);
 }
-/* freshness — provisional per issue #9 (thresholds await product-owner validation, not a
-   locked decision). each state is carried by more than hue alone: ring weight and opacity
-   move together with color, so the three stay distinguishable without relying on color
-   perception. mixed freshness within the "+4" cluster is intentionally left unstyled — also
-   an open question in #9. */
-.marker.freshness-new{ border-width:4px; border-color:var(--color-accent-strong); }
-.marker.freshness-normal{ border-color:#fff; }
-.marker.freshness-stale{ opacity:.6; border-color:#fff; }
+/* freshness — final mvp thresholds, docs/product/map.md: today / this_week / this_month /
+   long_not_seen. each state is carried by more than hue alone: ring weight and opacity move
+   together with color, so the four stay distinguishable without relying on color perception
+   alone. mixed freshness within the "+n" cluster is intentionally left unstyled — the cluster
+   only ever shows a count, never a blended freshness state. */
+.marker.freshness-today{ border-width:4px; border-color:var(--color-accent-strong); }
+.marker.freshness-week{ border-color:#fff; }
+.marker.freshness-month{ opacity:.8; border-color:#fff; }
+.marker.freshness-long{ opacity:.6; border-color:#fff; }
 
 .marker.is-selected{
   width:56px; height:56px; border-color:var(--color-primary); box-shadow:0 0 0 4px var(--color-primary-soft), var(--shadow-md);
@@ -361,6 +364,14 @@ button, input, textarea{ color:inherit; }
 .status-option.is-on .status-option__radio{ border-color:var(--color-primary); }
 .status-option.is-on .status-option__radio::after{ content:''; position:absolute; inset:3px; border-radius:50%; background:var(--color-primary); }
 .status-option__label{ font-size:var(--text-base); font-weight:600; color:var(--color-ink); }
+/* multi-select variant (structured update statuses: seen/fed/water_provided — more than one
+   may apply at once) reuses .status-option but swaps the radio dot for a checkmark square */
+.status-option__radio.is-check{ border-radius:6px; }
+.status-option__radio.is-check::after{ border-radius:2px; inset:4px; }
+.status-option.is-warm.is-on{ border-color:var(--color-help); background:var(--color-help-soft); }
+.status-option.is-warm.is-on .status-option__radio{ border-color:var(--color-help); }
+.status-option.is-warm.is-on .status-option__radio::after{ background:var(--color-help); }
+.status-option .status-option__meta{ font-size:var(--text-xs); color:var(--color-muted); margin-top:2px; }
 
 /* photo picker */
 .photo-well{
@@ -477,13 +488,18 @@ button, input, textarea{ color:inherit; }
 .map-fallback .marker, .map-fallback .marker-cluster{ position:absolute; transform:translate(-50%,-100%); }
 .map-topbar{ position:absolute; top:var(--space-4); left:var(--space-4); right:var(--space-4); z-index:10; display:flex; flex-direction:column; gap:var(--space-2); }
 .map-topbar .search-field{ background:rgba(255,255,255,.94); backdrop-filter:blur(6px); }
-.map-topbar .chip-row .chip{ background:rgba(255,255,255,.94); }
+/* :not(.is-on) matters here — .chip.is-warm.is-on already sets its own red background +
+   white text (same specificity, 3 classes each); without the guard this rule wins on source
+   order alone and forces the near-white background back on while the text stays white,
+   making the active "yardım gerekiyor" filter unreadable. */
+.map-topbar .chip-row .chip:not(.is-on){ background:rgba(255,255,255,.94); }
 #mapMarkers .marker, #mapMarkers .marker-cluster{ position:absolute; transform:translate(-50%,-50%); }
 
 .fab{
   width:56px; height:56px; border-radius:50%; background:var(--color-primary); color:#fff; border:none;
   display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-md); cursor:pointer;
   -webkit-tap-highlight-color:transparent; transition:transform .12s var(--ease);
+  z-index:5; /* same reasoning as .bottom-nav — sits over #leafletMap's z-index:1, its inline position:absolute alone isn't enough */
 }
 .fab:active{ transform:scale(.93); }
 
@@ -501,7 +517,13 @@ button, input, textarea{ color:inherit; }
 
 /* bottom nav */
 .bottom-nav{
-  flex:none; display:flex; align-items:center; background:var(--color-bg-elevated); border-top:1px solid var(--color-line);
+  /* z-index:5 matters here, not just position: the floating fab's box now pokes up into the same
+     area #leafletMap covers, and .screen.is-active's transform puts both in one shared stacking
+     context — #leafletMap declares its own z-index:1, which (being a positive value) beats a
+     plain z-index:auto sibling regardless of dom order, so without this the map painted over the
+     fab. kept low (above the map's z-index:1, below the sheet/modal overlays at 20+) so an open
+     cat-preview sheet still correctly covers the nav bar instead of hiding behind it. */
+  flex:none; position:relative; z-index:5; display:flex; align-items:center; background:var(--color-bg-elevated); border-top:1px solid var(--color-line);
   padding:6px var(--space-2) calc(env(safe-area-inset-bottom, 0px) + 4px);
 }
 .nav-item{
@@ -511,7 +533,16 @@ button, input, textarea{ color:inherit; }
 .nav-item svg{ width:22px; height:22px; }
 .nav-item span{ font-size:var(--text-2xs); font-weight:600; }
 .nav-item.is-active{ color:var(--color-primary-strong); }
-.nav-item.nav-fab{ margin-top:-22px; }
+/* the add-cat fab is pulled out of the flex flow and centered by position, not by flex order —
+   with an even number of tabs (map / discover / profile = 3, odd, but the fab makes 4) there is no
+   flex slot that lands on the true midpoint. taking it out of flow also lets the 3 real tabs
+   redistribute evenly across the full width on their own. */
+/* floats fully above the bar (not dipping into it) — Keşfet is now the true horizontal
+   center of the 3 real tabs, same x position as the fab, so any vertical overlap here would
+   visually bury its icon under the fab circle instead of just "docking" harmlessly. */
+.nav-item.nav-fab{
+  position:absolute; left:50%; bottom:100%; margin-bottom:10px; transform:translateX(-50%);
+}
 .nav-item.nav-fab .nav-fab__circle{
   width:46px; height:46px; border-radius:50%; background:var(--color-primary); color:#fff;
   display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-md);
@@ -603,8 +634,115 @@ button, input, textarea{ color:inherit; }
 .spread{ display:flex; align-items:center; justify-content:space-between; }
 .mt-1{ margin-top:var(--space-1); } .mt-2{ margin-top:var(--space-2); } .mt-3{ margin-top:var(--space-3); }
 .mt-4{ margin-top:var(--space-4); } .mt-6{ margin-top:var(--space-6); }
-.mb-2{ margin-bottom:var(--space-2); } .mb-3{ margin-bottom:var(--space-3); } .mb-4{ margin-bottom:var(--space-4); }
+.mb-2{ margin-bottom:var(--space-2); } .mb-3{ margin-bottom:var(--space-3); } .mb-4{ margin-bottom:var(--space-4); } .mb-6{ margin-bottom:var(--space-6); }
 .sr-only{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+
+/* ============================================================ splash */
+.splash-screen{
+  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:var(--space-4); background:var(--color-primary);
+}
+.splash-screen__mark{
+  width:84px; height:84px; border-radius:var(--radius-xl); background:rgba(255,255,255,.14);
+  color:#fff; display:flex; align-items:center; justify-content:center;
+}
+.splash-screen__mark svg{ width:44px; height:44px; }
+.splash-screen__word{ font-family:var(--font-display); font-weight:600; font-size:var(--text-2xl); color:#fff; }
+.splash-screen__tag{ font-size:var(--text-sm); color:rgba(255,255,255,.82); text-align:center; max-width:22em; line-height:1.5; }
+
+/* ============================================================ permission screens */
+.perm-screen{ flex:1; display:flex; flex-direction:column; }
+.perm-screen__body{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:var(--space-4); padding:0 var(--space-6); }
+.perm-screen__icon{
+  width:72px; height:72px; border-radius:50%; background:var(--color-primary-soft); color:var(--color-primary-strong);
+  display:flex; align-items:center; justify-content:center; flex:none;
+}
+.perm-screen__icon svg{ width:32px; height:32px; }
+.perm-screen__title{ font-family:var(--font-display); font-weight:600; font-size:var(--text-lg); }
+.perm-screen__body p{ font-size:var(--text-sm); color:var(--color-muted); line-height:1.55; max-width:26em; }
+.perm-screen__actions{ flex:none; display:flex; flex-direction:column; gap:var(--space-2); padding:0 var(--space-6) var(--space-8); }
+
+/* ============================================================ offline banner */
+.offline-banner{
+  position:absolute; left:0; right:0; top:0; z-index:50;
+  background:var(--color-ink); color:#fff; text-align:center;
+  font-size:var(--text-xs); font-weight:600; padding:7px var(--space-4);
+  padding-top:calc(env(safe-area-inset-top, 0px) + 7px);
+  display:flex; align-items:center; justify-content:center; gap:6px;
+}
+.offline-banner[hidden]{ display:none; }
+.offline-banner svg{ width:14px; height:14px; flex:none; }
+
+/* ============================================================ badges */
+.badge-strip{ display:flex; gap:var(--space-2); overflow-x:auto; padding-bottom:2px; }
+.badge-tile{
+  flex:none; width:76px; display:flex; flex-direction:column; align-items:center; gap:6px;
+  text-align:center; cursor:pointer; -webkit-tap-highlight-color:transparent; background:none; border:none; font-family:inherit;
+}
+.badge-tile__icon{
+  width:56px; height:56px; border-radius:50%; background:var(--color-primary-soft); color:var(--color-primary-strong);
+  display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-sm);
+}
+.badge-tile__icon svg{ width:26px; height:26px; }
+.badge-tile.is-locked .badge-tile__icon{ background:var(--color-surface-alt); color:var(--color-faint); box-shadow:none; }
+.badge-tile__label{ font-size:var(--text-2xs); font-weight:700; color:var(--color-ink); line-height:1.25; }
+.badge-tile.is-locked .badge-tile__label{ color:var(--color-faint); }
+
+.badge-row{
+  display:flex; align-items:center; gap:var(--space-3); padding:var(--space-3) 0; border-bottom:1px solid var(--color-line);
+  cursor:pointer; -webkit-tap-highlight-color:transparent; text-align:left; background:none; border-left:none; border-right:none; border-top:none;
+  width:100%; font-family:inherit; color:inherit;
+}
+.badge-row:last-child{ border-bottom:none; }
+.badge-row__icon{
+  width:44px; height:44px; border-radius:50%; background:var(--color-primary-soft); color:var(--color-primary-strong);
+  display:flex; align-items:center; justify-content:center; flex:none;
+}
+.badge-row__icon svg{ width:20px; height:20px; }
+.badge-row.is-locked .badge-row__icon{ background:var(--color-surface-alt); color:var(--color-faint); }
+.badge-row__body{ flex:1; min-width:0; }
+.badge-row__name{ font-family:var(--font-display); font-weight:600; font-size:var(--text-base); }
+.badge-row.is-locked .badge-row__name{ color:var(--color-muted); }
+.badge-row__progress{ font-size:var(--text-xs); color:var(--color-muted); margin-top:2px; }
+.progress-bar{ height:5px; border-radius:var(--radius-full); background:var(--color-surface-alt); margin-top:6px; overflow:hidden; }
+.progress-bar__fill{ height:100%; background:var(--color-primary); border-radius:var(--radius-full); }
+
+.badge-detail-hero{ display:flex; flex-direction:column; align-items:center; text-align:center; gap:var(--space-3); padding:var(--space-6) 0 var(--space-4); }
+.badge-detail-hero__icon{
+  width:96px; height:96px; border-radius:50%; background:var(--color-primary-soft); color:var(--color-primary-strong);
+  display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-sm);
+}
+.badge-detail-hero__icon svg{ width:44px; height:44px; }
+.badge-detail-hero.is-locked .badge-detail-hero__icon{ background:var(--color-surface-alt); color:var(--color-faint); box-shadow:none; }
+.badge-detail-hero h2{ font-family:var(--font-display); font-weight:600; font-size:var(--text-xl); }
+.badge-detail-hero__earned{ font-size:var(--text-xs); font-weight:700; color:var(--color-primary-strong); }
+
+/* ============================================================ profile */
+.profile-hero{ display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) 0 var(--space-5); }
+.profile-hero__avatar{ width:64px; height:64px; border-radius:50%; object-fit:cover; flex:none; background:var(--color-surface-alt); box-shadow:var(--shadow-sm); }
+.profile-hero__name{ font-family:var(--font-display); font-weight:600; font-size:var(--text-lg); }
+.profile-hero__phone{ font-size:var(--text-xs); color:var(--color-muted); margin-top:2px; }
+.stat-row{ display:flex; gap:var(--space-2); }
+.stat-tile{ flex:1; background:var(--color-surface-alt); border-radius:var(--radius-md); padding:var(--space-3); text-align:center; }
+.stat-tile__num{ font-family:var(--font-display); font-weight:600; font-size:var(--text-lg); color:var(--color-ink); }
+.stat-tile__label{ font-size:var(--text-2xs); color:var(--color-muted); margin-top:2px; }
+.contrib-row{ display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) 0; }
+.contrib-row__icon{ width:32px; height:32px; border-radius:50%; background:var(--color-primary-soft); color:var(--color-primary-strong); display:flex; align-items:center; justify-content:center; flex:none; }
+.contrib-row__icon svg{ width:15px; height:15px; }
+.contrib-row__body{ flex:1; min-width:0; font-size:var(--text-sm); }
+.contrib-row__cat{ font-weight:700; }
+.contrib-row__time{ font-size:var(--text-2xs); color:var(--color-faint); flex:none; }
+
+/* ============================================================ settings */
+.toggle-pill{
+  display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 var(--space-3);
+  border-radius:var(--radius-full); border:1.5px solid var(--color-line-strong); background:var(--color-surface);
+  font-size:var(--text-xs); font-weight:700; color:var(--color-muted); cursor:pointer; flex:none;
+  -webkit-tap-highlight-color:transparent;
+}
+.toggle-pill.is-on{ background:var(--color-primary-soft); border-color:var(--color-primary); color:var(--color-primary-strong); }
+.toggle-pill__dot{ width:8px; height:8px; border-radius:50%; background:var(--color-faint); }
+.toggle-pill.is-on .toggle-pill__dot{ background:var(--color-primary); }
 
 @media (max-width:430px){
   .viewport-wrap{ padding:0; }
