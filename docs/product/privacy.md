@@ -1,0 +1,31 @@
+# privacy
+
+## goal
+
+make it clear which information is public, which information remains private, and why tekir collects it.
+
+## decisions
+
+- browsing public cats, map information, updates, comments, help alerts, and public media does not require an account.
+- a phone number is collected only for authentication, account recovery, abuse prevention, and account ownership verification.
+- phone numbers are never public and are not included in public api responses.
+- raw device tokens, push tokens, refresh tokens, and internal device identifiers are never public.
+- a user's display name, selected profile avatar, earned badges, contribution totals, and public contribution history are public.
+- cat records, updates, help alerts, comments, and uploaded media are public because the product depends on shared city information.
+- uploaded media may contain location or contextual information; the upload flow must explain that accepted media becomes publicly visible.
+- precise device location is used only when necessary for map interaction or user-requested nearby discovery. it is not published as a user's location history.
+- tekir does not sell personal data or expose private account data to advertisers.
+- account deletion removes or anonymizes personal account information. public cat history and contributions remain, but are no longer associated with the deleted user's public identity.
+- moderation and legal obligations may require retaining limited internal records for a defined operational period; such records are not public.
+- notification permission is requested only after a user chooses to follow a cat or otherwise opts into notifications, not on first launch.
+
+## open questions
+
+- none for mvp. implementation must define concrete retention periods and publish the legally reviewed privacy notice before public launch.
+
+## out of scope
+
+- private profiles.
+- private cat records or private updates.
+- advertising-based personalization.
+- publishing a user's movement or precise location history.
