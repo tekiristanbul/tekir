@@ -22,9 +22,12 @@ class UpdateValidationException implements Exception {
 /// Thrown when `POST .../updates` answers 401 — the caller's bearer session
 /// is missing, expired, or invalid (issue #65: an authenticated account is
 /// required to post an update; the device token is optional association
-/// only). [CatUpdateComposerNotifier] treats this as a stale device
-/// identity rather than a session problem today (issue #43's original
-/// recovery path); see its `_submit` for the actual session-level guard.
+/// only). `CatUpdateComposerNotifier._submit` already checks
+/// `sessionIdentityServiceProvider.cached` before calling this api, so this
+/// exception should only surface if the server rejects a session that
+/// looked valid locally (e.g. revoked mid-flight). Its current recovery —
+/// invalidating the device identity — targets a separately stale device
+/// credential and does not clear the account session.
 class UpdateUnauthorizedException implements Exception {
   const UpdateUnauthorizedException();
 }
