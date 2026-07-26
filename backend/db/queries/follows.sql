@@ -33,7 +33,7 @@ delete from follows where user_id = sqlc.arg(user_id) and cat_id = sqlc.arg(cat_
 select
   c.id,
   c.name,
-  coalesce(c.photo_url, m.url) as photo_url,
+  coalesce(c.photo_url, m.url, '') as photo_url,
   st_x(c.area::geometry)::float8 as lng,
   st_y(c.area::geometry)::float8 as lat,
   c.area_label,

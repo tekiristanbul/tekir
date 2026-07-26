@@ -119,7 +119,7 @@ select
   st_x(c.area::geometry)::float8 as lng,
   st_y(c.area::geometry)::float8 as lat,
   c.area_label,
-  coalesce(c.photo_url, m.url) as photo_url,
+  coalesce(c.photo_url, m.url, '') as photo_url,
   c.created_at,
   c.last_update_at,
   nh.needs_help_category,
@@ -225,7 +225,7 @@ const listCatsInBounds = `-- name: ListCatsInBounds :many
 select
   c.id,
   c.name,
-  coalesce(c.photo_url, m.url) as photo_url,
+  coalesce(c.photo_url, m.url, '') as photo_url,
   st_x(c.area::geometry)::float8 as lng,
   st_y(c.area::geometry)::float8 as lat,
   c.area_label,
@@ -321,7 +321,7 @@ const listNearbyCatsForDuplicateCheck = `-- name: ListNearbyCatsForDuplicateChec
 select
   c.id,
   c.name,
-  coalesce(c.photo_url, m.url) as photo_url
+  coalesce(c.photo_url, m.url, '') as photo_url
 from cats c
 left join media m on m.id = c.primary_photo_id
 where c.status = 'active'
