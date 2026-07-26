@@ -44,7 +44,8 @@ it is a local/static simulation used as the product behavior and interaction ref
 tekir uses a controlled workflow while the product and architecture are still being implemented.
 
 - reproducible bug reports are welcome
-- ideas, product suggestions, ux proposals, and questions belong in [github discussions](https://github.com/tekiristanbul/tekir/discussions)
+- high-level product and community ideas belong in [github discussions](https://github.com/tekiristanbul/tekir/discussions)
+- concrete feature requests and implementation work are handled through maintainer-created issues
 - implementation contributions are accepted only through maintainer-created issues labeled [`help wanted`](https://github.com/tekiristanbul/tekir/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22)
 - comment on the issue and wait for maintainer acknowledgement before starting
 - unsolicited pull requests are not accepted
