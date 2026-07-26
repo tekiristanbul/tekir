@@ -69,8 +69,9 @@ const (
 )
 
 // istanbulBounds is the product's one existing geographic-boundary
-// definition — app/lib/features/map/ui/map_screen.dart's _istanbulBounds,
-// which already keeps the map camera from panning out to a city/country
+// definition — app/lib/core/geo/istanbul_bounds.dart's istanbulBounds,
+// shared by the main map screen and the add-cat location picker, which
+// already keeps the map camera from panning out to a city/country
 // view. docs/architecture/api.md and db.md don't define their own boundary
 // constant, and issue #70 requires enforcing "the current Istanbul/product
 // boundary if defined by the current docs... do not invent a broader

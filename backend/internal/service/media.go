@@ -90,7 +90,15 @@ func (p *mediaPipeline) process(raw []byte) (processedMedia, error) {
 	if err != nil {
 		return processedMedia{}, ErrMalformedMedia
 	}
-	if cfg.Width*cfg.Height > maxImagePixels {
+	// cfg.Width/cfg.Height come straight from the file's own header — a
+	// crafted file can declare values whose product overflows int before
+	// this check ever runs. Dividing instead of multiplying avoids that;
+	// non-positive dimensions are rejected as malformed outright, not
+	// "too large" (they're not a valid image regardless of size).
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return processedMedia{}, ErrMalformedMedia
+	}
+	if cfg.Width > maxImagePixels/cfg.Height {
 		return processedMedia{}, ErrMediaDimensionsTooLarge
 	}
 

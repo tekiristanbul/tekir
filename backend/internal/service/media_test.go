@@ -51,7 +51,17 @@ func validPNGBytes(t *testing.T) []byte {
 // check without materializing an actual multi-gigapixel pixel buffer.
 func oversizedDimensionsPNGBytes(t *testing.T) []byte {
 	t.Helper()
-	const width, height = 30000, 30000 // 900,000,000 px > maxImagePixels
+	// image/png's own decoder caps a declared dimension to positive int32
+	// (see its parseIHDR — anything else is rejected as "non-positive
+	// dimension" before mediaPipeline.process ever sees it), so the
+	// largest input actually reachable through DecodeConfig is well short
+	// of overflowing an int64 width*height product. 30000x30000 is enough
+	// to clear maxImagePixels without relying on that ceiling.
+	return pngBytesWithDimensions(t, 30000, 30000) // 900,000,000 px > maxImagePixels
+}
+
+func pngBytesWithDimensions(t *testing.T, width, height uint32) []byte {
+	t.Helper()
 	ihdr := make([]byte, 13)
 	binary.BigEndian.PutUint32(ihdr[0:4], width)
 	binary.BigEndian.PutUint32(ihdr[4:8], height)

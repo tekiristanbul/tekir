@@ -128,7 +128,9 @@ class AddCatApi {
         'lat': lat.toString(),
         'lng': lng.toString(),
         if (name != null && name.isNotEmpty) 'name': name,
-        'confirmed_new': confirmedNew.toString(),
+        // docs/architecture/api.md: confirmed_new is "true"/absent — never
+        // sent as the literal string "false", matching that contract.
+        if (confirmedNew) 'confirmed_new': 'true',
         'photo': MultipartFile.fromBytes(photoBytes, filename: photoFilename),
       });
       final response = await _apiClient.dio.post<Map<String, dynamic>>(

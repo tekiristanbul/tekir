@@ -169,6 +169,29 @@ void main() {
     });
 
     test(
+      'omits confirmed_new entirely when false, per the api contract (never "false")',
+      () async {
+        final adapter = _FakeAdapter(
+          statusCode: 201,
+          bodyJson: _createdCatResponse,
+        );
+        final api = _apiWith(adapter);
+
+        await api.createCat(
+          lat: 41.03,
+          lng: 28.98,
+          confirmedNew: false,
+          photoBytes: Uint8List.fromList([1]),
+          photoFilename: 'cat.jpg',
+          idempotencyKey: 'key-1',
+        );
+
+        final form = adapter.lastData! as FormData;
+        expect(form.fields.where((f) => f.key == 'confirmed_new'), isEmpty);
+      },
+    );
+
+    test(
       '409 maps to AddCatDuplicateCandidatesException with candidates',
       () async {
         final api = _apiWith(
