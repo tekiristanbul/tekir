@@ -50,6 +50,13 @@ var ErrInvalidArea = errors.New("invalid area")
 // cat is a photo and a location").
 var ErrMissingPhoto = errors.New("missing photo")
 
+// ErrMediaPipelineNotConfigured means Create was called on a CatsService
+// built without WithCatsMediaPipeline — a wiring mistake (cmd/api/main.go
+// always supplies one), not a client input problem. Create is a public
+// method, so this fails with a clear error rather than a nil-pointer panic
+// on first use.
+var ErrMediaPipelineNotConfigured = errors.New("cats service media pipeline not configured")
+
 const (
 	defaultUpdatesLimit = 20
 	maxUpdatesLimit     = 50
@@ -641,6 +648,9 @@ func toDuplicateCandidates(rows []repository.ListNearbyCatsForDuplicateCheckRow)
 // validation, upload, or duplicate query, so a retry is always cheap and
 // side-effect-free.
 func (s *CatsService) Create(ctx context.Context, userID, deviceID string, idempotencyKey *string, lat, lng float64, name *string, confirmedNew bool, photoBytes []byte) (CatDetail, error) {
+	if s.pipeline == nil {
+		return CatDetail{}, ErrMediaPipelineNotConfigured
+	}
 	uid, err := uuid.Parse(userID)
 	if err != nil {
 		return CatDetail{}, err

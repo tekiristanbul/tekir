@@ -736,6 +736,17 @@ func TestCatsService_Create_MissingPhoto(t *testing.T) {
 	}
 }
 
+func TestCatsService_Create_NoPipelineConfiguredFailsGracefully(t *testing.T) {
+	// NewCatsService without WithCatsMediaPipeline — Create must return a
+	// clear error, not panic on a nil s.pipeline dereference.
+	svc := NewCatsService(fakeCatsLister{})
+
+	_, err := svc.Create(context.Background(), uuid.New().String(), "", nil, istanbulLat, istanbulLng, nil, true, []byte("x"))
+	if !errors.Is(err, ErrMediaPipelineNotConfigured) {
+		t.Fatalf("expected ErrMediaPipelineNotConfigured, got %v", err)
+	}
+}
+
 func TestCatsService_Create_DuplicateCandidatesNonBlocking(t *testing.T) {
 	nearbyID := uuid.New()
 	store := &fakeObjectStore{}

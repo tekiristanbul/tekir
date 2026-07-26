@@ -219,7 +219,9 @@ void main() {
           name: 'photo.jpg',
           path: 'photo.jpg',
         );
-        await container.read(addCatProvider.notifier).pickPhoto();
+        await container
+            .read(addCatProvider.notifier)
+            .pickPhoto(ImageSource.gallery);
 
         final result = await container.read(addCatProvider.notifier).save();
 
@@ -257,7 +259,9 @@ void main() {
           name: 'photo.jpg',
           path: 'photo.jpg',
         );
-        await container.read(addCatProvider.notifier).pickPhoto();
+        await container
+            .read(addCatProvider.notifier)
+            .pickPhoto(ImageSource.gallery);
         await container.read(addCatProvider.notifier).save();
 
         expect(api.lastConfirmedNew, isTrue);
@@ -277,7 +281,9 @@ void main() {
           name: 'photo.jpg',
           path: 'photo.jpg',
         );
-        await container.read(addCatProvider.notifier).pickPhoto();
+        await container
+            .read(addCatProvider.notifier)
+            .pickPhoto(ImageSource.gallery);
 
         await container.read(addCatProvider.notifier).save();
         expect(container.read(addCatProvider).error, AddCatError.network);
@@ -323,7 +329,9 @@ void main() {
           name: 'photo.jpg',
           path: 'photo.jpg',
         );
-        await container.read(addCatProvider.notifier).pickPhoto();
+        await container
+            .read(addCatProvider.notifier)
+            .pickPhoto(ImageSource.gallery);
 
         final result = await container.read(addCatProvider.notifier).save();
 

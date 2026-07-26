@@ -1,9 +1,12 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
+import '../../../core/geo/istanbul_bounds.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/add_cat_api.dart';
 import 'add_cat_state.dart';
@@ -75,6 +78,7 @@ class _LocationStep extends ConsumerStatefulWidget {
 
 class _LocationStepState extends ConsumerState<_LocationStep> {
   GoogleMapController? _controller;
+  int? _lastAnimatedRevision;
 
   @override
   void dispose() {
@@ -82,9 +86,30 @@ class _LocationStepState extends ConsumerState<_LocationStep> {
     super.dispose();
   }
 
+  // Moves the camera when lat/lng changed because device location was
+  // (re-)resolved (locationRevision incremented) rather than because the
+  // user panned the map themselves (setLocation never bumps it) — panning
+  // must never fight the user's own gesture. `initialCameraPosition` is
+  // only honored once by GoogleMap, so an explicit "use current location"
+  // tap needs this to actually move the pin.
+  void _syncCameraToResolvedLocation(AddCatState state) {
+    final controller = _controller;
+    if (controller == null) return;
+    if (state.lat == null || state.lng == null) return;
+    if (state.locationRevision == _lastAnimatedRevision) return;
+    _lastAnimatedRevision = state.locationRevision;
+    controller.animateCamera(
+      CameraUpdate.newLatLng(LatLng(state.lat!, state.lng!)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(addCatProvider);
+    ref.listen(
+      addCatProvider,
+      (_, next) => _syncCameraToResolvedLocation(next),
+    );
     final center = state.lat != null && state.lng != null
         ? LatLng(state.lat!, state.lng!)
         : null;
@@ -102,10 +127,18 @@ class _LocationStepState extends ConsumerState<_LocationStep> {
                         target: center,
                         zoom: _initialZoom,
                       ),
+                      cameraTargetBounds: CameraTargetBounds(istanbulBounds),
+                      minMaxZoomPreference: const MinMaxZoomPreference(
+                        istanbulMinZoom,
+                        istanbulMaxZoom,
+                      ),
                       myLocationButtonEnabled: false,
                       zoomControlsEnabled: false,
                       mapToolbarEnabled: false,
-                      onMapCreated: (controller) => _controller = controller,
+                      onMapCreated: (controller) {
+                        _controller = controller;
+                        _lastAnimatedRevision = state.locationRevision;
+                      },
                       onCameraMove: (position) => ref
                           .read(addCatProvider.notifier)
                           .setLocation(
@@ -257,9 +290,10 @@ class _DuplicateCandidateTile extends StatelessWidget {
     return InkWell(
       onTap: () {
         // "gördüğün kedi bu" — go straight to the existing cat instead of
-        // creating a new one; this only ever navigates away, it never
-        // itself creates anything.
-        Navigator.of(context).pop();
+        // creating a new one. The modal is a state-driven overlay atop
+        // /add-cat (AddCatScreen.build's `if (state.hasDuplicates)`), never
+        // a pushed route/dialog — there is nothing to pop; popping the
+        // Navigator here would instead close /add-cat itself.
         context.go('/cats/${candidate.id}');
       },
       borderRadius: BorderRadius.circular(AppRadius.md),
@@ -275,12 +309,17 @@ class _DuplicateCandidateTile extends StatelessWidget {
                       height: 48,
                       color: AppColors.surfaceAlt,
                     )
-                  : Image.network(
-                      candidate.primaryPhoto,
+                  : CachedNetworkImage(
+                      imageUrl: candidate.primaryPhoto,
                       width: 48,
                       height: 48,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Container(
+                      placeholder: (_, _) => Container(
+                        width: 48,
+                        height: 48,
+                        color: AppColors.surfaceAlt,
+                      ),
+                      errorWidget: (_, _, _) => Container(
                         width: 48,
                         height: 48,
                         color: AppColors.surfaceAlt,
@@ -323,7 +362,7 @@ class _DetailsStep extends ConsumerWidget {
           ),
           const SizedBox(height: AppSpacing.s2),
           InkWell(
-            onTap: () => ref.read(addCatProvider.notifier).pickPhoto(),
+            onTap: () => _choosePhotoSource(context, ref),
             borderRadius: BorderRadius.circular(AppRadius.md),
             child: Container(
               height: 150,
@@ -368,7 +407,14 @@ class _DetailsStep extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: AppSpacing.s2),
-          TextField(
+          TextFormField(
+            // initialValue, not a controller: this widget is recreated
+            // from scratch whenever the switch in AddCatScreen.build steps
+            // away from and back to the details step (e.g. a
+            // duplicate-candidates race sends the user back to the
+            // location step) — initialValue is what survives that, reading
+            // back whatever was last saved to AddCatState.name.
+            initialValue: state.name,
             decoration: const InputDecoration(
               hintText: 'Örn. Boncuk, Minnoş…',
               filled: true,
@@ -449,5 +495,32 @@ class _DetailsStep extends ConsumerWidget {
     final catId = await ref.read(addCatProvider.notifier).save();
     if (catId == null || !context.mounted) return;
     context.go('/cats/$catId');
+  }
+
+  // "capture/selection" (docs/architecture/flutter.md) — a contributor can
+  // photograph a street cat on the spot, not just pick an existing photo.
+  Future<void> _choosePhotoSource(BuildContext context, WidgetRef ref) async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Kameradan çek'),
+              onTap: () => Navigator.of(sheetContext).pop(ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Galeriden seç'),
+              onTap: () => Navigator.of(sheetContext).pop(ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !context.mounted) return;
+    await ref.read(addCatProvider.notifier).pickPhoto(source);
   }
 }

@@ -96,6 +96,18 @@ Future<void> _pumpAddCat(WidgetTester tester, _FakeAddCatApi api) async {
   await tester.pump(const Duration(milliseconds: 500));
 }
 
+// Taps the photo well, then "Galeriden seç" in the resulting camera/gallery
+// chooser sheet (the fake ImagePickerPlatform answers with fakePlatform's
+// nextFile regardless of which source is actually chosen).
+Future<void> _pickPhoto(WidgetTester tester) async {
+  await tester.tap(find.text('Fotoğraf ekle'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100));
+  await tester.tap(find.text('Galeriden seç'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100));
+}
+
 void main() {
   final fakePlatform = _FakeImagePickerPlatform();
   ImagePickerPlatform.instance = fakePlatform;
@@ -112,6 +124,36 @@ void main() {
 
       expect(find.text('Kedi ekle'), findsOneWidget);
       expect(find.text('Fotoğraf (zorunlu)'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a typed name survives leaving and returning to the details step',
+    (tester) async {
+      // Regression: the name field must read from AddCatState.name on
+      // (re)build, not rely on TextField's own internal editing state —
+      // _DetailsStep is torn down and rebuilt from scratch when the step
+      // switch in AddCatScreen.build moves away from and back to details
+      // (e.g. tapping the app bar's back action, then confirming the
+      // location again).
+      await _pumpAddCat(tester, _FakeAddCatApi());
+      await tester.tap(find.text('Bu konumu kullan'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.enterText(find.byType(TextFormField), 'Boncuk');
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Konumu seç'), findsOneWidget);
+
+      await tester.tap(find.text('Bu konumu kullan'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Boncuk'), findsOneWidget);
     },
   );
 
@@ -138,6 +180,30 @@ void main() {
       // still on the location step underneath — the modal is an overlay,
       // never a dead end (docs/product/cats.md/trust.md: advisory only).
       expect(find.text('Fotoğraf (zorunlu)'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'tapping a duplicate candidate opens that cat, not a broken navigator pop',
+    (tester) async {
+      // Regression: the modal is a state-driven overlay atop /add-cat, not
+      // a pushed route — tapping a candidate must go(/cats/:id) directly,
+      // never Navigator.pop() first (which would instead close /add-cat).
+      final api = _FakeAddCatApi()
+        ..nearbyResult = const [
+          DuplicateCandidate(id: 'cat-1', name: 'tekir', primaryPhoto: ''),
+        ];
+      await _pumpAddCat(tester, api);
+      await tester.tap(find.text('Bu konumu kullan'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.text('tekir'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('cat detail cat-1'), findsOneWidget);
+      expect(find.byType(AddCatScreen), findsNothing);
     },
   );
 
@@ -202,9 +268,7 @@ void main() {
         name: 'photo.jpg',
         path: 'photo.jpg',
       );
-      await tester.tap(find.text('Fotoğraf ekle'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await _pickPhoto(tester);
 
       await tester.tap(find.text('Kaydet'));
       await tester.pump();
@@ -231,9 +295,7 @@ void main() {
       name: 'photo.jpg',
       path: 'photo.jpg',
     );
-    await tester.tap(find.text('Fotoğraf ekle'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pickPhoto(tester);
 
     await tester.tap(find.text('Kaydet'));
     await tester.pump();

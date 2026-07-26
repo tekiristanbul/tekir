@@ -45,6 +45,7 @@ class AddCatState {
     this.step = AddCatStep.location,
     this.lat,
     this.lng,
+    this.locationRevision = 0,
     this.geoError,
     this.duplicates = const [],
     this.confirmedNew = false,
@@ -58,6 +59,14 @@ class AddCatState {
   final AddCatStep step;
   final double? lat;
   final double? lng;
+
+  /// Incremented only when lat/lng change because device location was
+  /// (re-)resolved (the initial automatic resolution, or an explicit "use
+  /// current location" tap) — never by [AddCatNotifier.setLocation]'s own
+  /// camera-pan updates. The location step's map widget watches this to
+  /// know when it should itself move the camera, instead of fighting the
+  /// user's own pan gesture on every frame.
+  final int locationRevision;
 
   /// Set when the device's own location couldn't be resolved (permission
   /// denied, service disabled, timeout) — mirrors the prototype's
@@ -88,6 +97,7 @@ class AddCatState {
     AddCatStep? step,
     double? lat,
     double? lng,
+    int? locationRevision,
     String? geoError,
     bool clearGeoError = false,
     List<DuplicateCandidate>? duplicates,
@@ -103,6 +113,7 @@ class AddCatState {
       step: step ?? this.step,
       lat: lat ?? this.lat,
       lng: lng ?? this.lng,
+      locationRevision: locationRevision ?? this.locationRevision,
       geoError: clearGeoError ? null : (geoError ?? this.geoError),
       duplicates: duplicates ?? this.duplicates,
       confirmedNew: confirmedNew ?? this.confirmedNew,
@@ -143,6 +154,7 @@ class AddCatNotifier extends Notifier<AddCatState> {
     state = state.copyWith(
       lat: resolved.center.latitude,
       lng: resolved.center.longitude,
+      locationRevision: state.locationRevision + 1,
       clearGeoError: !resolved.isFallback,
       geoError: resolved.isFallback
           ? 'Konum bulunamadı. Haritadan elle seç.'
@@ -201,8 +213,12 @@ class AddCatNotifier extends Notifier<AddCatState> {
 
   void setName(String value) => state = state.copyWith(name: value);
 
-  Future<void> pickPhoto() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+  /// Picks a photo from the given source — the ui offers a choice between
+  /// [ImageSource.camera] and [ImageSource.gallery] (docs/architecture/
+  /// flutter.md: "image_picker for capture/selection", both, not gallery
+  /// only) so a contributor can photograph a street cat on the spot.
+  Future<void> pickPhoto(ImageSource source) async {
+    final picked = await ImagePicker().pickImage(source: source);
     if (picked == null) return;
     final bytes = await picked.readAsBytes();
     state = state.copyWith(
