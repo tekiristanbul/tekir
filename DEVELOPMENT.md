@@ -146,15 +146,15 @@ cd app
 
 `app/web/index.html` contains a placeholder. the run script substitutes the local key at runtime and restores the file when it exits. never commit a real key.
 
-restrict the development key to the maps javascript api and the local origin used by the script. use a separate restricted production key with independent quota and billing controls.
+restrict the development key to the maps javascript api and `http://localhost:5050`. use a separate restricted production key with independent quota and billing controls.
 
 ### api base url
 
-the flutter client uses `http://localhost:8080` by default. override it when the api is exposed elsewhere:
+the flutter client uses `http://localhost:8080` by default. pass dart defines through the run script when the api is exposed elsewhere:
 
 ```text
 cd app
-flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8081
+./scripts/run_web.sh --dart-define=API_BASE_URL=http://localhost:8081
 ```
 
 only the web target is currently configured.
@@ -192,7 +192,7 @@ make migrate-status
 
 ## ci behavior
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the repository validation on pushes and pull requests. reproduce a failing job with the matching commands above before changing workflow configuration.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pull requests and pushes to `main`. reproduce a failing job with the matching commands above before changing workflow configuration.
 
 backend ci covers build, vet, lint, formatting, migrations, and tests against postgres/postgis. flutter ci covers formatting, analysis, and tests.
 
@@ -226,7 +226,7 @@ for disposable local data, recreate the docker volume and apply migrations again
 
 ### flutter map is blank
 
-confirm `.env.local` exists, the api key is enabled for the maps javascript api, and its browser restrictions include the local origin. run through `./scripts/run_web.sh`; do not place the key permanently in `app/web/index.html`.
+confirm `.env.local` exists, the api key is enabled for the maps javascript api, and its browser restrictions include `http://localhost:5050`. run through `./scripts/run_web.sh`; do not place the key permanently in `app/web/index.html`.
 
 ### flutter cannot reach the api
 
