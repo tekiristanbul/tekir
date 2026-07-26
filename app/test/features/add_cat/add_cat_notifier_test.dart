@@ -228,6 +228,12 @@ void main() {
         expect(result, 'new-cat-id');
         expect(api.createCalls, 1);
         expect(api.lastConfirmedNew, false);
+        // Regression: `saving` must not stay stuck true on the success
+        // path — nothing left to preserve once creation succeeds, so the
+        // whole state resets (mirrors AuthNotifier.verifyCode's success
+        // path).
+        expect(container.read(addCatProvider).saving, isFalse);
+        expect(container.read(addCatProvider).step, AddCatStep.location);
       },
     );
 

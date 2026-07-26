@@ -108,20 +108,30 @@ func (p *mediaPipeline) process(raw []byte) (processedMedia, error) {
 	}
 
 	var buf bytes.Buffer
+	var result processedMedia
 	switch format {
 	case "jpeg":
 		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
 			return processedMedia{}, fmt.Errorf("re-encode jpeg: %w", err)
 		}
-		return processedMedia{data: buf.Bytes(), contentType: "image/jpeg", extension: "jpg"}, nil
+		result = processedMedia{data: buf.Bytes(), contentType: "image/jpeg", extension: "jpg"}
 	case "png":
 		if err := png.Encode(&buf, img); err != nil {
 			return processedMedia{}, fmt.Errorf("re-encode png: %w", err)
 		}
-		return processedMedia{data: buf.Bytes(), contentType: "image/png", extension: "png"}, nil
+		result = processedMedia{data: buf.Bytes(), contentType: "image/png", extension: "png"}
 	default:
 		return processedMedia{}, ErrUnsupportedMediaType
 	}
+
+	// MEDIA_MAX_BYTES bounds what's actually stored, not just what was
+	// uploaded — a highly-compressed input (e.g. an indexed-palette PNG)
+	// can re-encode to something noticeably larger than raw's own length,
+	// so the check above on len(raw) alone isn't sufficient on its own.
+	if len(result.data) > p.maxBytes {
+		return processedMedia{}, ErrMediaTooLarge
+	}
+	return result, nil
 }
 
 // upload stores processed under a fresh, random key and returns the

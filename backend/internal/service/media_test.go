@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"math/rand"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -29,6 +30,29 @@ func validJPEGBytes(t *testing.T) []byte {
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, img, nil); err != nil {
 		t.Fatalf("encode test jpeg: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// lowQualityJPEGBytesThatReencodeLarger returns a small (quality=1) jpeg
+// whose noisy pixel content re-encodes much larger at mediaPipeline's fixed
+// quality=90 — a highly-compressed input can still expand well past the
+// byte-size limit once re-encoded, so the size check must cover the
+// *output*, not just what was uploaded.
+func lowQualityJPEGBytesThatReencodeLarger(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 300, 300))
+	r := rand.New(rand.NewSource(1))
+	for y := range 300 {
+		for x := range 300 {
+			img.Set(x, y, color.RGBA{
+				R: uint8(r.Intn(256)), G: uint8(r.Intn(256)), B: uint8(r.Intn(256)), A: 255,
+			})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 1}); err != nil {
+		t.Fatalf("encode low-quality test jpeg: %v", err)
 	}
 	return buf.Bytes()
 }
@@ -166,6 +190,34 @@ func TestMediaPipeline_Process_RejectsOversizedDimensions(t *testing.T) {
 	p := newMediaPipeline(&fakeObjectStore{}, 1<<20)
 	if _, err := p.process(oversizedDimensionsPNGBytes(t)); !errors.Is(err, ErrMediaDimensionsTooLarge) {
 		t.Errorf("expected ErrMediaDimensionsTooLarge, got %v", err)
+	}
+}
+
+// TestMediaPipeline_Process_RejectsWhenReencodedOutputExceedsMaxBytes proves
+// the byte-size limit covers what actually gets stored (the re-encoded
+// output), not just what was uploaded — a highly-compressed input can
+// still pass the initial len(raw) check and then expand once decoded and
+// re-encoded at mediaPipeline's fixed quality. The exact growth ratio is a
+// stdlib jpeg-encoder implementation detail, so this derives the boundary
+// from an actual unbounded process() call instead of hardcoding byte counts.
+func TestMediaPipeline_Process_RejectsWhenReencodedOutputExceedsMaxBytes(t *testing.T) {
+	raw := lowQualityJPEGBytesThatReencodeLarger(t)
+
+	unbounded := newMediaPipeline(&fakeObjectStore{}, 1<<20)
+	processed, err := unbounded.process(raw)
+	if err != nil {
+		t.Fatalf("process with no effective limit: %v", err)
+	}
+	if len(processed.data) <= len(raw) {
+		t.Fatalf("test fixture assumption broken: re-encoded output (%d bytes) is not larger than raw input (%d bytes)", len(processed.data), len(raw))
+	}
+
+	// A limit between the two sizes clears len(raw) but not the re-encoded
+	// output.
+	maxBytes := (len(raw) + len(processed.data)) / 2
+	bounded := newMediaPipeline(&fakeObjectStore{}, maxBytes)
+	if _, err := bounded.process(raw); !errors.Is(err, ErrMediaTooLarge) {
+		t.Errorf("expected ErrMediaTooLarge for an oversized re-encoded output, got %v", err)
 	}
 }
 

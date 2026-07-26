@@ -262,6 +262,11 @@ class AddCatNotifier extends Notifier<AddCatState> {
             photoFilename: state.photoFilename ?? 'photo.jpg',
             idempotencyKey: _idempotencyKey,
           );
+      // Reset in full (mirrors AuthNotifier.verifyCode's success path) —
+      // there's nothing left to preserve once creation succeeds, and
+      // leaving `saving: true` here would strand the ui in a disabled/
+      // loading state if navigation away were ever delayed or skipped.
+      state = const AddCatState();
       return cat.id;
     } on AddCatDuplicateCandidatesException catch (e) {
       // A race: a matching cat was created between the location step's own

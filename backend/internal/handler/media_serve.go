@@ -51,6 +51,12 @@ func (h *MediaServeHandler) ServeObject(w http.ResponseWriter, r *http.Request) 
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
+	// This is a public route serving whatever object_key the client itself
+	// chose an extension for at upload time (see mediaPipeline.process) —
+	// nosniff stops a browser from ever second-guessing that declared type
+	// into something executable, on the off chance a non-image ever ends
+	// up in the store.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }

@@ -43,6 +43,9 @@ func TestMediaServeHandler_ServeObject_Success(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Errorf("expected image/jpeg content-type, got %q", ct)
 	}
+	if nosniff := rec.Header().Get("X-Content-Type-Options"); nosniff != "nosniff" {
+		t.Errorf("expected X-Content-Type-Options: nosniff, got %q", nosniff)
+	}
 }
 
 func TestMediaServeHandler_ServeObject_NotFound(t *testing.T) {
