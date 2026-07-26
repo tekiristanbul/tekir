@@ -38,13 +38,20 @@ Device-to-account linking (otp/verify) resolves-or-creates exactly one account p
 
 ```
 GET  /v1/cats?bbox=...                                    → [{ id, name, primary_photo, area{lat,lng}, area_label|null, active_alert|null, last_update_at }]
-GET  /v1/cats/nearby?lat&lng&radius=50                     → [{ id, primary_photo, name }]   (duplicate check in the add-cat flow — not yet implemented)
+GET  /v1/cats/nearby?lat&lng&radius=50                     → [{ id, primary_photo, name }]   (implemented — issue #70; the add-cat flow's non-blocking duplicate check)
 GET  /v1/cats/{cat_id}                                     → { id, name, area{lat,lng}, area_label|null, primary_photo|null, created_at, last_update_at|null, active_alert|null }
-POST /v1/cats            (Bearer required)  { area, photo(multipart), name?, confirmed_new? }
-                                              → 201 { cat }  or  409 { candidates:[...] } (when confirmed_new is absent and nearby matches exist — not yet implemented)
+POST /v1/cats            (Bearer required; X-Device-Token optional; Idempotency-Key optional)  multipart { lat, lng, photo, name?, confirmed_new? }
+                                              → 201 { cat }  or  409 { candidates:[...] } (when confirmed_new is absent and nearby matches exist)
+                                              (implemented — issue #70)
 ```
 
-`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it still omits `followed_by_me` from the earlier sketch above — follow/unfollow/list exist as of issue #44 (see "follows / notifications" below), but folding follow status into this read path was left out of that issue's scope. `photos[]` is `primary_photo` (nullable) for now — there's no `media` table yet (see [[db]]), so a cat has exactly one photo column. unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
+`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it still omits `followed_by_me` from the earlier sketch above — follow/unfollow/list exist as of issue #44 (see "follows / notifications" below), but folding follow status into this read path was left out of that issue's scope. `photos[]` is `primary_photo` (nullable): a cat still has exactly one profile photo (issue #70 doesn't add a gallery), resolved from either the legacy seed-only `photo_url` column or, for a cat created through `POST /v1/cats`, its required `media` row (see [[db]]). unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
+
+`GET /v1/cats/nearby` (issue #70) is public — a guest reaches this in the add-cat flow up to the moment the auth gate requires signing in, same as any other public read. `radius` is fixed at 50m server-side; a client-supplied value isn't read.
+
+`POST /v1/cats` (issue #70) is a multipart request: `lat`/`lng` (the concrete encoding of "area" — two plain form fields, not a nested json object, since multipart fields are flat key/value) and `photo` (the required initial photo) are required; `name` and `confirmed_new` ("true"/absent) are optional. Ownership (`created_by_user_id`, optionally `created_by_device_id`) is always resolved from `Authorization: Bearer`/`X-Device-Token`, never the request body. Location must fall within the product's existing Istanbul boundary — the same one `app/lib/features/map/ui/map_screen.dart`'s `_istanbulBounds` already uses to constrain the map camera (there was no docs/product or docs/architecture boundary constant before this; reusing that exact definition, rather than inventing a new one, is what this issue's own scope required) — outside it is `400`. The photo is validated server-side (decoded as a genuine jpeg/png regardless of claimed content-type, size-capped, re-encoded — which also strips any exif/metadata, per [[privacy]]) and, together with the new `cats` row, committed in one transaction (see [[db]]'s `Store.CreateCatWithMedia`); a validation/media failure or an unconfirmed duplicate match never creates a cat or a stored object. An optional `Idempotency-Key` header makes a retried request (same key) return the original cat instead of creating a second one — see [[db]]'s `cats_user_idempotency_uq`.
+
+`409 { candidates: [...] }`'s candidates are the same `{ id, primary_photo, name }` shape `GET /v1/cats/nearby` returns — advisory only ([[cats]]/[[trust]]): the client shows them, and a second `POST /v1/cats` with `confirmed_new: true` always proceeds regardless of what's nearby.
 
 `active_alert` (both endpoints, issue #4/#23) is `null` unless the cat has a currently-active needs-help alert:
 
@@ -71,7 +78,8 @@ GET  /v1/cats/{cat_id}/updates?cursor=&limit=   → { items: [{ id, kind, status
                                                      next_cursor|null }
 POST /v1/cats/{cat_id}/updates     (Bearer required)  { statuses[], comment? }  → 201 { id, kind, statuses[], comment|null, created_at }
 POST /v1/cats/{cat_id}/needs-help  (Bearer required)  { category }              (not yet implemented)
-POST /v1/media                      (Bearer required)  multipart file → { media_id, url }
+POST /v1/media                      (Bearer required; X-Device-Token optional; Idempotency-Key optional)  multipart file → 201 { media_id, url }  (implemented — issue #70)
+GET  /v1/media/objects/{key}                                                    → the object's raw bytes  (implemented — issue #70)
 ```
 
 `GET /v1/cats/{cat_id}/updates` is implemented (issue #21, extended in #23), newest first and keyset-paginated on `(created_at, seq)`.
@@ -79,6 +87,10 @@ POST /v1/media                      (Bearer required)  multipart file → { medi
 `POST /v1/cats/{cat_id}/updates` resolves the authenticated account from `Authorization: Bearer` (implemented — issue #65, superseding #36's earlier device-token-only contract); `X-Device-Token` may still be supplied and is recorded alongside the account for installation/abuse-control association, but is never sufficient authorization on its own. `statuses` remains a non-empty set from `seen`, `fed`, and `water_provided`; comment-only requests remain invalid. the server derives author (account and, optionally, device) and timestamps and writes the update, statuses, `last_update_at`, and notification outbox entry transactionally.
 
 `POST /v1/cats/{cat_id}/needs-help` also requires bearer authentication. `expires_at` is server-computed as `created_at + 72h`.
+
+`POST /v1/media` (issue #70) is standalone media upload — independent of cat creation (a cat's own required initial photo is instead embedded directly in `POST /v1/cats`, above). Validation, ownership resolution, and `Idempotency-Key` handling are identical to `POST /v1/cats`'s photo (same shared pipeline, see [[backend]]). Not yet wired to any other write path — `updates.media_id` exists in [[db]] but no update-creation endpoint accepts one yet; this endpoint exists so that future path has somewhere to upload to.
+
+`GET /v1/media/objects/{key}` (issue #70) is the "controlled read delivery" path for the local/dev `fake` object-storage provider (see [[backend]]) — media is public per [[privacy]], so this route needs no auth. It only ever serves what that provider itself wrote; a future real s3-compatible provider would serve reads from its own public/signed urls directly, never proxied through this route.
 
 ### follows / notifications
 
@@ -100,6 +112,7 @@ push delivery remains at-most-once for mvp through the notification outbox and n
 - `confirmed_new` does not implement duplicate merging.
 - colony vs. individual cat is not modeled.
 - conflicting updates remain visible as ordered history; the api does not produce an authoritative single status.
+- `Idempotency-Key` (issue #70, `POST /v1/cats` and `POST /v1/media`) is a plain client-generated opaque string, scoped to the authenticated account — retrying the same request with the same key returns the original result rather than creating a duplicate; a different key (or none) is always a new attempt. this is additive to the contract these two endpoints already needed for "retries must not create duplicate cats/media", not a general api-wide convention yet.
 
 ## open questions
 
