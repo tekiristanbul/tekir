@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:app/core/identity/session_identity.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_screen.dart';
@@ -55,6 +56,24 @@ class _FixedCatDetailNotifier extends CatDetailNotifier {
   Future<void> load() async {}
 }
 
+// A guest session (never restored) — this file only asserts on read-path
+// rendering, not the follow feature (issue #65), so FollowsNotifier just
+// needs to resolve to an empty set without ever reaching a real network
+// call: watching a guest session is exactly what makes it do that.
+class _GuestSessionIdentityService implements SessionIdentityService {
+  @override
+  SessionIdentity? get cached => null;
+
+  @override
+  Future<SessionIdentity?> restore() async => null;
+
+  @override
+  Future<void> save(SessionIdentity identity) async {}
+
+  @override
+  Future<void> logout() async {}
+}
+
 Future<void> _pump(WidgetTester tester, CatDetailState state) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -62,6 +81,9 @@ Future<void> _pump(WidgetTester tester, CatDetailState state) async {
         catDetailProvider(
           _catId,
         ).overrideWith(() => _FixedCatDetailNotifier(_catId, state)),
+        sessionIdentityServiceProvider.overrideWithValue(
+          _GuestSessionIdentityService(),
+        ),
       ],
       child: const MaterialApp(home: CatDetailScreen(catId: _catId)),
     ),

@@ -28,9 +28,9 @@ type fakeFollowsStore struct {
 
 	rows    []repository.ListFollowedCatsRow
 	listErr error
-	// capturedDeviceID records the device id ListFollowedCats was called
+	// capturedUserID records the account id ListFollowedCats was called
 	// with, so a test can assert isolation without needing a real database.
-	capturedDeviceID *pgtype.UUID
+	capturedUserID *pgtype.UUID
 }
 
 func (f fakeFollowsStore) CatExists(_ context.Context, _ pgtype.UUID) (bool, error) {
@@ -51,9 +51,9 @@ func (f fakeFollowsStore) DeleteFollow(_ context.Context, arg repository.DeleteF
 	return f.deleteErr
 }
 
-func (f fakeFollowsStore) ListFollowedCats(_ context.Context, deviceID pgtype.UUID) ([]repository.ListFollowedCatsRow, error) {
-	if f.capturedDeviceID != nil {
-		*f.capturedDeviceID = deviceID
+func (f fakeFollowsStore) ListFollowedCats(_ context.Context, userID pgtype.UUID) ([]repository.ListFollowedCatsRow, error) {
+	if f.capturedUserID != nil {
+		*f.capturedUserID = userID
 	}
 	return f.rows, f.listErr
 }
@@ -65,29 +65,64 @@ func TestFollowsService_Follow_Success(t *testing.T) {
 	svc := NewFollowsService(fakeFollowsStore{exists: true, createdArg: &captured})
 
 	catID := uuid.New()
+	userID := uuid.New()
 	deviceID := uuid.New()
-	if err := svc.Follow(context.Background(), catID.String(), deviceID.String()); err != nil {
+	if err := svc.Follow(context.Background(), catID.String(), userID.String(), deviceID.String()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if uuid.UUID(captured.CatID.Bytes) != catID {
 		t.Errorf("expected cat id %s, got %s", catID, uuid.UUID(captured.CatID.Bytes))
 	}
-	if uuid.UUID(captured.DeviceID.Bytes) != deviceID {
-		t.Errorf("expected device id %s, got %s", deviceID, uuid.UUID(captured.DeviceID.Bytes))
+	if uuid.UUID(captured.UserID.Bytes) != userID {
+		t.Errorf("expected user id %s, got %s", userID, uuid.UUID(captured.UserID.Bytes))
+	}
+	if !captured.DeviceID.Valid || uuid.UUID(captured.DeviceID.Bytes) != deviceID {
+		t.Errorf("expected device id %s, got %+v", deviceID, captured.DeviceID)
+	}
+}
+
+func TestFollowsService_Follow_WithoutDeviceToken_StillSucceeds(t *testing.T) {
+	var captured repository.CreateFollowParams
+	svc := NewFollowsService(fakeFollowsStore{exists: true, createdArg: &captured})
+
+	if err := svc.Follow(context.Background(), uuid.New().String(), uuid.New().String(), ""); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if captured.DeviceID.Valid {
+		t.Errorf("expected no device id recorded, got %+v", captured.DeviceID)
+	}
+	if !captured.UserID.Valid {
+		t.Error("expected user id to still be recorded")
 	}
 }
 
 func TestFollowsService_Follow_InvalidCatID(t *testing.T) {
 	svc := NewFollowsService(fakeFollowsStore{exists: true})
-	err := svc.Follow(context.Background(), "not-a-uuid", uuid.New().String())
+	err := svc.Follow(context.Background(), "not-a-uuid", uuid.New().String(), uuid.New().String())
 	if !errors.Is(err, ErrInvalidCatID) {
 		t.Fatalf("expected ErrInvalidCatID, got %v", err)
 	}
 }
 
+func TestFollowsService_Follow_InvalidUserID(t *testing.T) {
+	svc := NewFollowsService(fakeFollowsStore{exists: true})
+	err := svc.Follow(context.Background(), uuid.New().String(), "not-a-uuid", "")
+	if err == nil {
+		t.Fatal("expected error for invalid user id, got nil")
+	}
+}
+
+func TestFollowsService_Follow_InvalidDeviceID(t *testing.T) {
+	svc := NewFollowsService(fakeFollowsStore{exists: true})
+	err := svc.Follow(context.Background(), uuid.New().String(), uuid.New().String(), "not-a-uuid")
+	if err == nil {
+		t.Fatal("expected error for invalid device id, got nil")
+	}
+}
+
 func TestFollowsService_Follow_UnknownCat(t *testing.T) {
 	svc := NewFollowsService(fakeFollowsStore{exists: false})
-	err := svc.Follow(context.Background(), uuid.New().String(), uuid.New().String())
+	err := svc.Follow(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String())
 	if !errors.Is(err, ErrCatNotFound) {
 		t.Fatalf("expected ErrCatNotFound, got %v", err)
 	}
@@ -98,19 +133,20 @@ func TestFollowsService_Follow_Idempotent(t *testing.T) {
 	// surfaces an error — this just asserts the service doesn't invent one.
 	svc := NewFollowsService(fakeFollowsStore{exists: true})
 	catID := uuid.New().String()
+	userID := uuid.New().String()
 	deviceID := uuid.New().String()
 
-	if err := svc.Follow(context.Background(), catID, deviceID); err != nil {
+	if err := svc.Follow(context.Background(), catID, userID, deviceID); err != nil {
 		t.Fatalf("first follow: %v", err)
 	}
-	if err := svc.Follow(context.Background(), catID, deviceID); err != nil {
+	if err := svc.Follow(context.Background(), catID, userID, deviceID); err != nil {
 		t.Fatalf("repeat follow: %v", err)
 	}
 }
 
 func TestFollowsService_Follow_ExistsCheckError(t *testing.T) {
 	svc := NewFollowsService(fakeFollowsStore{existsErr: errors.New("db down")})
-	err := svc.Follow(context.Background(), uuid.New().String(), uuid.New().String())
+	err := svc.Follow(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String())
 	if err == nil {
 		t.Fatal("expected error from db, got nil")
 	}
@@ -121,7 +157,7 @@ func TestFollowsService_Follow_ExistsCheckError(t *testing.T) {
 
 func TestFollowsService_Follow_CreateError(t *testing.T) {
 	svc := NewFollowsService(fakeFollowsStore{exists: true, createErr: errors.New("db down")})
-	err := svc.Follow(context.Background(), uuid.New().String(), uuid.New().String())
+	err := svc.Follow(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String())
 	if err == nil {
 		t.Fatal("expected error from db, got nil")
 	}
@@ -134,15 +170,15 @@ func TestFollowsService_Unfollow_Success(t *testing.T) {
 	svc := NewFollowsService(fakeFollowsStore{exists: true, deletedArg: &captured})
 
 	catID := uuid.New()
-	deviceID := uuid.New()
-	if err := svc.Unfollow(context.Background(), catID.String(), deviceID.String()); err != nil {
+	userID := uuid.New()
+	if err := svc.Unfollow(context.Background(), catID.String(), userID.String()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if uuid.UUID(captured.CatID.Bytes) != catID {
 		t.Errorf("expected cat id %s, got %s", catID, uuid.UUID(captured.CatID.Bytes))
 	}
-	if uuid.UUID(captured.DeviceID.Bytes) != deviceID {
-		t.Errorf("expected device id %s, got %s", deviceID, uuid.UUID(captured.DeviceID.Bytes))
+	if uuid.UUID(captured.UserID.Bytes) != userID {
+		t.Errorf("expected user id %s, got %s", userID, uuid.UUID(captured.UserID.Bytes))
 	}
 }
 
@@ -173,16 +209,24 @@ func TestFollowsService_Unfollow_NotFollowingIsIdempotent(t *testing.T) {
 
 // ── ListFollows ───────────────────────────────────────────────────────────
 
-func TestFollowsService_ListFollows_ScopedToDevice(t *testing.T) {
+func TestFollowsService_ListFollows_ScopedToUser(t *testing.T) {
 	var captured pgtype.UUID
-	svc := NewFollowsService(fakeFollowsStore{capturedDeviceID: &captured})
+	svc := NewFollowsService(fakeFollowsStore{capturedUserID: &captured})
 
-	deviceID := uuid.New()
-	if _, err := svc.ListFollows(context.Background(), deviceID.String()); err != nil {
+	userID := uuid.New()
+	if _, err := svc.ListFollows(context.Background(), userID.String()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if uuid.UUID(captured.Bytes) != deviceID {
-		t.Errorf("expected query scoped to device %s, got %s", deviceID, uuid.UUID(captured.Bytes))
+	if uuid.UUID(captured.Bytes) != userID {
+		t.Errorf("expected query scoped to user %s, got %s", userID, uuid.UUID(captured.Bytes))
+	}
+}
+
+func TestFollowsService_ListFollows_InvalidUserID(t *testing.T) {
+	svc := NewFollowsService(fakeFollowsStore{})
+	_, err := svc.ListFollows(context.Background(), "not-a-uuid")
+	if err == nil {
+		t.Fatal("expected error for invalid user id, got nil")
 	}
 }
 

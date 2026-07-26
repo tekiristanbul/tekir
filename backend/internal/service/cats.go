@@ -303,6 +303,23 @@ func parseCatID(id string) (pgtype.UUID, error) {
 	return pgtype.UUID{Bytes: parsed, Valid: true}, nil
 }
 
+// optionalUUID parses id as a device identity that may be absent (issue
+// #65: X-Device-Token is optional on the follow and ordinary-update write
+// paths, since authorization now comes from the bearer session, not the
+// device). An empty string yields the zero, invalid pgtype.UUID — recorded
+// as sql null — rather than an error; a non-empty, malformed value is still
+// rejected.
+func optionalUUID(id string) (pgtype.UUID, error) {
+	if id == "" {
+		return pgtype.UUID{}, nil
+	}
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	return pgtype.UUID{Bytes: parsed, Valid: true}, nil
+}
+
 // GetCatDetail returns the cat-detail representation for id, or ErrCatNotFound
 // if no cat exists with that id.
 func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, error) {
@@ -415,16 +432,18 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 }
 
 // CreateOrdinaryUpdate records a new ordinary status update for cat id,
-// attributed to the device identified by deviceID (issue #36 — a valid
-// server-issued X-Device-Token is all this endpoint requires; no bearer
-// auth). statuses must be a non-empty set drawn from the closed mvp
-// vocabulary with no duplicates; comment is optional and never sufficient
-// on its own. kind, media, needs-help fields, timestamps, sequence, and
-// author identity are never accepted from the caller — kind is always
-// "ordinary" here, created_at/author_device_id are server-derived, and the
-// update row, its statuses, and the cat's last_update_at commit as one
-// transaction (see repository.Store.CreateOrdinaryUpdate).
-func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, deviceID string, statuses []string, comment *string) (CatUpdate, error) {
+// attributed to the authenticated account identified by userID (issue #65
+// — a valid bearer session is required; an optional X-Device-Token is
+// recorded alongside it purely for installation/abuse-control association,
+// never as authorization). statuses must be a non-empty set drawn from the
+// closed mvp vocabulary with no duplicates; comment is optional and never
+// sufficient on its own. kind, media, needs-help fields, timestamps,
+// sequence, and author identity are never accepted from the caller — kind
+// is always "ordinary" here, created_at/author_user_id/author_device_id
+// are server-derived, and the update row, its statuses, and the cat's
+// last_update_at commit as one transaction (see
+// repository.Store.CreateOrdinaryUpdate).
+func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, deviceID string, statuses []string, comment *string) (CatUpdate, error) {
 	catID, err := parseCatID(id)
 	if err != nil {
 		return CatUpdate{}, err
@@ -434,11 +453,16 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, deviceID str
 		return CatUpdate{}, err
 	}
 
-	// deviceID comes from the authenticated device context the
-	// device-token middleware places on the request — it is always a
-	// well-formed uuid the middleware itself generated, never
+	// userID comes from the authenticated bearer context the
+	// RequireBearer middleware places on the request — it is always a
+	// well-formed uuid the middleware itself resolved, never
 	// client-supplied input to re-validate against a sentinel error here.
-	authorID, err := uuid.Parse(deviceID)
+	// deviceID (from the optional device-token context) may be "".
+	authorUserID, err := uuid.Parse(userID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+	authorDeviceID, err := optionalUUID(deviceID)
 	if err != nil {
 		return CatUpdate{}, err
 	}
@@ -458,7 +482,8 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, deviceID str
 	row, err := s.db.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		CatID:          catID,
-		AuthorDeviceID: pgtype.UUID{Bytes: authorID, Valid: true},
+		AuthorDeviceID: authorDeviceID,
+		AuthorUserID:   pgtype.UUID{Bytes: authorUserID, Valid: true},
 		Comment:        nullableText(comment),
 		CreatedAt:      pgtype.Timestamptz{Time: createdAt, Valid: true},
 		Statuses:       sorted,

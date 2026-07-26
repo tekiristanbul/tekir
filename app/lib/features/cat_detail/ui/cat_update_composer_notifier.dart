@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/identity/device_identity.dart';
+import '../../../core/identity/session_identity.dart';
 import '../data/cat_detail_api.dart';
 import 'cat_detail_notifier.dart';
 
@@ -109,17 +110,26 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     if (state.isSubmitting) return false;
     state = state.copyWith(isSubmitting: true, clearError: true);
     try {
-      // Lazily initializes (or awaits an in-flight, or retries a
-      // previously failed) device identity — never triggered merely by
-      // viewing the read-only cat-detail screen, only by an actual submit.
-      final identity = await ref.read(deviceIdentityServiceProvider).init();
-      if (identity == null) {
+      // Defense-in-depth (issue #65): the caller is expected to have
+      // already gone through AuthGate before reaching this method, so a
+      // session should always be cached here — this only actually fires on
+      // a stale composer instance or a logout that happened while the
+      // sheet was open. The server is still the real authorization
+      // boundary (RequireBearer); this is purely a fast, local check to
+      // avoid a doomed round trip.
+      if (ref.read(sessionIdentityServiceProvider).cached == null) {
         state = state.copyWith(
           isSubmitting: false,
           error: UpdateSubmitError.unauthorized,
         );
         return false;
       }
+      // Lazily initializes (or awaits an in-flight, or retries a
+      // previously failed) device identity for optional association with
+      // the update (author_device_id) — never required for authorization,
+      // and never triggered merely by viewing the read-only cat-detail
+      // screen, only by an actual submit.
+      await ref.read(deviceIdentityServiceProvider).init();
       final entry = await ref
           .read(catDetailApiProvider)
           .createUpdate(catId, statuses: statuses, comment: comment);

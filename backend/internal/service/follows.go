@@ -16,13 +16,17 @@ type FollowsStore interface {
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	CreateFollow(ctx context.Context, arg repository.CreateFollowParams) error
 	DeleteFollow(ctx context.Context, arg repository.DeleteFollowParams) error
-	ListFollowedCats(ctx context.Context, deviceID pgtype.UUID) ([]repository.ListFollowedCatsRow, error)
+	ListFollowedCats(ctx context.Context, userID pgtype.UUID) ([]repository.ListFollowedCatsRow, error)
 }
 
-// FollowsService handles device-owned cat follows (issue #44): a valid
-// device credential is enough to follow/unfollow a cat and list its own
-// followed cats — no account/login required, matching docs/product/
-// trust.md's "guests can follow/favorite a cat" decision.
+// FollowsService handles account-owned cat follows (issue #65: following is
+// private per-account state, matching docs/product/trust.md and
+// community.md). A valid bearer session is required to follow, unfollow, or
+// list followed cats; an optional device token is recorded alongside a new
+// follow purely for installation/abuse-control association, never as
+// authorization. Pre-existing device-owned follows (issue #44) remain
+// readable once the owning device is linked to an account — see
+// AuthService.linkDevice's backfill.
 type FollowsService struct {
 	db    FollowsStore
 	clock func() time.Time
@@ -47,20 +51,25 @@ func NewFollowsService(db FollowsStore, opts ...FollowsServiceOption) *FollowsSe
 	return s
 }
 
-// Follow records that deviceID follows the cat identified by catID
-// (issue #44). Idempotent: following an already-followed cat succeeds
-// without creating a duplicate row — Store.CreateFollow's on-conflict
-// clause makes this safe even under concurrent duplicate requests.
-// deviceID is never client-supplied: it comes from the authenticated
-// device context the device-token middleware places on the request (see
-// CreateOrdinaryUpdate for the same convention), so it is always a
-// well-formed uuid the middleware itself generated.
-func (s *FollowsService) Follow(ctx context.Context, catID, deviceID string) error {
+// Follow records that userID follows the cat identified by catID (issue
+// #65). Idempotent: following an already-followed cat succeeds without
+// creating a duplicate row — Store.CreateFollow's on-conflict clause makes
+// this safe even under concurrent duplicate requests. userID is never
+// client-supplied: it comes from the authenticated bearer context the
+// RequireBearer middleware places on the request. deviceID is likewise
+// never client-supplied (it comes from the optional device-token context,
+// if present) and may be "" — a follow written without a device token is
+// perfectly valid, it just carries no installation association.
+func (s *FollowsService) Follow(ctx context.Context, catID, userID, deviceID string) error {
 	cid, err := parseCatID(catID)
 	if err != nil {
 		return err
 	}
-	did, err := uuid.Parse(deviceID)
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	did, err := optionalUUID(deviceID)
 	if err != nil {
 		return err
 	}
@@ -74,21 +83,22 @@ func (s *FollowsService) Follow(ctx context.Context, catID, deviceID string) err
 	}
 
 	return s.db.CreateFollow(ctx, repository.CreateFollowParams{
-		DeviceID: pgtype.UUID{Bytes: did, Valid: true},
+		UserID:   pgtype.UUID{Bytes: uid, Valid: true},
+		DeviceID: did,
 		CatID:    cid,
 	})
 }
 
-// Unfollow removes deviceID's follow of the cat identified by catID (issue
-// #44). Idempotent: unfollowing a cat this device doesn't currently follow
+// Unfollow removes userID's follow of the cat identified by catID (issue
+// #65). Idempotent: unfollowing a cat this account doesn't currently follow
 // deletes zero rows and still succeeds. Mirrors Follow's 404-on-unknown-cat
 // behavior rather than silently no-op-ing on a cat id that never existed.
-func (s *FollowsService) Unfollow(ctx context.Context, catID, deviceID string) error {
+func (s *FollowsService) Unfollow(ctx context.Context, catID, userID string) error {
 	cid, err := parseCatID(catID)
 	if err != nil {
 		return err
 	}
-	did, err := uuid.Parse(deviceID)
+	uid, err := uuid.Parse(userID)
 	if err != nil {
 		return err
 	}
@@ -102,24 +112,24 @@ func (s *FollowsService) Unfollow(ctx context.Context, catID, deviceID string) e
 	}
 
 	return s.db.DeleteFollow(ctx, repository.DeleteFollowParams{
-		DeviceID: pgtype.UUID{Bytes: did, Valid: true},
-		CatID:    cid,
+		UserID: pgtype.UUID{Bytes: uid, Valid: true},
+		CatID:  cid,
 	})
 }
 
-// ListFollows returns deviceID's followed cats, ordered by most recent cat
-// activity (issue #44) — never another device's follows, since the
-// underlying query is scoped to deviceID throughout. The returned CatMarker
+// ListFollows returns userID's followed cats, ordered by most recent cat
+// activity (issue #65) — never another account's follows, since the
+// underlying query is scoped to userID throughout. The returned CatMarker
 // shape is exactly the map/detail summary a client already knows how to
 // render, including active needs-help state, rather than a bespoke
 // follows-only representation.
-func (s *FollowsService) ListFollows(ctx context.Context, deviceID string) ([]CatMarker, error) {
-	did, err := uuid.Parse(deviceID)
+func (s *FollowsService) ListFollows(ctx context.Context, userID string) ([]CatMarker, error) {
+	uid, err := uuid.Parse(userID)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := s.db.ListFollowedCats(ctx, pgtype.UUID{Bytes: did, Valid: true})
+	rows, err := s.db.ListFollowedCats(ctx, pgtype.UUID{Bytes: uid, Valid: true})
 	if err != nil {
 		return nil, err
 	}

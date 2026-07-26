@@ -206,9 +206,11 @@ type createUpdateRequest struct {
 }
 
 // CreateUpdate answers POST /v1/cats/{cat_id}/updates: records a new
-// ordinary status update for the cat, attributed to the device identified
-// by the caller's X-Device-Token (see RequireDeviceToken). Requires no
-// bearer auth beyond that device token.
+// ordinary status update for the cat, attributed to the authenticated
+// account resolved from the caller's Authorization: Bearer (see
+// RequireBearer). An optional X-Device-Token (see OptionalDeviceToken) is
+// recorded alongside it purely for installation/abuse-control association
+// — it is never sufficient authorization on its own (issue #65).
 func (h *CatsHandler) CreateUpdate(w http.ResponseWriter, r *http.Request) {
 	var req createUpdateRequest
 	dec := json.NewDecoder(r.Body)
@@ -218,8 +220,9 @@ func (h *CatsHandler) CreateUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user := UserFromContext(r.Context())
 	device := DeviceFromContext(r.Context())
-	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), device.DeviceID, req.Statuses, req.Comment)
+	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, device.DeviceID, req.Statuses, req.Comment)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return

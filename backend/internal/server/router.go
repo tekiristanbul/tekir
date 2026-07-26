@@ -38,10 +38,10 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.Get("/v1/cats", cats.Nearby)
 	r.Get("/v1/cats/{cat_id}", cats.Detail)
 	r.Get("/v1/cats/{cat_id}/updates", cats.UpdateHistory)
-	r.With(handler.RequireDeviceToken(deviceTokens)).Post("/v1/cats/{cat_id}/updates", cats.CreateUpdate)
-	r.With(handler.RequireDeviceToken(deviceTokens)).Post("/v1/cats/{cat_id}/follow", follows.Follow)
-	r.With(handler.RequireDeviceToken(deviceTokens)).Delete("/v1/cats/{cat_id}/follow", follows.Unfollow)
-	r.With(handler.RequireDeviceToken(deviceTokens)).Get("/v1/me/follows", follows.ListFollows)
+	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/cats/{cat_id}/updates", cats.CreateUpdate)
+	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/cats/{cat_id}/follow", follows.Follow)
+	r.With(handler.RequireBearer(accessTokens)).Delete("/v1/cats/{cat_id}/follow", follows.Unfollow)
+	r.With(handler.RequireBearer(accessTokens)).Get("/v1/me/follows", follows.ListFollows)
 
 	r.Post("/v1/devices", devices.Register)
 

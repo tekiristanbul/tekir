@@ -34,6 +34,7 @@ lib/
     notifications/
     account/
     auth/
+    follow/
 ```
 
 - each feature has a small `data/` and `ui/` boundary; no separate domain layer is required for mvp.
