@@ -3,6 +3,11 @@
 DATABASE_URL ?= postgres://catsofistanbul:catsofistanbul@localhost:5432/catsofistanbul?sslmode=disable
 export DATABASE_URL
 
+# local dev only — never reuse this value outside a throwaway local
+# database; a real deployment sets its own JWT_SIGNING_KEY as a secret.
+JWT_SIGNING_KEY ?= local-dev-only-not-a-secret
+export JWT_SIGNING_KEY
+
 run:
 	go run ./cmd/api
 
