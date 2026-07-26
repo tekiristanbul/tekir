@@ -76,6 +76,8 @@ type AuthStore interface {
 
 	GetDeviceByID(ctx context.Context, id pgtype.UUID) (repository.GetDeviceByIDRow, error)
 	LinkDeviceToUser(ctx context.Context, arg repository.LinkDeviceToUserParams) error
+	BackfillFollowsUserID(ctx context.Context, arg repository.BackfillFollowsUserIDParams) error
+	BackfillUpdatesAuthorUserID(ctx context.Context, arg repository.BackfillUpdatesAuthorUserIDParams) error
 }
 
 // AuthService implements issue #58's phone-otp authentication: requesting
@@ -345,27 +347,51 @@ func (s *AuthService) SetDisplayName(ctx context.Context, userID, displayName st
 }
 
 // linkDevice idempotently links deviceID to userID. Linking a device
-// already linked to this same account is a no-op (including under
-// concurrent retries — see LinkDeviceToUser's own idempotency). Linking a
-// device already linked to a *different* account is rejected rather than
-// silently reassigning it, so a device's prior authored content
-// (cats.created_by_device_id / updates.author_device_id, both keyed by
-// device_id) is never retroactively re-attributed to a second account. db
-// is explicit for the same reason as resolveOrCreateUser's.
+// already linked to this same account is a no-op on the link itself
+// (including under concurrent retries — see LinkDeviceToUser's own
+// idempotency). Linking a device already linked to a *different* account
+// is rejected rather than silently reassigning it, so a device's prior
+// authored content (cats.created_by_device_id / updates.author_device_id,
+// both keyed by device_id) is never retroactively re-attributed to a
+// second account — that path returns immediately, before any backfill.
+//
+// On both the fresh-link and already-linked-to-this-account paths (issue
+// #65), linkDevice also backfills this device's pre-existing device-owned
+// follows and ordinary updates onto the account: BackfillFollowsUserID and
+// BackfillUpdatesAuthorUserID each only touch rows still missing the
+// account column, so re-running them (a repeat verification of the same
+// already-linked device, or a retried transaction) is a safe no-op rather
+// than a re-assignment. This is what makes "existing device-owned content
+// remains associated after linking" true without a separate migration
+// step for devices linked after this ships. db is explicit for the same
+// reason as resolveOrCreateUser's.
 func (s *AuthService) linkDevice(ctx context.Context, db AuthStore, deviceID, userID uuid.UUID) error {
 	device, err := db.GetDeviceByID(ctx, pgtype.UUID{Bytes: deviceID, Valid: true})
 	if err != nil {
 		return err
 	}
 	if device.UserID.Valid {
-		if uuid.UUID(device.UserID.Bytes) == userID {
-			return nil
+		if uuid.UUID(device.UserID.Bytes) != userID {
+			return ErrDeviceLinkedToOtherAccount
 		}
-		return ErrDeviceLinkedToOtherAccount
-	}
-	return db.LinkDeviceToUser(ctx, repository.LinkDeviceToUserParams{
+	} else if err := db.LinkDeviceToUser(ctx, repository.LinkDeviceToUserParams{
 		ID:     pgtype.UUID{Bytes: deviceID, Valid: true},
 		UserID: pgtype.UUID{Bytes: userID, Valid: true},
+	}); err != nil {
+		return err
+	}
+
+	deviceArg := pgtype.UUID{Bytes: deviceID, Valid: true}
+	userArg := pgtype.UUID{Bytes: userID, Valid: true}
+	if err := db.BackfillFollowsUserID(ctx, repository.BackfillFollowsUserIDParams{
+		UserID:   userArg,
+		DeviceID: deviceArg,
+	}); err != nil {
+		return err
+	}
+	return db.BackfillUpdatesAuthorUserID(ctx, repository.BackfillUpdatesAuthorUserIDParams{
+		AuthorUserID:   userArg,
+		AuthorDeviceID: deviceArg,
 	})
 }
 

@@ -15,6 +15,14 @@ import (
 	"github.com/tekiristanbul/tekir/backend/internal/service"
 )
 
+// backfillCall records one invocation of BackfillFollowsUserID or
+// BackfillUpdatesAuthorUserID, so a test can assert linkDevice's backfill
+// fires with the right ids without a real database.
+type backfillCall struct {
+	deviceID uuid.UUID
+	userID   uuid.UUID
+}
+
 // fakeAuthStore is an in-process stub for service.AuthStore.
 type fakeAuthStore struct {
 	clock        func() time.Time
@@ -24,6 +32,9 @@ type fakeAuthStore struct {
 	devices      map[uuid.UUID]repository.GetDeviceByIDRow
 
 	createUserErr error
+
+	backfillFollowsCalls []backfillCall
+	backfillUpdatesCalls []backfillCall
 }
 
 func newFakeAuthStore() *fakeAuthStore {
@@ -122,6 +133,22 @@ func (f *fakeAuthStore) GetDeviceByID(_ context.Context, id pgtype.UUID) (reposi
 
 func (f *fakeAuthStore) LinkDeviceToUser(_ context.Context, arg repository.LinkDeviceToUserParams) error {
 	f.devices[uuid.UUID(arg.ID.Bytes)] = repository.GetDeviceByIDRow{ID: arg.ID, UserID: arg.UserID}
+	return nil
+}
+
+func (f *fakeAuthStore) BackfillFollowsUserID(_ context.Context, arg repository.BackfillFollowsUserIDParams) error {
+	f.backfillFollowsCalls = append(f.backfillFollowsCalls, backfillCall{
+		deviceID: uuid.UUID(arg.DeviceID.Bytes),
+		userID:   uuid.UUID(arg.UserID.Bytes),
+	})
+	return nil
+}
+
+func (f *fakeAuthStore) BackfillUpdatesAuthorUserID(_ context.Context, arg repository.BackfillUpdatesAuthorUserIDParams) error {
+	f.backfillUpdatesCalls = append(f.backfillUpdatesCalls, backfillCall{
+		deviceID: uuid.UUID(arg.AuthorDeviceID.Bytes),
+		userID:   uuid.UUID(arg.AuthorUserID.Bytes),
+	})
 	return nil
 }
 
@@ -375,6 +402,91 @@ func TestAuthService_VerifyOTP_RelinkingSameAccountIsIdempotent(t *testing.T) {
 	}
 	if first.UserID != second.UserID {
 		t.Error("expected the same account on idempotent relink")
+	}
+}
+
+// TestAuthService_VerifyOTP_BackfillsFollowsAndUpdatesUserID proves
+// linkDevice backfills a newly-linked device's pre-existing device-owned
+// content onto the account (issue #65) — asserted here at the fake-store
+// level; the real-database preservation guarantee is covered by
+// internal/repository/auth_integration_test.go.
+func TestAuthService_VerifyOTP_BackfillsFollowsAndUpdatesUserID(t *testing.T) {
+	store := newFakeAuthStore()
+	sms := &fakeSms{}
+	svc := newTestAuthService(t, store, sms, time.Now)
+
+	_ = svc.RequestOTP(context.Background(), "5321112233")
+	session, err := svc.VerifyOTP(context.Background(), "5321112233", sms.sent[0].code, testDeviceID)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+
+	if len(store.backfillFollowsCalls) != 1 {
+		t.Fatalf("expected exactly one follows backfill call, got %d", len(store.backfillFollowsCalls))
+	}
+	if got := store.backfillFollowsCalls[0]; got.deviceID.String() != testDeviceID || got.userID.String() != session.UserID {
+		t.Errorf("unexpected follows backfill args: %+v", got)
+	}
+	if len(store.backfillUpdatesCalls) != 1 {
+		t.Fatalf("expected exactly one updates backfill call, got %d", len(store.backfillUpdatesCalls))
+	}
+	if got := store.backfillUpdatesCalls[0]; got.deviceID.String() != testDeviceID || got.userID.String() != session.UserID {
+		t.Errorf("unexpected updates backfill args: %+v", got)
+	}
+}
+
+// TestAuthService_VerifyOTP_ReVerifySameAccount_BackfillIsIdempotent proves
+// re-verifying an already-linked device runs the backfill again (safe,
+// since the real queries only touch still-null rows) rather than skipping
+// it — a second verification must not be a smaller-guarantee no-op.
+func TestAuthService_VerifyOTP_ReVerifySameAccount_BackfillIsIdempotent(t *testing.T) {
+	store := newFakeAuthStore()
+	sms := &fakeSms{}
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := &now
+	svc := newTestAuthService(t, store, sms, func() time.Time { return *clock })
+
+	_ = svc.RequestOTP(context.Background(), "5321112233")
+	if _, err := svc.VerifyOTP(context.Background(), "5321112233", sms.sent[0].code, testDeviceID); err != nil {
+		t.Fatalf("first verify: %v", err)
+	}
+
+	*clock = clock.Add(2 * time.Minute)
+	_ = svc.RequestOTP(context.Background(), "5321112233")
+	if _, err := svc.VerifyOTP(context.Background(), "5321112233", sms.sent[len(sms.sent)-1].code, testDeviceID); err != nil {
+		t.Fatalf("second verify: %v", err)
+	}
+
+	if len(store.backfillFollowsCalls) != 2 {
+		t.Errorf("expected backfill to run on every successful link (idempotent at the query level), got %d calls", len(store.backfillFollowsCalls))
+	}
+	if store.backfillFollowsCalls[0].userID != store.backfillFollowsCalls[1].userID {
+		t.Error("expected both backfill calls to target the same account")
+	}
+}
+
+// TestAuthService_VerifyOTP_DeviceLinkedToOtherAccount_NeverBackfills is
+// the explicit regression for "must not silently transfer ownership": a
+// device rejected for belonging to a different account must never have its
+// content backfilled toward the new account.
+func TestAuthService_VerifyOTP_DeviceLinkedToOtherAccount_NeverBackfills(t *testing.T) {
+	store := newFakeAuthStore()
+	sms := &fakeSms{}
+	svc := newTestAuthService(t, store, sms, time.Now)
+
+	_ = svc.RequestOTP(context.Background(), "5321112233")
+	if _, err := svc.VerifyOTP(context.Background(), "5321112233", sms.sent[0].code, testDeviceID); err != nil {
+		t.Fatalf("first verify: %v", err)
+	}
+	callsAfterFirstLink := len(store.backfillFollowsCalls)
+
+	_ = svc.RequestOTP(context.Background(), "5339998877")
+	if _, err := svc.VerifyOTP(context.Background(), "5339998877", sms.sent[len(sms.sent)-1].code, testDeviceID); !errors.Is(err, service.ErrDeviceLinkedToOtherAccount) {
+		t.Fatalf("expected ErrDeviceLinkedToOtherAccount, got %v", err)
+	}
+
+	if len(store.backfillFollowsCalls) != callsAfterFirstLink {
+		t.Errorf("expected no additional backfill after a rejected relink, got %d calls (was %d)", len(store.backfillFollowsCalls), callsAfterFirstLink)
 	}
 }
 

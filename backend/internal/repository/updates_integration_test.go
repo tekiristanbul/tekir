@@ -446,12 +446,22 @@ func TestStore_CreateOrdinaryUpdate_Success(t *testing.T) {
 		t.Fatalf("create device: %v", err)
 	}
 
+	userID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateUser(ctx, repository.CreateUserParams{
+		ID:              userID,
+		Phone:           "+90555" + testDigits(t),
+		PhoneVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
 	createdAt := time.Date(2026, 2, 1, 9, 30, 0, 0, time.UTC)
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	row, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:             updateID,
 		CatID:          catID,
 		AuthorDeviceID: device.ID,
+		AuthorUserID:   userID,
 		Comment:        pgtype.Text{String: "mama verildi", Valid: true},
 		CreatedAt:      pgtype.Timestamptz{Time: createdAt, Valid: true},
 		Statuses:       []string{"fed", "seen"},
@@ -464,12 +474,15 @@ func TestStore_CreateOrdinaryUpdate_Success(t *testing.T) {
 	}
 
 	// author attribution landed on the update row.
-	var authorDeviceID pgtype.UUID
-	if err := pool.QueryRow(ctx, "select author_device_id from updates where id = $1", row.ID).Scan(&authorDeviceID); err != nil {
-		t.Fatalf("query author_device_id: %v", err)
+	var authorDeviceID, authorUserID pgtype.UUID
+	if err := pool.QueryRow(ctx, "select author_device_id, author_user_id from updates where id = $1", row.ID).Scan(&authorDeviceID, &authorUserID); err != nil {
+		t.Fatalf("query author attribution: %v", err)
 	}
 	if authorDeviceID != device.ID {
 		t.Errorf("expected author_device_id %v, got %v", device.ID, authorDeviceID)
+	}
+	if authorUserID != userID {
+		t.Errorf("expected author_user_id %v, got %v", userID, authorUserID)
 	}
 
 	// cats.last_update_at moved to the update's created_at, atomically.
@@ -509,6 +522,124 @@ func TestStore_CreateOrdinaryUpdate_Success(t *testing.T) {
 	}
 	if rows[0].Comment.String != "mama verildi" {
 		t.Errorf("unexpected comment: %q", rows[0].Comment.String)
+	}
+}
+
+// TestStore_CreateOrdinaryUpdate_WithoutAuthorDeviceID_Succeeds proves an
+// ordinary update can be created with only an author_user_id and no
+// author_device_id (issue #65: device association is optional on this
+// write path — a bearer-only request, with no X-Device-Token, is valid).
+func TestStore_CreateOrdinaryUpdate_WithoutAuthorDeviceID_Succeeds(t *testing.T) {
+	store := newTestStore(t)
+	pool := rawPool(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "device-optional recipient")
+	userID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateUser(ctx, repository.CreateUserParams{
+		ID:              userID,
+		Phone:           "+90555" + testDigits(t),
+		PhoneVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	row, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		CreatedAt:    pgtype.Timestamptz{Time: time.Date(2026, 2, 2, 9, 0, 0, 0, time.UTC), Valid: true},
+		Statuses:     []string{"seen"},
+	})
+	if err != nil {
+		t.Fatalf("create ordinary update without device: %v", err)
+	}
+
+	var authorDeviceID, authorUserID pgtype.UUID
+	if err := pool.QueryRow(ctx, "select author_device_id, author_user_id from updates where id = $1", row.ID).Scan(&authorDeviceID, &authorUserID); err != nil {
+		t.Fatalf("query author attribution: %v", err)
+	}
+	if authorDeviceID.Valid {
+		t.Errorf("expected no author_device_id, got %v", authorDeviceID)
+	}
+	if authorUserID != userID {
+		t.Errorf("expected author_user_id %v, got %v", userID, authorUserID)
+	}
+}
+
+// TestStore_BackfillUpdatesAuthorUserID_Idempotent proves the backfill
+// query AuthService.linkDevice runs inside its transaction only touches
+// rows still missing author_user_id, and rerunning it (a retried or
+// repeated link) never overwrites an already-attributed row toward a
+// different account.
+func TestStore_BackfillUpdatesAuthorUserID_Idempotent(t *testing.T) {
+	store := newTestStore(t)
+	pool := rawPool(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "backfill recipient")
+	device, err := store.CreateDevice(ctx, repository.CreateDeviceParams{
+		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		TokenHash: uuid.NewString(),
+		Platform:  "ios",
+	})
+	if err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+
+	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:             updateID,
+		CatID:          catID,
+		AuthorDeviceID: device.ID,
+		CreatedAt:      pgtype.Timestamptz{Time: time.Date(2026, 2, 3, 9, 0, 0, 0, time.UTC), Valid: true},
+		Statuses:       []string{"seen"},
+	}); err != nil {
+		t.Fatalf("seed device-owned update: %v", err)
+	}
+
+	accountA := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateUser(ctx, repository.CreateUserParams{
+		ID:              accountA,
+		Phone:           "+90555" + testDigits(t),
+		PhoneVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		t.Fatalf("create account A: %v", err)
+	}
+
+	// First backfill attributes the row to account A.
+	if err := store.BackfillUpdatesAuthorUserID(ctx, repository.BackfillUpdatesAuthorUserIDParams{
+		AuthorUserID:   accountA,
+		AuthorDeviceID: device.ID,
+	}); err != nil {
+		t.Fatalf("first backfill: %v", err)
+	}
+
+	accountB := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateUser(ctx, repository.CreateUserParams{
+		ID:              accountB,
+		Phone:           "+90555" + testDigits(t),
+		PhoneVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		t.Fatalf("create account B: %v", err)
+	}
+
+	// A repeat backfill (e.g. a retried transaction) targeting a different
+	// account must be a no-op — the row is already attributed.
+	if err := store.BackfillUpdatesAuthorUserID(ctx, repository.BackfillUpdatesAuthorUserIDParams{
+		AuthorUserID:   accountB,
+		AuthorDeviceID: device.ID,
+	}); err != nil {
+		t.Fatalf("second backfill: %v", err)
+	}
+
+	var authorUserID pgtype.UUID
+	if err := pool.QueryRow(ctx, "select author_user_id from updates where id = $1", updateID).Scan(&authorUserID); err != nil {
+		t.Fatalf("query author_user_id: %v", err)
+	}
+	if authorUserID != accountA {
+		t.Errorf("expected author_user_id to stay %v after a repeat backfill, got %v", accountA, authorUserID)
 	}
 }
 

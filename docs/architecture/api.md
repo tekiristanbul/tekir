@@ -8,7 +8,7 @@ define the http api surface for the tekir mvp backend, matching the product deci
 
 ### identity / auth model
 
-two-tier, matching [[trust]]: public read access and device-owned follows require no account login; every user contribution requires a phone-verified account. ordinary updates, needs-help updates, media uploads, and new-cat creation therefore require `Authorization: Bearer`.
+two-tier, matching [[trust]]: public read access requires no account login; following a cat and every user contribution require a phone-verified account. following, ordinary updates, needs-help updates, media uploads, and new-cat creation therefore require `Authorization: Bearer` (issue #65 moved following and ordinary updates onto this model; the rest were bearer-required from the start).
 
 a client-generated identifier is not sufficient identity on its own — anything the client can choose or copy can be replayed. the device credential remains server-issued and gets its own header so device association and bearer authorization stay separate:
 
@@ -76,21 +76,21 @@ POST /v1/media                      (Bearer required)  multipart file → { medi
 
 `GET /v1/cats/{cat_id}/updates` is implemented (issue #21, extended in #23), newest first and keyset-paginated on `(created_at, seq)`.
 
-`POST /v1/cats/{cat_id}/updates` is implemented from the earlier device-token-only contract and must be changed before the product decision is considered implemented. the target contract resolves the authenticated account from `Authorization: Bearer`; `X-Device-Token` may still be supplied for device association but is not sufficient authorization. `statuses` remains a non-empty set from `seen`, `fed`, and `water_provided`; comment-only requests remain invalid. the server derives author and timestamps and writes the update, statuses, `last_update_at`, and notification outbox entry transactionally.
+`POST /v1/cats/{cat_id}/updates` resolves the authenticated account from `Authorization: Bearer` (implemented — issue #65, superseding #36's earlier device-token-only contract); `X-Device-Token` may still be supplied and is recorded alongside the account for installation/abuse-control association, but is never sufficient authorization on its own. `statuses` remains a non-empty set from `seen`, `fed`, and `water_provided`; comment-only requests remain invalid. the server derives author (account and, optionally, device) and timestamps and writes the update, statuses, `last_update_at`, and notification outbox entry transactionally.
 
 `POST /v1/cats/{cat_id}/needs-help` also requires bearer authentication. `expires_at` is server-computed as `created_at + 72h`.
 
 ### follows / notifications
 
 ```
-POST   /v1/cats/{cat_id}/follow      (X-Device-Token required)   → 204   (implemented — issue #44)
-DELETE /v1/cats/{cat_id}/follow      (X-Device-Token required)   → 204   (implemented — issue #44)
-GET    /v1/me/follows                (X-Device-Token required)   → [{ id, name, primary_photo, area{lat,lng}, area_label|null, active_alert|null, last_update_at }]   (implemented — issue #44)
+POST   /v1/cats/{cat_id}/follow      (Bearer required; X-Device-Token optional)   → 204   (implemented — issue #65, superseding #44's device-only contract)
+DELETE /v1/cats/{cat_id}/follow      (Bearer required)                             → 204   (implemented — issue #65)
+GET    /v1/me/follows                (Bearer required)                             → [{ id, name, primary_photo, area{lat,lng}, area_label|null, active_alert|null, last_update_at }]   (implemented — issue #65)
 GET    /v1/me/notifications?cursor=                               → [{ id, cat_id, update_id, read, created_at }]
 POST   /v1/me/notifications/{id}/read                             → 204
 ```
 
-follow/unfollow/list remain device-owned for mvp and do not create public content. both follow and unfollow are idempotent.
+following is private, account-owned state (matching [[community]]) and does not create public content. an optional `X-Device-Token` on follow is recorded purely for installation/abuse-control association, never authorization — mirroring the updates contract above. both follow and unfollow are idempotent. pre-existing device-owned follows (issue #44) are backfilled onto an account automatically the moment the owning device links to it (see [[db]]'s `devices.user_id` design note) — no follow is ever lost or requires the client to re-follow after signing in.
 
 push delivery remains at-most-once for mvp through the notification outbox and notifications uniqueness constraint.
 

@@ -63,7 +63,7 @@ func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository
 }
 
 // fakeDeviceResolver stands in for service.DevicesService in tests that
-// exercise CreateUpdate through the real RequireDeviceToken middleware
+// exercise CreateUpdate through the real OptionalDeviceToken middleware
 // rather than by injecting a device identity directly into context.
 type fakeDeviceResolver struct {
 	identity service.DeviceIdentity
@@ -74,27 +74,56 @@ func (f fakeDeviceResolver) ResolveToken(_ context.Context, _ string) (service.D
 	return f.identity, f.err
 }
 
-// routerFor wires h behind a real chi router so chi.URLParam (used by
-// Detail/UpdateHistory/CreateUpdate) is populated the same way it is in
-// production. The POST route runs behind RequireDeviceToken, exactly as
-// server.NewRouter wires it, so a request without a valid X-Device-Token
-// never reaches the handler.
-func routerFor(h *CatsHandler) http.Handler {
-	return routerForWithResolver(h, fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.NewString()}})
+// fakeAccessValidator stands in for service.SessionService in tests that
+// exercise CreateUpdate/Follow/Unfollow/ListFollows through the real
+// RequireBearer middleware rather than by injecting a user identity
+// directly into context (issue #65).
+type fakeAccessValidator struct {
+	userID string
+	err    error
 }
 
-func routerForWithResolver(h *CatsHandler, resolver DeviceTokenResolver) http.Handler {
+func (f fakeAccessValidator) ValidateAccessToken(_ string) (string, error) {
+	return f.userID, f.err
+}
+
+// defaultTestUserID is the account id fakeAccessValidator resolves to by
+// default in routerFor, so most CreateUpdate tests don't need to thread
+// their own validator through just to satisfy RequireBearer.
+var defaultTestUserID = uuid.NewString()
+
+// routerFor wires h behind a real chi router so chi.URLParam (used by
+// Detail/UpdateHistory/CreateUpdate) is populated the same way it is in
+// production. The POST route runs behind RequireBearer + OptionalDeviceToken,
+// exactly as server.NewRouter wires it (issue #65): a request without a
+// valid Authorization: Bearer never reaches the handler, but a missing or
+// invalid X-Device-Token never blocks it either.
+func routerFor(h *CatsHandler) http.Handler {
+	return routerForWithResolver(h,
+		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.NewString()}},
+		fakeAccessValidator{userID: defaultTestUserID},
+	)
+}
+
+func routerForWithResolver(h *CatsHandler, resolver DeviceTokenResolver, validator AccessTokenValidator) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/v1/cats/{cat_id}", h.Detail)
 	r.Get("/v1/cats/{cat_id}/updates", h.UpdateHistory)
-	r.With(RequireDeviceToken(resolver)).Post("/v1/cats/{cat_id}/updates", h.CreateUpdate)
+	r.With(RequireBearer(validator), OptionalDeviceToken(resolver)).Post("/v1/cats/{cat_id}/updates", h.CreateUpdate)
 	return r
 }
 
-// withDeviceToken sets the header RequireDeviceToken reads, so requests
-// through routerFor authenticate as the fake device it was built with.
+// withDeviceToken sets the header OptionalDeviceToken reads, so requests
+// through routerFor associate with the fake device it was built with.
 func withDeviceToken(req *http.Request) *http.Request {
 	req.Header.Set("X-Device-Token", "test-token")
+	return req
+}
+
+// withBearerToken sets the header RequireBearer reads, so requests through
+// routerFor authenticate as the fake account it was built with.
+func withBearerToken(req *http.Request) *http.Request {
+	req.Header.Set("Authorization", "Bearer test-bearer-token")
 	return req
 }
 
@@ -503,16 +532,45 @@ func TestCatsHandler_UpdateHistory_NeedsHelpEntry(t *testing.T) {
 	}
 }
 
+// TestCatsHandler_GuestReads_NoAuthHeadersRequired is an explicit regression
+// for issue #65's "guest browse and update-history reads remain unchanged"
+// requirement: Detail and UpdateHistory must stay reachable with zero
+// headers at all — no X-Device-Token, no Authorization — exactly as before
+// this slice moved follow/CreateUpdate onto bearer auth.
+func TestCatsHandler_GuestReads_NoAuthHeadersRequired(t *testing.T) {
+	catID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{ID: catID, Name: pgtype.Text{String: "tekir", Valid: true}},
+		exists: true,
+	}))
+	r := routerFor(h)
+
+	detailRec := httptest.NewRecorder()
+	detailReq := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.UUID(catID.Bytes).String(), nil)
+	r.ServeHTTP(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("expected guest Detail to succeed with no auth headers, got %d: %s", detailRec.Code, detailRec.Body.String())
+	}
+
+	historyRec := httptest.NewRecorder()
+	historyReq := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.UUID(catID.Bytes).String()+"/updates", nil)
+	r.ServeHTTP(historyRec, historyReq)
+	if historyRec.Code != http.StatusOK {
+		t.Fatalf("expected guest UpdateHistory to succeed with no auth headers, got %d: %s", historyRec.Code, historyRec.Body.String())
+	}
+}
+
 // ── CreateUpdate (POST /v1/cats/{cat_id}/updates, issue #36) ─────────────────
 
 func newCreateUpdateRequest(catID, body string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/v1/cats/"+catID+"/updates", strings.NewReader(body))
-	return withDeviceToken(req)
+	return withBearerToken(withDeviceToken(req))
 }
 
 func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
 	catID := uuid.New()
 	deviceID := uuid.New()
+	userID := uuid.New()
 	created := time.Date(2026, 1, 3, 10, 0, 0, 0, time.UTC)
 	returnedID := uuid.New()
 	var captured repository.CreateOrdinaryUpdateParams
@@ -522,7 +580,10 @@ func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
 		captured:  &captured,
 	}, service.WithClock(func() time.Time { return created })))
 
-	r := routerForWithResolver(h, fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: deviceID.String()}})
+	r := routerForWithResolver(h,
+		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: deviceID.String()}},
+		fakeAccessValidator{userID: userID.String()},
+	)
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(catID.String(), `{"statuses":["seen"]}`)
 	r.ServeHTTP(rec, req)
@@ -556,6 +617,9 @@ func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
 	}
 	if uuid.UUID(captured.AuthorDeviceID.Bytes).String() != deviceID.String() {
 		t.Errorf("unexpected captured author device id: %v", captured.AuthorDeviceID)
+	}
+	if uuid.UUID(captured.AuthorUserID.Bytes).String() != userID.String() {
+		t.Errorf("unexpected captured author user id: %v", captured.AuthorUserID)
 	}
 	if captured.Comment.Valid {
 		t.Errorf("expected no comment captured, got %v", captured.Comment)
@@ -729,16 +793,16 @@ func TestCatsHandler_CreateUpdate_RepositoryFailure(t *testing.T) {
 	}
 }
 
-// TestCatsHandler_CreateUpdate_RequiresDeviceToken proves the route is
-// actually gated by RequireDeviceToken in the same way server.NewRouter
-// wires it; the exhaustive missing/unknown/revoked/malformed-token matrix
-// lives in devices_test.go against the middleware directly.
-func TestCatsHandler_CreateUpdate_RequiresDeviceToken(t *testing.T) {
+// TestCatsHandler_CreateUpdate_RequiresBearer proves the route is actually
+// gated by RequireBearer in the same way server.NewRouter wires it (issue
+// #65); the exhaustive missing/unknown/expired-token matrix lives in
+// bearer_auth_test.go against the middleware directly.
+func TestCatsHandler_CreateUpdate_RequiresBearer(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}))
-	r := routerForWithResolver(h, fakeDeviceResolver{})
+	r := routerFor(h)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/updates", strings.NewReader(`{"statuses":["seen"]}`))
+	req := withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/updates", strings.NewReader(`{"statuses":["seen"]}`)))
 	r.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
@@ -746,9 +810,12 @@ func TestCatsHandler_CreateUpdate_RequiresDeviceToken(t *testing.T) {
 	}
 }
 
-func TestCatsHandler_CreateUpdate_UnknownDeviceToken(t *testing.T) {
+func TestCatsHandler_CreateUpdate_InvalidBearer(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}))
-	r := routerForWithResolver(h, fakeDeviceResolver{err: service.ErrDeviceNotFound})
+	r := routerForWithResolver(h,
+		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.NewString()}},
+		fakeAccessValidator{err: service.ErrSessionInvalid},
+	)
 
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["seen"]}`)
@@ -756,5 +823,45 @@ func TestCatsHandler_CreateUpdate_UnknownDeviceToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCatsHandler_CreateUpdate_DeviceTokenOptional proves a request with a
+// valid bearer token but no X-Device-Token at all still succeeds (issue
+// #65: device association is optional, never required for authorization).
+func TestCatsHandler_CreateUpdate_DeviceTokenOptional(t *testing.T) {
+	var captured repository.CreateOrdinaryUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true, captured: &captured}))
+	r := routerFor(h)
+
+	rec := httptest.NewRecorder()
+	req := withBearerToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/updates", strings.NewReader(`{"statuses":["seen"]}`)))
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if captured.AuthorDeviceID.Valid {
+		t.Errorf("expected no device id captured, got %v", captured.AuthorDeviceID)
+	}
+	if !captured.AuthorUserID.Valid {
+		t.Error("expected author user id to still be captured")
+	}
+}
+
+// TestCatsHandler_CreateUpdate_UnknownDeviceToken_StillSucceeds proves an
+// unresolvable X-Device-Token never blocks the request (issue #65:
+// OptionalDeviceToken never rejects) — only the bearer session determines
+// authorization.
+func TestCatsHandler_CreateUpdate_UnknownDeviceToken_StillSucceeds(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}))
+	r := routerForWithResolver(h, fakeDeviceResolver{err: service.ErrDeviceNotFound}, fakeAccessValidator{userID: defaultTestUserID})
+
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["seen"]}`)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

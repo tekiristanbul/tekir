@@ -11,6 +11,16 @@ import (
 )
 
 type Querier interface {
+	// issue #65: called inside AuthService.linkDevice's transaction, once a
+	// device is linked (or re-verified as already linked) to an account.
+	// idempotent — only rows still missing user_id are touched, so calling this
+	// repeatedly (retries, re-verification) never reassigns an already-set
+	// owner.
+	BackfillFollowsUserID(ctx context.Context, arg BackfillFollowsUserIDParams) error
+	// issue #65: called inside AuthService.linkDevice's transaction, once a
+	// device is linked (or re-verified as already linked) to an account.
+	// idempotent — only rows still missing author_user_id are touched.
+	BackfillUpdatesAuthorUserID(ctx context.Context, arg BackfillUpdatesAuthorUserIDParams) error
 	// lets the updates-history endpoint 404 on an unknown cat instead of
 	// silently returning an empty page indistinguishable from "no history yet".
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
@@ -34,10 +44,14 @@ type Querier interface {
 	// persisted here — the raw token is returned to the caller once and
 	// never stored (see docs/architecture/db.md). push_token is optional.
 	CreateDevice(ctx context.Context, arg CreateDeviceParams) (CreateDeviceRow, error)
-	// idempotent by construction: on conflict do nothing means a repeat follow
-	// for the same (device_id, cat_id) pair — including two concurrent
-	// duplicate requests — leaves exactly one row, never an error or a
-	// duplicate (issue #44).
+	// issue #65: account-owned. user_id is required (resolved from the
+	// authenticated bearer session, never client-supplied); device_id is
+	// optional (X-Device-Token, for installation/abuse-control association
+	// only — it is never sufficient authorization on its own). idempotent by
+	// construction: on conflict do nothing on the partial (user_id, cat_id)
+	// unique index means a repeat follow for the same account/cat pair —
+	// including two concurrent duplicate requests — leaves exactly one row,
+	// never an error or a duplicate.
 	CreateFollow(ctx context.Context, arg CreateFollowParams) error
 	// issue #38: explicit enqueue replaces the removed updates_enqueue_outbox
 	// trigger (migration 00009) — Store.CreateOrdinaryUpdate is now the only
@@ -65,7 +79,10 @@ type Querier interface {
 	// so a row's tie-breaker position is stable. author_device_id is nullable
 	// (see 00008) — set only by the write path introduced in issue #36, from
 	// authenticated device context, never client-supplied; seed/needs-help rows
-	// leave it null.
+	// leave it null. author_user_id (issue #65) is likewise nullable and set
+	// only from the caller's authenticated bearer session — the ordinary-update
+	// write path always sets it now that the route requires bearer; nothing
+	// else does.
 	CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error)
 	CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatusParams) error
 	// creates a new account for a normalized phone number. the unique
@@ -76,8 +93,9 @@ type Querier interface {
 	// afterwards via UpdateUserDisplayName once the new-account minimum-profile
 	// step collects it.
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
-	// idempotent: unfollowing a cat this device doesn't currently follow
-	// deletes zero rows and succeeds silently rather than erroring (issue #44).
+	// issue #65: account-scoped. idempotent: unfollowing a cat this account
+	// doesn't currently follow deletes zero rows and succeeds silently rather
+	// than erroring.
 	DeleteFollow(ctx context.Context, arg DeleteFollowParams) error
 	// traits are fetched separately via ListCatTraits (join against the traits
 	// vocabulary) rather than aggregated in here, so each trait can carry its
@@ -139,18 +157,19 @@ type Querier interface {
 	// ListNearby (service layer) is the one that decides active-vs-expired,
 	// against an injected clock, not this query's own now().
 	ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error)
-	// issue #44: a device's followed cats, ordered by most recent cat activity.
-	// last_update_at desc nulls last puts a cat that has never had an update
-	// after every cat that has, however old — no activity is never "fresher"
-	// than old activity. c.id desc is the deterministic tie-breaker for equal
-	// last_update_at, including the shared-null case, since last_update_at
-	// alone can't order two never-updated cats against each other. joins cats
-	// (not just follows) so the response carries the same cat-summary shape as
-	// the map/detail endpoints, including each cat's latest needs-help update
-	// via the same unfiltered-by-expiry lateral join as ListCatsInBounds/
-	// GetCatByID — the service layer decides active-vs-expired against its own
-	// injected clock, never this query's own now().
-	ListFollowedCats(ctx context.Context, deviceID pgtype.UUID) ([]ListFollowedCatsRow, error)
+	// issue #65: an account's followed cats, ordered by most recent cat
+	// activity. last_update_at desc nulls last puts a cat that has never had an
+	// update after every cat that has, however old — no activity is never
+	// "fresher" than old activity. c.id desc is the deterministic tie-breaker
+	// for equal last_update_at, including the shared-null case, since
+	// last_update_at alone can't order two never-updated cats against each
+	// other. joins cats (not just follows) so the response carries the same
+	// cat-summary shape as the map/detail endpoints, including each cat's
+	// latest needs-help update via the same unfiltered-by-expiry lateral join
+	// as ListCatsInBounds/GetCatByID — the service layer decides
+	// active-vs-expired against its own injected clock, never this query's own
+	// now().
+	ListFollowedCats(ctx context.Context, userID pgtype.UUID) ([]ListFollowedCatsRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
 	// idempotent, unconditional revoke — used only by logout, where "already
 	// revoked/expired" is not an error (see SessionService.Revoke). Never used

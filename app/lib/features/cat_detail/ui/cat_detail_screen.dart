@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,6 +7,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
+import '../../auth/ui/auth_gate.dart';
+import '../../follow/ui/follow_button.dart';
 import '../data/cat_detail.dart';
 import 'cat_detail_notifier.dart';
 import 'cat_update_composer_notifier.dart';
@@ -20,11 +24,14 @@ const _statusLabelsTr = {
 
 /// Cat-detail view reached from the map's marker-preview sheet
 /// (docs/product/map.md, docs/design/implementation-contract.md): an
-/// edge-to-edge hero photo, a compact last-update line, and a newest-first
-/// status-update timeline. Posting an ordinary status update (issue #43,
-/// one-tap "seen" or the compact multi-status composition sheet) is in
-/// scope; editing the cat, needs-help creation, and follow remain out of
-/// scope.
+/// edge-to-edge hero photo, a compact last-update line, a follow toggle,
+/// and a newest-first status-update timeline. Posting an ordinary status
+/// update (issue #43, one-tap "seen" or the compact multi-status
+/// composition sheet) and following the cat (issue #65) are both in scope;
+/// editing the cat and needs-help creation remain out of scope. Both
+/// contribution actions are gated at the point of intent via [AuthGate] —
+/// a guest never sees the composer or mutates follow state before signing
+/// in (issue #65).
 /// Permanent trait chips are not part of the mvp surface (issue #42) —
 /// behavioral observations belong in update comments instead. Matches
 /// prototype/app.js's renderDetail visual hierarchy; never shows raw
@@ -111,6 +118,11 @@ class _CatDetailBody extends ConsumerWidget {
                 _LastUpdateRow(time: detail.lastUpdateAt!),
                 const SizedBox(height: AppSpacing.s4),
               ],
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FollowButton(catId: detail.id),
+              ),
+              const SizedBox(height: AppSpacing.s4),
               _UpdateActionsRow(catId: detail.id),
               const SizedBox(height: AppSpacing.s6),
               Text(
@@ -401,7 +413,7 @@ class _UpdateActionsRow extends ConsumerWidget {
           child: SizedBox(
             height: kTapMin,
             child: ElevatedButton.icon(
-              onPressed: busy ? null : () => _submitSeen(context, ref),
+              onPressed: busy ? null : () => _gatedSubmitSeen(context, ref),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: AppColors.primaryInk,
@@ -420,7 +432,7 @@ class _UpdateActionsRow extends ConsumerWidget {
           child: SizedBox(
             height: kTapMin,
             child: OutlinedButton.icon(
-              onPressed: busy ? null : () => _openComposer(context),
+              onPressed: busy ? null : () => _gatedOpenComposer(context, ref),
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.ink,
                 side: const BorderSide(color: AppColors.lineStrong),
@@ -435,6 +447,29 @@ class _UpdateActionsRow extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+
+  // Gate-at-intent (issue #65): neither the one-tap "seen" submit nor the
+  // composition sheet may run before authentication succeeds. AuthGate
+  // itself is the only thing that decides whether to show its prompt —
+  // already-authenticated callers fall straight through with no extra ui.
+
+  Future<void> _gatedSubmitSeen(BuildContext context, WidgetRef ref) {
+    return AuthGate.require(
+      context,
+      ref,
+      contextText: 'Güncelleme paylaşmak için giriş yap',
+      onAuthenticated: () => unawaited(_submitSeen(context, ref)),
+    );
+  }
+
+  Future<void> _gatedOpenComposer(BuildContext context, WidgetRef ref) {
+    return AuthGate.require(
+      context,
+      ref,
+      contextText: 'Güncelleme paylaşmak için giriş yap',
+      onAuthenticated: () => unawaited(_openComposer(context)),
     );
   }
 

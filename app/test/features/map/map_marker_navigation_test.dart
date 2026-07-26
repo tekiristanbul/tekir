@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:app/core/identity/session_identity.dart';
 import 'package:app/core/router/app_router.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
@@ -51,6 +52,23 @@ class _EmptyCatsMapNotifier extends CatsMapNotifier {
   CatsMapState build() => const CatsMapState(hasLoadedOnce: true);
 }
 
+// A guest session (never restored) — these tests are about navigation, not
+// the follow feature (issue #65); this just keeps CatDetailScreen's
+// FollowButton from ever reaching a real network call when it mounts.
+class _GuestSessionIdentityService implements SessionIdentityService {
+  @override
+  SessionIdentity? get cached => null;
+
+  @override
+  Future<SessionIdentity?> restore() async => null;
+
+  @override
+  Future<void> save(SessionIdentity identity) async {}
+
+  @override
+  Future<void> logout() async {}
+}
+
 Future<void> _pumpMap(WidgetTester tester) async {
   // appRouter is a module-level singleton (app_router.dart), so its
   // location persists across tests within this same file/isolate unless
@@ -87,6 +105,9 @@ Future<void> _pumpMap(WidgetTester tester) async {
         // empty markers only: mounting MapScreen must not itself reach
         // into the marker-rebuild/platform-view path.
         catsMapProvider.overrideWith(_EmptyCatsMapNotifier.new),
+        sessionIdentityServiceProvider.overrideWithValue(
+          _GuestSessionIdentityService(),
+        ),
       ],
       child: MaterialApp.router(routerConfig: appRouter),
     ),

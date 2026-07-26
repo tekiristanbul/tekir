@@ -13,8 +13,11 @@
 -- so a row's tie-breaker position is stable. author_device_id is nullable
 -- (see 00008) — set only by the write path introduced in issue #36, from
 -- authenticated device context, never client-supplied; seed/needs-help rows
--- leave it null.
-insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id)
+-- leave it null. author_user_id (issue #65) is likewise nullable and set
+-- only from the caller's authenticated bearer session — the ordinary-update
+-- write path always sets it now that the route requires bearer; nothing
+-- else does.
+insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id, author_user_id)
 values (
   sqlc.arg(id),
   sqlc.arg(cat_id),
@@ -23,7 +26,8 @@ values (
   sqlc.arg(created_at),
   sqlc.arg(needs_help_category),
   sqlc.arg(needs_help_expires_at),
-  sqlc.arg(author_device_id)
+  sqlc.arg(author_device_id),
+  sqlc.arg(author_user_id)
 )
 on conflict (id) do update set
   kind = excluded.kind,
@@ -31,8 +35,16 @@ on conflict (id) do update set
   created_at = excluded.created_at,
   needs_help_category = excluded.needs_help_category,
   needs_help_expires_at = excluded.needs_help_expires_at,
-  author_device_id = excluded.author_device_id
+  author_device_id = excluded.author_device_id,
+  author_user_id = excluded.author_user_id
 returning id, seq;
+
+-- name: BackfillUpdatesAuthorUserID :exec
+-- issue #65: called inside AuthService.linkDevice's transaction, once a
+-- device is linked (or re-verified as already linked) to an account.
+-- idempotent — only rows still missing author_user_id are touched.
+update updates set author_user_id = sqlc.arg(author_user_id)
+where author_device_id = sqlc.arg(author_device_id) and author_user_id is null;
 
 -- name: CreateUpdateStatus :exec
 insert into update_statuses (update_id, status)

@@ -19,9 +19,15 @@ class UpdateValidationException implements Exception {
   const UpdateValidationException();
 }
 
-/// Thrown when `POST .../updates` answers 401 — the device token is
-/// missing, unresolvable, or revoked. Retrying after the device identity
-/// re-initializes is the expected recovery path (issue #43).
+/// Thrown when `POST .../updates` answers 401 — the caller's bearer session
+/// is missing, expired, or invalid (issue #65: an authenticated account is
+/// required to post an update; the device token is optional association
+/// only). `CatUpdateComposerNotifier._submit` already checks
+/// `sessionIdentityServiceProvider.cached` before calling this api, so this
+/// exception should only surface if the server rejects a session that
+/// looked valid locally (e.g. revoked mid-flight). Its current recovery —
+/// invalidating the device identity — targets a separately stale device
+/// credential and does not clear the account session.
 class UpdateUnauthorizedException implements Exception {
   const UpdateUnauthorizedException();
 }
@@ -68,14 +74,15 @@ class CatDetailApi {
     return UpdatesPage.fromJson(response.data!);
   }
 
-  /// Submits an ordinary status update (issue #43): one or more of the
-  /// fixed mvp statuses plus an optional free-text comment, attributed to
-  /// the caller's device identity via the shared [ApiClient]'s
-  /// `X-Device-Token` interceptor. The caller is responsible for making
-  /// sure a device identity is initialized first — this method does not
-  /// trigger registration itself, so a not-yet-initialized identity
-  /// surfaces as a plain [UpdateUnauthorizedException] rather than a
-  /// silent retry.
+  /// Submits an ordinary status update (issue #43, moved onto authenticated
+  /// accounts by issue #65): one or more of the fixed mvp statuses plus an
+  /// optional free-text comment, attributed to the caller's authenticated
+  /// account via the shared [ApiClient]'s `Authorization: Bearer`
+  /// interceptor — the device token is attached too, when available, for
+  /// installation association only. The caller is responsible for making
+  /// sure a session exists first (see [AuthGate]) — this method does not
+  /// trigger sign-in itself, so an unauthenticated call surfaces as a plain
+  /// [UpdateUnauthorizedException] rather than a silent retry.
   Future<CatUpdateEntry> createUpdate(
     String catId, {
     required List<String> statuses,

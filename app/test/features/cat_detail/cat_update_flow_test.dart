@@ -4,15 +4,21 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:app/core/identity/device_identity.dart';
+import 'package:app/core/identity/session_identity.dart';
 import 'package:app/core/theme/app_theme.dart';
+import 'package:app/features/auth/data/auth_api.dart';
+import 'package:app/features/auth/ui/login_screen.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/data/cat_detail_api.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_screen.dart';
 import 'package:app/features/cat_detail/ui/cat_update_composer_notifier.dart';
 import 'package:app/features/cat_detail/ui/cat_update_sheet.dart';
+import 'package:app/features/follow/data/follows_api.dart';
+import 'package:app/features/map/data/cat_marker.dart';
 
 const _catId = 'cat-1';
 
@@ -97,12 +103,95 @@ class _FixedCatDetailNotifier extends CatDetailNotifier {
   Future<void> load() async {}
 }
 
+// Mirrors auth_gate_test.dart's fakes exactly, reused here so gate-at-intent
+// (issue #65) can be exercised end to end for the "seen"/composer entry
+// points, not just AuthGate's own generic mechanism.
+class _FakeSessionIdentityService implements SessionIdentityService {
+  _FakeSessionIdentityService({SessionIdentity? initial}) : _cached = initial;
+
+  SessionIdentity? _cached;
+
+  @override
+  SessionIdentity? get cached => _cached;
+
+  @override
+  Future<SessionIdentity?> restore() async => _cached;
+
+  @override
+  Future<void> save(SessionIdentity identity) async => _cached = identity;
+
+  @override
+  Future<void> logout() async => _cached = null;
+}
+
+class _FakeAuthApi implements AuthApi {
+  AuthSession? nextSession;
+
+  @override
+  Future<void> requestOtp(String phone) async {}
+
+  @override
+  Future<AuthSession> verifyOtp({
+    required String phone,
+    required String code,
+  }) async => nextSession!;
+
+  @override
+  Future<void> setDisplayName(String displayName) async {}
+}
+
+const _authenticatedSession = SessionIdentity(
+  accessToken: 'at',
+  refreshToken: 'rt',
+  userId: 'u1',
+);
+
+// This file's default session is authenticated, so FollowsNotifier.build()
+// would otherwise call the real followsApiProvider (a live network call) —
+// this fake keeps every test here focused on the ordinary-update flow, not
+// follow (issue #65 gives follow its own test files).
+class _FakeFollowsApi implements FollowsApi {
+  @override
+  Future<void> follow(String catId) async {}
+
+  @override
+  Future<void> unfollow(String catId) async {}
+
+  @override
+  Future<List<CatMarker>> fetchFollows() async => const [];
+}
+
+/// Every test below a session override sits behind a real [GoRouter] (`/`
+/// → the screen under test, `/login` → the real [LoginScreen]) so
+/// [AuthGate]'s guest path — pushing `/login` — works exactly as it does in
+/// the app, not just in already-authenticated tests where that branch is
+/// never reached. Defaults to an authenticated session so every
+/// pre-existing test in this file keeps exercising the "already signed in"
+/// path unchanged (issue #65 gates the caller before this screen's own
+/// submit logic ever runs).
 Future<void> _pump(
   WidgetTester tester, {
   required _FakeCatDetailApi api,
   CatDetailState? detailState,
   double textScale = 1.0,
+  SessionIdentityService? sessionIdentityService,
+  AuthApi? authApi,
 }) async {
+  final router = GoRouter(
+    initialLocation: '/',
+    routes: [
+      GoRoute(
+        path: '/',
+        builder: (context, state) => const CatDetailScreen(catId: _catId),
+      ),
+      GoRoute(
+        path: '/login',
+        builder: (context, state) =>
+            LoginScreen(contextText: state.extra as String?),
+      ),
+    ],
+  );
+
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
@@ -113,6 +202,12 @@ Future<void> _pump(
             dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080')),
           ),
         ),
+        sessionIdentityServiceProvider.overrideWithValue(
+          sessionIdentityService ??
+              _FakeSessionIdentityService(initial: _authenticatedSession),
+        ),
+        authApiProvider.overrideWithValue(authApi ?? _FakeAuthApi()),
+        followsApiProvider.overrideWithValue(_FakeFollowsApi()),
         catDetailProvider(_catId).overrideWith(
           () => _FixedCatDetailNotifier(
             _catId,
@@ -120,15 +215,15 @@ Future<void> _pump(
           ),
         ),
       ],
-      child: MaterialApp(
+      child: MaterialApp.router(
         theme: AppTheme.light,
+        routerConfig: router,
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(
             context,
           ).copyWith(textScaler: TextScaler.linear(textScale)),
           child: child!,
         ),
-        home: const CatDetailScreen(catId: _catId),
       ),
     ),
   );
@@ -470,6 +565,106 @@ void main() {
       await tester.pump();
 
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  // ── gate-at-intent (issue #65) ─────────────────────────────────────────
+
+  testWidgets(
+    'a guest tapping Gördüm sees the auth prompt and createUpdate is never called before auth succeeds',
+    (tester) async {
+      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+      await _pump(
+        tester,
+        api: api,
+        sessionIdentityService: _FakeSessionIdentityService(),
+      );
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Güncelleme paylaşmak için giriş yap'), findsOneWidget);
+      expect(find.byType(LoginScreen), findsNothing);
+      expect(api.createUpdateCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'a guest tapping Güncelleme ekle sees the auth prompt before the composer sheet ever opens',
+    (tester) async {
+      final api = _FakeCatDetailApi();
+      await _pump(
+        tester,
+        api: api,
+        sessionIdentityService: _FakeSessionIdentityService(),
+      );
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Güncelleme ekle'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Güncelleme paylaşmak için giriş yap'), findsOneWidget);
+      expect(
+        find.byType(CatUpdateSheet),
+        findsNothing,
+        reason: 'the composer must never be visible before auth succeeds',
+      );
+    },
+  );
+
+  testWidgets(
+    'dismissing the guest prompt ("Vazgeç") for Gördüm never submits',
+    (tester) async {
+      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+      await _pump(
+        tester,
+        api: api,
+        sessionIdentityService: _FakeSessionIdentityService(),
+      );
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Vazgeç'));
+      await tester.pumpAndSettle();
+
+      expect(api.createUpdateCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'signing in from the guest prompt resumes the original Gördüm intent exactly once',
+    (tester) async {
+      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+      final authApi = _FakeAuthApi()
+        ..nextSession = const AuthSession(
+          accessToken: 'at',
+          refreshToken: 'rt',
+          userId: 'user-1',
+          isNewAccount: false,
+        );
+      await _pump(
+        tester,
+        api: api,
+        sessionIdentityService: _FakeSessionIdentityService(),
+        authApi: authApi,
+      );
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Giriş yap'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).first, '5321112233');
+      await tester.tap(find.text('Kod gönder'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).first, '123456');
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Giriş yap'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LoginScreen), findsNothing);
+      expect(api.createUpdateCalls, 1);
+      expect(api.lastStatuses, ['seen']);
+      expect(find.text('Güncelleme paylaşıldı'), findsOneWidget);
     },
   );
 }

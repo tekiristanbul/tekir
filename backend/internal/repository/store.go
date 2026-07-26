@@ -58,6 +58,7 @@ type CreateOrdinaryUpdateParams struct {
 	ID             pgtype.UUID
 	CatID          pgtype.UUID
 	AuthorDeviceID pgtype.UUID
+	AuthorUserID   pgtype.UUID
 	Comment        pgtype.Text
 	CreatedAt      pgtype.Timestamptz
 	Statuses       []string
@@ -83,6 +84,7 @@ func (s *Store) CreateOrdinaryUpdate(ctx context.Context, arg CreateOrdinaryUpda
 			Comment:        arg.Comment,
 			CreatedAt:      arg.CreatedAt,
 			AuthorDeviceID: arg.AuthorDeviceID,
+			AuthorUserID:   arg.AuthorUserID,
 		})
 		if err != nil {
 			return err

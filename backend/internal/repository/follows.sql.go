@@ -11,39 +11,65 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const backfillFollowsUserID = `-- name: BackfillFollowsUserID :exec
+update follows set user_id = $1
+where device_id = $2 and user_id is null
+`
+
+type BackfillFollowsUserIDParams struct {
+	UserID   pgtype.UUID `json:"user_id"`
+	DeviceID pgtype.UUID `json:"device_id"`
+}
+
+// issue #65: called inside AuthService.linkDevice's transaction, once a
+// device is linked (or re-verified as already linked) to an account.
+// idempotent — only rows still missing user_id are touched, so calling this
+// repeatedly (retries, re-verification) never reassigns an already-set
+// owner.
+func (q *Queries) BackfillFollowsUserID(ctx context.Context, arg BackfillFollowsUserIDParams) error {
+	_, err := q.db.Exec(ctx, backfillFollowsUserID, arg.UserID, arg.DeviceID)
+	return err
+}
+
 const createFollow = `-- name: CreateFollow :exec
-insert into follows (device_id, cat_id)
-values ($1, $2)
-on conflict (device_id, cat_id) do nothing
+insert into follows (user_id, device_id, cat_id)
+values ($1, $2, $3)
+on conflict (user_id, cat_id) where user_id is not null do nothing
 `
 
 type CreateFollowParams struct {
+	UserID   pgtype.UUID `json:"user_id"`
 	DeviceID pgtype.UUID `json:"device_id"`
 	CatID    pgtype.UUID `json:"cat_id"`
 }
 
-// idempotent by construction: on conflict do nothing means a repeat follow
-// for the same (device_id, cat_id) pair — including two concurrent
-// duplicate requests — leaves exactly one row, never an error or a
-// duplicate (issue #44).
+// issue #65: account-owned. user_id is required (resolved from the
+// authenticated bearer session, never client-supplied); device_id is
+// optional (X-Device-Token, for installation/abuse-control association
+// only — it is never sufficient authorization on its own). idempotent by
+// construction: on conflict do nothing on the partial (user_id, cat_id)
+// unique index means a repeat follow for the same account/cat pair —
+// including two concurrent duplicate requests — leaves exactly one row,
+// never an error or a duplicate.
 func (q *Queries) CreateFollow(ctx context.Context, arg CreateFollowParams) error {
-	_, err := q.db.Exec(ctx, createFollow, arg.DeviceID, arg.CatID)
+	_, err := q.db.Exec(ctx, createFollow, arg.UserID, arg.DeviceID, arg.CatID)
 	return err
 }
 
 const deleteFollow = `-- name: DeleteFollow :exec
-delete from follows where device_id = $1 and cat_id = $2
+delete from follows where user_id = $1 and cat_id = $2
 `
 
 type DeleteFollowParams struct {
-	DeviceID pgtype.UUID `json:"device_id"`
-	CatID    pgtype.UUID `json:"cat_id"`
+	UserID pgtype.UUID `json:"user_id"`
+	CatID  pgtype.UUID `json:"cat_id"`
 }
 
-// idempotent: unfollowing a cat this device doesn't currently follow
-// deletes zero rows and succeeds silently rather than erroring (issue #44).
+// issue #65: account-scoped. idempotent: unfollowing a cat this account
+// doesn't currently follow deletes zero rows and succeeds silently rather
+// than erroring.
 func (q *Queries) DeleteFollow(ctx context.Context, arg DeleteFollowParams) error {
-	_, err := q.db.Exec(ctx, deleteFollow, arg.DeviceID, arg.CatID)
+	_, err := q.db.Exec(ctx, deleteFollow, arg.UserID, arg.CatID)
 	return err
 }
 
@@ -68,7 +94,7 @@ left join lateral (
   order by u.created_at desc, u.seq desc
   limit 1
 ) nh on true
-where f.device_id = $1
+where f.user_id = $1
 order by c.last_update_at desc nulls last, c.id desc
 `
 
@@ -85,19 +111,20 @@ type ListFollowedCatsRow struct {
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 }
 
-// issue #44: a device's followed cats, ordered by most recent cat activity.
-// last_update_at desc nulls last puts a cat that has never had an update
-// after every cat that has, however old — no activity is never "fresher"
-// than old activity. c.id desc is the deterministic tie-breaker for equal
-// last_update_at, including the shared-null case, since last_update_at
-// alone can't order two never-updated cats against each other. joins cats
-// (not just follows) so the response carries the same cat-summary shape as
-// the map/detail endpoints, including each cat's latest needs-help update
-// via the same unfiltered-by-expiry lateral join as ListCatsInBounds/
-// GetCatByID — the service layer decides active-vs-expired against its own
-// injected clock, never this query's own now().
-func (q *Queries) ListFollowedCats(ctx context.Context, deviceID pgtype.UUID) ([]ListFollowedCatsRow, error) {
-	rows, err := q.db.Query(ctx, listFollowedCats, deviceID)
+// issue #65: an account's followed cats, ordered by most recent cat
+// activity. last_update_at desc nulls last puts a cat that has never had an
+// update after every cat that has, however old — no activity is never
+// "fresher" than old activity. c.id desc is the deterministic tie-breaker
+// for equal last_update_at, including the shared-null case, since
+// last_update_at alone can't order two never-updated cats against each
+// other. joins cats (not just follows) so the response carries the same
+// cat-summary shape as the map/detail endpoints, including each cat's
+// latest needs-help update via the same unfiltered-by-expiry lateral join
+// as ListCatsInBounds/GetCatByID — the service layer decides
+// active-vs-expired against its own injected clock, never this query's own
+// now().
+func (q *Queries) ListFollowedCats(ctx context.Context, userID pgtype.UUID) ([]ListFollowedCatsRow, error) {
+	rows, err := q.db.Query(ctx, listFollowedCats, userID)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -284,12 +285,12 @@ func TestAuthService_VerifyOTP_FailedLinkDoesNotBurnTheCode(t *testing.T) {
 }
 
 // TestAuthService_VerifyOTP_PreservesDeviceOwnedContentAfterLinking is the
-// explicit, tested ownership outcome issue #58 requires: a device that
+// explicit, tested ownership outcome issues #58/#65 require: a device that
 // already follows a cat and has authored an update keeps both, unchanged,
-// after its otp verification links it to an account. Ownership is a
-// derived join (device_id -> devices.user_id), never a rewritten id, so
-// neither the follows row nor the update's author_device_id is touched by
-// linking.
+// after its otp verification links it to an account — and (issue #65) that
+// linking also backfills the account (user_id / author_user_id) onto both
+// rows, so they immediately surface under the account, while device_id /
+// author_device_id (the original device attribution) stay untouched.
 func TestAuthService_VerifyOTP_PreservesDeviceOwnedContentAfterLinking(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -324,9 +325,10 @@ func TestAuthService_VerifyOTP_PreservesDeviceOwnedContentAfterLinking(t *testin
 	if err != nil {
 		t.Fatalf("verify otp: %v", err)
 	}
+	accountID := pgtype.UUID{Bytes: uuid.MustParse(session.UserID), Valid: true}
 
-	// the follow must still exist, scoped to this device.
-	cats, err := store.ListFollowedCats(ctx, deviceID)
+	// the follow must now surface under the linked account.
+	cats, err := store.ListFollowedCats(ctx, accountID)
 	if err != nil {
 		t.Fatalf("list followed cats: %v", err)
 	}
@@ -337,12 +339,14 @@ func TestAuthService_VerifyOTP_PreservesDeviceOwnedContentAfterLinking(t *testin
 		}
 	}
 	if !found {
-		t.Error("expected the device's pre-linking follow to survive account linking")
+		t.Error("expected the device's pre-linking follow to be backfilled onto the linked account")
 	}
 
-	// the authored update's attribution must be unchanged — verified with
-	// a raw query since author_device_id is never selected back to a
-	// client (see docs/architecture/api.md).
+	// the follow's device_id and the update's author_device_id — the
+	// original device attribution — must be unchanged, while user_id /
+	// author_user_id must now equal the linked account. Verified with a raw
+	// query since these columns are never selected back to a client (see
+	// docs/architecture/api.md).
 	dsn := os.Getenv("DATABASE_URL")
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -350,12 +354,26 @@ func TestAuthService_VerifyOTP_PreservesDeviceOwnedContentAfterLinking(t *testin
 	}
 	defer pool.Close()
 
-	var authorDeviceID pgtype.UUID
-	if err := pool.QueryRow(ctx, `select author_device_id from updates where id = $1`, update.ID).Scan(&authorDeviceID); err != nil {
+	var authorDeviceID, authorUserID pgtype.UUID
+	if err := pool.QueryRow(ctx, `select author_device_id, author_user_id from updates where id = $1`, update.ID).Scan(&authorDeviceID, &authorUserID); err != nil {
 		t.Fatalf("read back update: %v", err)
 	}
 	if authorDeviceID != deviceID {
 		t.Error("expected the update's author_device_id to remain the originating device after linking")
+	}
+	if authorUserID != accountID {
+		t.Error("expected the update's author_user_id to be backfilled to the linked account")
+	}
+
+	var followDeviceID, followUserID pgtype.UUID
+	if err := pool.QueryRow(ctx, `select device_id, user_id from follows where cat_id = $1`, catID).Scan(&followDeviceID, &followUserID); err != nil {
+		t.Fatalf("read back follow: %v", err)
+	}
+	if followDeviceID != deviceID {
+		t.Error("expected the follow's device_id to remain the originating device after linking")
+	}
+	if followUserID != accountID {
+		t.Error("expected the follow's user_id to be backfilled to the linked account")
 	}
 
 	// and the device is now linked to exactly the account VerifyOTP issued.
@@ -365,6 +383,121 @@ func TestAuthService_VerifyOTP_PreservesDeviceOwnedContentAfterLinking(t *testin
 	}
 	if !deviceRow.UserID.Valid || uuid.UUID(deviceRow.UserID.Bytes).String() != session.UserID {
 		t.Error("expected device.user_id to equal the issued session's user id")
+	}
+}
+
+// TestStore_BackfillFollowsUserID_ConcurrentIdempotent races N goroutines
+// calling the exact query linkDevice runs (issue #65) against the same
+// still-unbackfilled device-owned follow, simulating concurrent/retried
+// linking transactions. It must land consistently — no error from any
+// caller, and the row attributed to exactly the one account every caller
+// agrees on, never split or duplicated.
+func TestStore_BackfillFollowsUserID_ConcurrentIdempotent(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	deviceID := createTestDevice(t, ctx, store)
+	catID := upsertTestCat(t, ctx, store, "concurrent-backfill-cat")
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{DeviceID: deviceID, CatID: catID}); err != nil {
+		t.Fatalf("seed follow: %v", err)
+	}
+
+	accountID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateUser(ctx, repository.CreateUserParams{
+		ID:              accountID,
+		Phone:           "+90555" + testDigits(t),
+		PhoneVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	const n = 10
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = store.BackfillFollowsUserID(ctx, repository.BackfillFollowsUserIDParams{
+				UserID:   accountID,
+				DeviceID: deviceID,
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent backfill %d: %v", i, err)
+		}
+	}
+
+	cats, err := store.ListFollowedCats(ctx, accountID)
+	if err != nil {
+		t.Fatalf("list followed cats: %v", err)
+	}
+	if len(cats) != 1 || cats[0].ID != catID {
+		t.Fatalf("expected exactly the seeded follow under the account, got %+v", cats)
+	}
+}
+
+// TestAuthService_VerifyOTP_DeviceLinkedToOtherAccount_NeverBackfills is the
+// explicit regression for "must not silently transfer ownership" against a
+// real database: a device rejected for belonging to a different account
+// must never have its content backfilled toward the rejected account.
+func TestAuthService_VerifyOTP_DeviceLinkedToOtherAccount_NeverBackfills(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	sms := newRecordingSms()
+	now := time.Now()
+	svc := newAuthService(store, sms, func() time.Time { return now })
+
+	deviceID := createTestDevice(t, ctx, store)
+	catID := upsertTestCat(t, ctx, store, "rejected-relink-cat")
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{DeviceID: deviceID, CatID: catID}); err != nil {
+		t.Fatalf("seed follow: %v", err)
+	}
+
+	phoneA := "555" + testDigits(t)
+	if err := svc.RequestOTP(ctx, phoneA); err != nil {
+		t.Fatalf("request otp a: %v", err)
+	}
+	sessionA, err := svc.VerifyOTP(ctx, phoneA, sms.codeFor("+90"+phoneA), uuid.UUID(deviceID.Bytes).String())
+	if err != nil {
+		t.Fatalf("verify a: %v", err)
+	}
+	accountA := pgtype.UUID{Bytes: uuid.MustParse(sessionA.UserID), Valid: true}
+
+	phoneB := "555" + testDigits(t)
+	if err := svc.RequestOTP(ctx, phoneB); err != nil {
+		t.Fatalf("request otp b: %v", err)
+	}
+	_, err = svc.VerifyOTP(ctx, phoneB, sms.codeFor("+90"+phoneB), uuid.UUID(deviceID.Bytes).String())
+	if !errors.Is(err, service.ErrDeviceLinkedToOtherAccount) {
+		t.Fatalf("expected ErrDeviceLinkedToOtherAccount, got %v", err)
+	}
+
+	// the rejected relink runs inside one transaction with account
+	// resolve-or-create, so it must roll back entirely — account B (which
+	// would only exist for this brand-new phone number if the transaction
+	// had partially committed) must never have been persisted at all.
+	normalizedPhoneB, err := service.NormalizePhone(phoneB)
+	if err != nil {
+		t.Fatalf("normalize phone b: %v", err)
+	}
+	if _, err := store.GetUserByPhone(ctx, normalizedPhoneB); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected account B to never have been created, got err=%v", err)
+	}
+
+	// account A's follow (the device's original, legitimate attribution)
+	// must remain exactly as backfilled by the first, successful link —
+	// untouched by the rejected second attempt.
+	cats, err := store.ListFollowedCats(ctx, accountA)
+	if err != nil {
+		t.Fatalf("list followed cats for account A: %v", err)
+	}
+	if len(cats) != 1 || cats[0].ID != catID {
+		t.Fatalf("expected account A to still see exactly its one follow, got %+v", cats)
 	}
 }
 

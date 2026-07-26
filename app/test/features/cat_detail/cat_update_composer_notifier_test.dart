@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/core/identity/device_identity.dart';
+import 'package:app/core/identity/session_identity.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/data/cat_detail_api.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
@@ -169,9 +170,36 @@ class _CountingRegistrationAdapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
+// Mirrors auth_gate_test.dart's fake exactly — implements only the public
+// surface (cached/restore/save/logout) SessionIdentityService exposes.
+class _FakeSessionIdentityService implements SessionIdentityService {
+  _FakeSessionIdentityService({SessionIdentity? initial}) : _cached = initial;
+
+  SessionIdentity? _cached;
+
+  @override
+  SessionIdentity? get cached => _cached;
+
+  @override
+  Future<SessionIdentity?> restore() async => _cached;
+
+  @override
+  Future<void> save(SessionIdentity identity) async => _cached = identity;
+
+  @override
+  Future<void> logout() async => _cached = null;
+}
+
+const _authenticatedSession = SessionIdentity(
+  accessToken: 'at',
+  refreshToken: 'rt',
+  userId: 'u1',
+);
+
 ProviderContainer _containerWith(
   _FakeCatDetailApi api, {
   DeviceIdentityService? deviceIdentityService,
+  SessionIdentityService? sessionIdentityService,
 }) {
   final container = ProviderContainer(
     overrides: [
@@ -182,6 +210,14 @@ ProviderContainer _containerWith(
               storage: _FakeStorage(),
               dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080')),
             ),
+      ),
+      // Every existing test below exercises an already-authenticated
+      // submit (issue #65 gates the caller before this notifier ever
+      // runs) — defaults to a cached session so those behaviors stay
+      // unchanged; the unauthenticated case gets its own explicit test.
+      sessionIdentityServiceProvider.overrideWithValue(
+        sessionIdentityService ??
+            _FakeSessionIdentityService(initial: _authenticatedSession),
       ),
     ],
   );
@@ -331,7 +367,36 @@ void main() {
   });
 
   test(
-    'a device identity that fails to resolve surfaces as a retryable unauthorized error, without calling the update api',
+    'no cached session surfaces as a retryable unauthorized error, without calling the update api (issue #65)',
+    () async {
+      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+      final container = _containerWith(
+        api,
+        sessionIdentityService: _FakeSessionIdentityService(),
+      );
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      final ok = await notifier.submitSeen();
+
+      expect(ok, isFalse);
+      expect(
+        container.read(catUpdateComposerProvider(_catId)).error,
+        UpdateSubmitError.unauthorized,
+      );
+      expect(
+        api.createUpdateCalls,
+        0,
+        reason: 'must not call the update api without a cached session',
+      );
+    },
+  );
+
+  test(
+    'a device identity that fails to resolve does not block the update — it proceeds session-only, without device association (issue #65)',
     () async {
       final deviceService = DeviceIdentityService(
         storage: _EmptyStorage(),
@@ -350,23 +415,17 @@ void main() {
         catUpdateComposerProvider(_catId).notifier,
       );
 
-      final firstOk = await notifier.submitSeen();
-      expect(firstOk, isFalse);
-      expect(
-        container.read(catUpdateComposerProvider(_catId)).error,
-        UpdateSubmitError.unauthorized,
-      );
-      expect(
-        api.createUpdateCalls,
-        0,
-        reason: 'must not call the update api without a resolved identity',
-      );
+      final ok = await notifier.submitSeen();
 
-      // Retryable: the previously failed registration is retried, not
-      // replayed from a stuck completed-null future.
-      final secondOk = await notifier.submitSeen();
-      expect(secondOk, isTrue);
+      expect(
+        ok,
+        isTrue,
+        reason:
+            'authorization comes from the bearer session alone now; a '
+            'failed device registration is no longer fatal',
+      );
       expect(api.createUpdateCalls, 1);
+      expect(deviceService.cached, isNull);
       expect(container.read(catUpdateComposerProvider(_catId)).error, isNull);
     },
   );

@@ -19,9 +19,10 @@ import (
 type fakeFollowsManager struct {
 	err error
 
-	// capturedDeviceID/capturedCatID record the args the last Follow or
-	// Unfollow call received, so a test can assert device isolation without
-	// a real database.
+	// capturedUserID/capturedDeviceID/capturedCatID record the args the
+	// last Follow, Unfollow, or ListFollows call received, so a test can
+	// assert isolation without a real database.
+	capturedUserID   *string
 	capturedDeviceID *string
 	capturedCatID    *string
 
@@ -29,9 +30,12 @@ type fakeFollowsManager struct {
 	listErr error
 }
 
-func (f fakeFollowsManager) Follow(_ context.Context, catID, deviceID string) error {
+func (f fakeFollowsManager) Follow(_ context.Context, catID, userID, deviceID string) error {
 	if f.capturedCatID != nil {
 		*f.capturedCatID = catID
+	}
+	if f.capturedUserID != nil {
+		*f.capturedUserID = userID
 	}
 	if f.capturedDeviceID != nil {
 		*f.capturedDeviceID = deviceID
@@ -39,31 +43,33 @@ func (f fakeFollowsManager) Follow(_ context.Context, catID, deviceID string) er
 	return f.err
 }
 
-func (f fakeFollowsManager) Unfollow(_ context.Context, catID, deviceID string) error {
+func (f fakeFollowsManager) Unfollow(_ context.Context, catID, userID string) error {
 	if f.capturedCatID != nil {
 		*f.capturedCatID = catID
 	}
-	if f.capturedDeviceID != nil {
-		*f.capturedDeviceID = deviceID
+	if f.capturedUserID != nil {
+		*f.capturedUserID = userID
 	}
 	return f.err
 }
 
-func (f fakeFollowsManager) ListFollows(_ context.Context, deviceID string) ([]service.CatMarker, error) {
-	if f.capturedDeviceID != nil {
-		*f.capturedDeviceID = deviceID
+func (f fakeFollowsManager) ListFollows(_ context.Context, userID string) ([]service.CatMarker, error) {
+	if f.capturedUserID != nil {
+		*f.capturedUserID = userID
 	}
 	return f.cats, f.listErr
 }
 
-// routerForFollows wires h behind a real chi router with RequireDeviceToken,
-// exactly as server.NewRouter wires it, so requests without a valid
-// X-Device-Token never reach the handler.
-func routerForFollows(h *FollowsHandler, resolver DeviceTokenResolver) http.Handler {
+// routerForFollows wires h behind a real chi router with RequireBearer (and,
+// on Follow, OptionalDeviceToken), exactly as server.NewRouter wires it
+// (issue #65): a request without a valid Authorization: Bearer never
+// reaches the handler, but a missing or invalid X-Device-Token never blocks
+// Follow either.
+func routerForFollows(h *FollowsHandler, resolver DeviceTokenResolver, validator AccessTokenValidator) http.Handler {
 	r := chi.NewRouter()
-	r.With(RequireDeviceToken(resolver)).Post("/v1/cats/{cat_id}/follow", h.Follow)
-	r.With(RequireDeviceToken(resolver)).Delete("/v1/cats/{cat_id}/follow", h.Unfollow)
-	r.With(RequireDeviceToken(resolver)).Get("/v1/me/follows", h.ListFollows)
+	r.With(RequireBearer(validator), OptionalDeviceToken(resolver)).Post("/v1/cats/{cat_id}/follow", h.Follow)
+	r.With(RequireBearer(validator)).Delete("/v1/cats/{cat_id}/follow", h.Unfollow)
+	r.With(RequireBearer(validator)).Get("/v1/me/follows", h.ListFollows)
 	return r
 }
 
@@ -71,16 +77,21 @@ func followsResolverFor(deviceID string) DeviceTokenResolver {
 	return fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: deviceID}}
 }
 
+func followsValidatorFor(userID string) AccessTokenValidator {
+	return fakeAccessValidator{userID: userID}
+}
+
 // ── Follow ────────────────────────────────────────────────────────────────
 
 func TestFollowsHandler_Follow_Success(t *testing.T) {
-	var capturedCat, capturedDevice string
-	h := NewFollowsHandler(fakeFollowsManager{capturedCatID: &capturedCat, capturedDeviceID: &capturedDevice})
+	var capturedCat, capturedUser, capturedDevice string
+	h := NewFollowsHandler(fakeFollowsManager{capturedCatID: &capturedCat, capturedUserID: &capturedUser, capturedDeviceID: &capturedDevice})
+	userID := uuid.New().String()
 	deviceID := uuid.New().String()
-	r := routerForFollows(h, followsResolverFor(deviceID))
+	r := routerForFollows(h, followsResolverFor(deviceID), followsValidatorFor(userID))
 
 	catID := uuid.New().String()
-	req := withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+catID+"/follow", nil))
+	req := withBearerToken(withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+catID+"/follow", nil)))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -90,18 +101,38 @@ func TestFollowsHandler_Follow_Success(t *testing.T) {
 	if capturedCat != catID {
 		t.Errorf("expected cat id %s, got %s", catID, capturedCat)
 	}
+	if capturedUser != userID {
+		t.Errorf("expected user id %s, got %s", userID, capturedUser)
+	}
 	if capturedDevice != deviceID {
 		t.Errorf("expected device id %s, got %s", deviceID, capturedDevice)
 	}
 }
 
+func TestFollowsHandler_Follow_DeviceTokenOptional_SucceedsWithoutIt(t *testing.T) {
+	var capturedDevice string
+	h := NewFollowsHandler(fakeFollowsManager{capturedDeviceID: &capturedDevice})
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
+
+	req := withBearerToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/follow", nil))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if capturedDevice != "" {
+		t.Errorf("expected no device id passed through, got %q", capturedDevice)
+	}
+}
+
 func TestFollowsHandler_Follow_Idempotent(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 	catID := uuid.New().String()
 
 	for i := 0; i < 2; i++ {
-		req := withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+catID+"/follow", nil))
+		req := withBearerToken(withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+catID+"/follow", nil)))
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		if rec.Code != http.StatusNoContent {
@@ -112,9 +143,9 @@ func TestFollowsHandler_Follow_Idempotent(t *testing.T) {
 
 func TestFollowsHandler_Follow_InvalidCatID(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{err: service.ErrInvalidCatID})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
-	req := withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/not-a-uuid/follow", nil))
+	req := withBearerToken(withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/not-a-uuid/follow", nil)))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -125,9 +156,9 @@ func TestFollowsHandler_Follow_InvalidCatID(t *testing.T) {
 
 func TestFollowsHandler_Follow_UnknownCat(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{err: service.ErrCatNotFound})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
-	req := withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/follow", nil))
+	req := withBearerToken(withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/follow", nil)))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -138,9 +169,9 @@ func TestFollowsHandler_Follow_UnknownCat(t *testing.T) {
 
 func TestFollowsHandler_Follow_RepositoryFailure(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{err: errors.New("connection refused")})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
-	req := withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/follow", nil))
+	req := withBearerToken(withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/follow", nil)))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -149,22 +180,9 @@ func TestFollowsHandler_Follow_RepositoryFailure(t *testing.T) {
 	}
 }
 
-func TestFollowsHandler_Follow_RequiresDeviceToken(t *testing.T) {
+func TestFollowsHandler_Follow_RequiresBearer(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/follow", nil)
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestFollowsHandler_Follow_UnknownDeviceToken(t *testing.T) {
-	h := NewFollowsHandler(fakeFollowsManager{})
-	r := routerForFollows(h, fakeDeviceResolver{err: service.ErrDeviceNotFound})
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
 	req := withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/follow", nil))
 	rec := httptest.NewRecorder()
@@ -175,16 +193,42 @@ func TestFollowsHandler_Follow_UnknownDeviceToken(t *testing.T) {
 	}
 }
 
+func TestFollowsHandler_Follow_InvalidBearer(t *testing.T) {
+	h := NewFollowsHandler(fakeFollowsManager{})
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), fakeAccessValidator{err: service.ErrSessionInvalid})
+
+	req := withBearerToken(withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/follow", nil)))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFollowsHandler_Follow_UnknownDeviceToken_StillSucceeds(t *testing.T) {
+	h := NewFollowsHandler(fakeFollowsManager{})
+	r := routerForFollows(h, fakeDeviceResolver{err: service.ErrDeviceNotFound}, followsValidatorFor(uuid.New().String()))
+
+	req := withBearerToken(withDeviceToken(httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/follow", nil)))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // ── Unfollow ──────────────────────────────────────────────────────────────
 
 func TestFollowsHandler_Unfollow_Success(t *testing.T) {
-	var capturedCat, capturedDevice string
-	h := NewFollowsHandler(fakeFollowsManager{capturedCatID: &capturedCat, capturedDeviceID: &capturedDevice})
-	deviceID := uuid.New().String()
-	r := routerForFollows(h, followsResolverFor(deviceID))
+	var capturedCat, capturedUser string
+	h := NewFollowsHandler(fakeFollowsManager{capturedCatID: &capturedCat, capturedUserID: &capturedUser})
+	userID := uuid.New().String()
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(userID))
 
 	catID := uuid.New().String()
-	req := withDeviceToken(httptest.NewRequest(http.MethodDelete, "/v1/cats/"+catID+"/follow", nil))
+	req := withBearerToken(httptest.NewRequest(http.MethodDelete, "/v1/cats/"+catID+"/follow", nil))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -194,16 +238,16 @@ func TestFollowsHandler_Unfollow_Success(t *testing.T) {
 	if capturedCat != catID {
 		t.Errorf("expected cat id %s, got %s", catID, capturedCat)
 	}
-	if capturedDevice != deviceID {
-		t.Errorf("expected device id %s, got %s", deviceID, capturedDevice)
+	if capturedUser != userID {
+		t.Errorf("expected user id %s, got %s", userID, capturedUser)
 	}
 }
 
 func TestFollowsHandler_Unfollow_NotFollowingIsIdempotent(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
-	req := withDeviceToken(httptest.NewRequest(http.MethodDelete, "/v1/cats/"+uuid.New().String()+"/follow", nil))
+	req := withBearerToken(httptest.NewRequest(http.MethodDelete, "/v1/cats/"+uuid.New().String()+"/follow", nil))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -214,9 +258,9 @@ func TestFollowsHandler_Unfollow_NotFollowingIsIdempotent(t *testing.T) {
 
 func TestFollowsHandler_Unfollow_InvalidCatID(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{err: service.ErrInvalidCatID})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
-	req := withDeviceToken(httptest.NewRequest(http.MethodDelete, "/v1/cats/not-a-uuid/follow", nil))
+	req := withBearerToken(httptest.NewRequest(http.MethodDelete, "/v1/cats/not-a-uuid/follow", nil))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -227,9 +271,9 @@ func TestFollowsHandler_Unfollow_InvalidCatID(t *testing.T) {
 
 func TestFollowsHandler_Unfollow_UnknownCat(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{err: service.ErrCatNotFound})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
-	req := withDeviceToken(httptest.NewRequest(http.MethodDelete, "/v1/cats/"+uuid.New().String()+"/follow", nil))
+	req := withBearerToken(httptest.NewRequest(http.MethodDelete, "/v1/cats/"+uuid.New().String()+"/follow", nil))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -238,9 +282,9 @@ func TestFollowsHandler_Unfollow_UnknownCat(t *testing.T) {
 	}
 }
 
-func TestFollowsHandler_Unfollow_RequiresDeviceToken(t *testing.T) {
+func TestFollowsHandler_Unfollow_RequiresBearer(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/cats/"+uuid.New().String()+"/follow", nil)
 	rec := httptest.NewRecorder()
@@ -266,9 +310,9 @@ func TestFollowsHandler_ListFollows_Success(t *testing.T) {
 			LastUpdateAt: &lastUpdate,
 		},
 	}})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
-	req := withDeviceToken(httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil))
+	req := withBearerToken(httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -290,29 +334,54 @@ func TestFollowsHandler_ListFollows_Success(t *testing.T) {
 	}
 }
 
-func TestFollowsHandler_ListFollows_ScopedToResolvedDevice(t *testing.T) {
-	var capturedDevice string
-	h := NewFollowsHandler(fakeFollowsManager{capturedDeviceID: &capturedDevice})
-	deviceID := uuid.New().String()
-	r := routerForFollows(h, followsResolverFor(deviceID))
+func TestFollowsHandler_ListFollows_ScopedToResolvedUser(t *testing.T) {
+	var capturedUser string
+	h := NewFollowsHandler(fakeFollowsManager{capturedUserID: &capturedUser})
+	userID := uuid.New().String()
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(userID))
 
-	req := withDeviceToken(httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil))
+	req := withBearerToken(httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if capturedDevice != deviceID {
-		t.Errorf("expected list scoped to resolved device %s, got %s", deviceID, capturedDevice)
+	if capturedUser != userID {
+		t.Errorf("expected list scoped to resolved user %s, got %s", userID, capturedUser)
+	}
+}
+
+// TestFollowsHandler_ListFollows_CrossAccountIsolation proves the handler
+// always scopes to whichever account the bearer token resolves to, never a
+// fixed or client-supplied id — two different validators on the same
+// handler must see two different scopes.
+func TestFollowsHandler_ListFollows_CrossAccountIsolation(t *testing.T) {
+	var capturedUser string
+	h := NewFollowsHandler(fakeFollowsManager{capturedUserID: &capturedUser})
+	userA := uuid.New().String()
+	userB := uuid.New().String()
+
+	reqA := withBearerToken(httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil))
+	recA := httptest.NewRecorder()
+	routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(userA)).ServeHTTP(recA, reqA)
+	if capturedUser != userA {
+		t.Fatalf("expected scope %s, got %s", userA, capturedUser)
+	}
+
+	reqB := withBearerToken(httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil))
+	recB := httptest.NewRecorder()
+	routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(userB)).ServeHTTP(recB, reqB)
+	if capturedUser != userB {
+		t.Fatalf("expected scope %s, got %s", userB, capturedUser)
 	}
 }
 
 func TestFollowsHandler_ListFollows_Empty(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{cats: nil})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
-	req := withDeviceToken(httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil))
+	req := withBearerToken(httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -330,9 +399,9 @@ func TestFollowsHandler_ListFollows_Empty(t *testing.T) {
 
 func TestFollowsHandler_ListFollows_RepositoryFailure(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{listErr: errors.New("connection refused")})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
-	req := withDeviceToken(httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil))
+	req := withBearerToken(httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -341,9 +410,9 @@ func TestFollowsHandler_ListFollows_RepositoryFailure(t *testing.T) {
 	}
 }
 
-func TestFollowsHandler_ListFollows_RequiresDeviceToken(t *testing.T) {
+func TestFollowsHandler_ListFollows_RequiresBearer(t *testing.T) {
 	h := NewFollowsHandler(fakeFollowsManager{})
-	r := routerForFollows(h, followsResolverFor(uuid.New().String()))
+	r := routerForFollows(h, followsResolverFor(uuid.New().String()), followsValidatorFor(uuid.New().String()))
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/follows", nil)
 	rec := httptest.NewRecorder()

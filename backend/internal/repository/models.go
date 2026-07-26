@@ -38,6 +38,7 @@ type Follow struct {
 	DeviceID  pgtype.UUID        `json:"device_id"`
 	CatID     pgtype.UUID        `json:"cat_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UserID    pgtype.UUID        `json:"user_id"`
 }
 
 type NotificationOutbox struct {
@@ -93,6 +94,7 @@ type Update struct {
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	AuthorDeviceID     pgtype.UUID        `json:"author_device_id"`
+	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
 }
 
 type UpdateStatus struct {
