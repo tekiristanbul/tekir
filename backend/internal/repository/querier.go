@@ -14,6 +14,19 @@ type Querier interface {
 	// lets the updates-history endpoint 404 on an unknown cat instead of
 	// silently returning an empty page indistinguishable from "no history yet".
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
+	// atomic compare-and-set (code review fix, issue #58): the previous
+	// read-then-unconditional-update let two concurrent verifications of the
+	// same code both pass validation in application code before either wrote
+	// consumed_at, so both could proceed to account linking and session
+	// issuance. this single statement re-evaluates every validity predicate
+	// (still the phone's latest code, unconsumed, unexpired, attempts
+	// remaining) atomically against the row's current committed state; a
+	// concurrent loser's update commits after the winner's and matches zero
+	// rows, since consumed_at is no longer null by the time it runs. the
+	// "still the latest" subquery preserves the existing "only the most
+	// recently issued code is ever checked" behavior — a race can't smuggle in
+	// consumption of a superseded code.
+	ConsumeOtpCodeIfValid(ctx context.Context, arg ConsumeOtpCodeIfValidParams) (pgtype.UUID, error)
 	// no endpoint sets this yet — trait selection is out of scope for issue #21
 	// and belongs to the future add/edit-cat flow. used by seed data only.
 	CreateCatTrait(ctx context.Context, arg CreateCatTraitParams) error
@@ -34,6 +47,10 @@ type Querier interface {
 	// an enqueue for the same update fails loudly (and rolls the whole
 	// transaction back) instead of duplicating work.
 	CreateNotificationOutbox(ctx context.Context, arg CreateNotificationOutboxParams) error
+	CreateOtpCode(ctx context.Context, arg CreateOtpCodeParams) (CreateOtpCodeRow, error)
+	// only the hash is ever persisted; the raw token is returned to the
+	// caller once and never stored (mirrors CreateDevice's convention).
+	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (CreateRefreshTokenRow, error)
 	// kind discriminates an ordinary status update from a needs-help one (issue
 	// #23); needs_help_category/needs_help_expires_at are null for an ordinary
 	// update and required for a needs-help one — enforced by
@@ -51,6 +68,14 @@ type Querier interface {
 	// leave it null.
 	CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error)
 	CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatusParams) error
+	// creates a new account for a normalized phone number. the unique
+	// constraint on users.phone is what makes concurrent otp verification for
+	// the same number resolve to exactly one account: the losing concurrent
+	// insert fails with a unique violation and the caller falls back to
+	// GetUserByPhone (issue #58). display_name is null at creation — set
+	// afterwards via UpdateUserDisplayName once the new-account minimum-profile
+	// step collects it.
+	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	// idempotent: unfollowing a cat this device doesn't currently follow
 	// deletes zero rows and succeeds silently rather than erroring (issue #44).
 	DeleteFollow(ctx context.Context, arg DeleteFollowParams) error
@@ -60,10 +85,29 @@ type Querier interface {
 	// lateral join is the same latest-needs-help-update lookup as
 	// ListCatsInBounds, unfiltered by expiry for the same reason.
 	GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error)
-	// resolves an inbound X-Device-Token to its non-secret device_id.
+	// issue #58: read a device's current account link before deciding whether
+	// otp verification may link it (see LinkDeviceToUser).
+	GetDeviceByID(ctx context.Context, id pgtype.UUID) (GetDeviceByIDRow, error)
+	// resolves an inbound X-Device-Token to its non-secret device_id and, if
+	// the device has been linked to an account (issue #58), that account's id.
 	// the middleware calls this after hashing the presented token; only
 	// the non-secret fields are returned — the hash is never echoed back.
 	GetDeviceByTokenHash(ctx context.Context, tokenHash string) (GetDeviceByTokenHashRow, error)
+	// the most recently issued code for a phone number, regardless of whether
+	// it's already consumed or expired — the service layer decides validity
+	// against its own injected clock so behavior stays deterministically
+	// testable (issue #58).
+	GetLatestOtpCode(ctx context.Context, phone string) (OtpCode, error)
+	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
+	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
+	GetUserByPhone(ctx context.Context, phone string) (User, error)
+	IncrementOtpAttempts(ctx context.Context, id pgtype.UUID) error
+	// issue #58: idempotent by construction — setting user_id to the same
+	// value on a retry (or on a device already linked to this exact account)
+	// is a no-op update. the service layer rejects linking a device already
+	// linked to a *different* account before this query ever runs; a device is
+	// linked to at most one account, ever (see docs/architecture/db.md).
+	LinkDeviceToUser(ctx context.Context, arg LinkDeviceToUserParams) error
 	// the selectable vocabulary: what the future grouped multi-select picker
 	// (product-owner decision on issue #21/#23) renders as options, ordered
 	// group-then-trait so a client can render section headers without its own
@@ -108,6 +152,19 @@ type Querier interface {
 	// injected clock, never this query's own now().
 	ListFollowedCats(ctx context.Context, deviceID pgtype.UUID) ([]ListFollowedCatsRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
+	// idempotent, unconditional revoke — used only by logout, where "already
+	// revoked/expired" is not an error (see SessionService.Revoke). Never used
+	// for rotation; see RevokeRefreshTokenIfActive for that.
+	RevokeRefreshToken(ctx context.Context, arg RevokeRefreshTokenParams) error
+	// atomic conditional revoke (code review fix, issue #58): the previous
+	// read-then-unconditional-revoke let two concurrent refresh calls
+	// presenting the same token both pass validation before either revoked
+	// it, so both could mint a replacement session from one token. this
+	// statement re-evaluates "unrevoked and unexpired" atomically against the
+	// row's current committed state; a concurrent loser's update commits
+	// after the winner's and matches zero rows, since revoked_at is no longer
+	// null by then.
+	RevokeRefreshTokenIfActive(ctx context.Context, arg RevokeRefreshTokenIfActiveParams) (pgtype.UUID, error)
 	// issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
 	// so a new ordinary update and the cat's last_update_at commit atomically.
 	// issue #38: monotonic — greatest() already ignores a null argument
@@ -116,6 +173,7 @@ type Querier interface {
 	// correctly. this keeps an out-of-order commit (an older update committing
 	// after a newer one) from moving a cat's displayed freshness backwards.
 	UpdateCatLastUpdateAt(ctx context.Context, arg UpdateCatLastUpdateAtParams) error
+	UpdateUserDisplayName(ctx context.Context, arg UpdateUserDisplayNameParams) error
 	UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UUID, error)
 	// loads/updates the vocabulary itself (seed data only for now — there's no
 	// admin endpoint). upserting on key lets seed re-runs adjust display_name/

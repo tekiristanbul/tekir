@@ -39,6 +39,18 @@ func (s *Store) withTx(ctx context.Context, fn func(*Queries) error) error {
 	return tx.Commit(ctx)
 }
 
+// WithinTx is withTx, exported so callers outside this package (currently
+// service.AuthService and service.SessionService — see service.TxRunner)
+// can keep a multi-step write atomic without repository needing to know
+// their business logic. *Queries structurally satisfies every narrow
+// store interface a service defines (AuthStore, SessionStore, ...), since
+// sqlc generates one method per query on that single type, so the same fn
+// can freely call methods from more than one such interface inside one
+// transaction.
+func (s *Store) WithinTx(ctx context.Context, fn func(*Queries) error) error {
+	return s.withTx(ctx, fn)
+}
+
 // CreateOrdinaryUpdateParams groups the atomic write behind
 // POST /v1/cats/{cat_id}/updates (issue #36): the update row, its
 // statuses, and the cat's last_update_at all commit together or not at all.

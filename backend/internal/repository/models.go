@@ -31,6 +31,7 @@ type Device struct {
 	Platform  string             `json:"platform"`
 	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UserID    pgtype.UUID        `json:"user_id"`
 }
 
 type Follow struct {
@@ -45,6 +46,26 @@ type NotificationOutbox struct {
 	CatID       pgtype.UUID        `json:"cat_id"`
 	ProcessedAt pgtype.Timestamptz `json:"processed_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type OtpCode struct {
+	ID          pgtype.UUID        `json:"id"`
+	Phone       string             `json:"phone"`
+	CodeHash    string             `json:"code_hash"`
+	Attempts    int32              `json:"attempts"`
+	MaxAttempts int32              `json:"max_attempts"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt  pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type RefreshToken struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	TokenHash string             `json:"token_hash"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Trait struct {
@@ -77,6 +98,14 @@ type Update struct {
 type UpdateStatus struct {
 	UpdateID pgtype.UUID `json:"update_id"`
 	Status   string      `json:"status"`
+}
+
+type User struct {
+	ID              pgtype.UUID        `json:"id"`
+	Phone           string             `json:"phone"`
+	PhoneVerifiedAt pgtype.Timestamptz `json:"phone_verified_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	DisplayName     pgtype.Text        `json:"display_name"`
 }
 
 type WorkspacePing struct {

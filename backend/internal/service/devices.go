@@ -48,9 +48,13 @@ type DeviceRegistration struct {
 
 // DeviceIdentity is the non-secret representation of a resolved device,
 // placed in request context by the device-auth middleware. Only DeviceID
-// is carried — never the raw token or its hash.
+// and (if linked, issue #58) UserID are carried — never the raw token or
+// its hash.
 type DeviceIdentity struct {
 	DeviceID string
+	// UserID is the account this device is linked to, or nil if the device
+	// has never completed otp verification (see AuthService.VerifyOTP).
+	UserID *string
 }
 
 // DevicesStore is satisfied by repository.Store; kept as an interface so
@@ -119,7 +123,12 @@ func (s *DevicesService) ResolveToken(ctx context.Context, rawToken string) (Dev
 	if row.RevokedAt.Valid {
 		return DeviceIdentity{}, ErrDeviceRevoked
 	}
-	return DeviceIdentity{DeviceID: uuid.UUID(row.ID.Bytes).String()}, nil
+	identity := DeviceIdentity{DeviceID: uuid.UUID(row.ID.Bytes).String()}
+	if row.UserID.Valid {
+		userID := uuid.UUID(row.UserID.Bytes).String()
+		identity.UserID = &userID
+	}
+	return identity, nil
 }
 
 // generateDeviceToken returns a URL-safe base64-encoded token with at

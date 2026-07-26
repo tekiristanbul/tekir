@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/identity/device_identity.dart';
+import 'core/identity/session_identity.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 
@@ -18,6 +19,10 @@ class CatsOfIstanbulApp extends ConsumerWidget {
     // Registration failures are silently ignored — public read routes remain
     // accessible. The interceptor attaches the token once init completes.
     ref.read(deviceIdentityProvider.future).ignore();
+    // Restores a previously authenticated session (issue #58) by rotating
+    // the stored refresh token, if any. A failed/expired/revoked session
+    // falls back to the guest state safely — never blocks first paint.
+    ref.read(sessionProvider.future).ignore();
 
     return MaterialApp.router(
       title: 'tekir',

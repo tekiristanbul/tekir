@@ -44,8 +44,29 @@ func (q *Queries) CreateDevice(ctx context.Context, arg CreateDeviceParams) (Cre
 	return i, err
 }
 
+const getDeviceByID = `-- name: GetDeviceByID :one
+select id, user_id, revoked_at
+from devices
+where id = $1
+`
+
+type GetDeviceByIDRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+}
+
+// issue #58: read a device's current account link before deciding whether
+// otp verification may link it (see LinkDeviceToUser).
+func (q *Queries) GetDeviceByID(ctx context.Context, id pgtype.UUID) (GetDeviceByIDRow, error) {
+	row := q.db.QueryRow(ctx, getDeviceByID, id)
+	var i GetDeviceByIDRow
+	err := row.Scan(&i.ID, &i.UserID, &i.RevokedAt)
+	return i, err
+}
+
 const getDeviceByTokenHash = `-- name: GetDeviceByTokenHash :one
-select id, revoked_at
+select id, revoked_at, user_id
 from devices
 where token_hash = $1
 `
@@ -53,14 +74,35 @@ where token_hash = $1
 type GetDeviceByTokenHashRow struct {
 	ID        pgtype.UUID        `json:"id"`
 	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+	UserID    pgtype.UUID        `json:"user_id"`
 }
 
-// resolves an inbound X-Device-Token to its non-secret device_id.
+// resolves an inbound X-Device-Token to its non-secret device_id and, if
+// the device has been linked to an account (issue #58), that account's id.
 // the middleware calls this after hashing the presented token; only
 // the non-secret fields are returned — the hash is never echoed back.
 func (q *Queries) GetDeviceByTokenHash(ctx context.Context, tokenHash string) (GetDeviceByTokenHashRow, error) {
 	row := q.db.QueryRow(ctx, getDeviceByTokenHash, tokenHash)
 	var i GetDeviceByTokenHashRow
-	err := row.Scan(&i.ID, &i.RevokedAt)
+	err := row.Scan(&i.ID, &i.RevokedAt, &i.UserID)
 	return i, err
+}
+
+const linkDeviceToUser = `-- name: LinkDeviceToUser :exec
+update devices set user_id = $1 where id = $2
+`
+
+type LinkDeviceToUserParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	ID     pgtype.UUID `json:"id"`
+}
+
+// issue #58: idempotent by construction — setting user_id to the same
+// value on a retry (or on a device already linked to this exact account)
+// is a no-op update. the service layer rejects linking a device already
+// linked to a *different* account before this query ever runs; a device is
+// linked to at most one account, ever (see docs/architecture/db.md).
+func (q *Queries) LinkDeviceToUser(ctx context.Context, arg LinkDeviceToUserParams) error {
+	_, err := q.db.Exec(ctx, linkDeviceToUser, arg.UserID, arg.ID)
+	return err
 }

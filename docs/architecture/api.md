@@ -18,11 +18,21 @@ a client-generated identifier is not sufficient identity on its own — anything
 ```
 POST /v1/devices                        { push_token?, platform }               → 201 { device_id, device_token }  (implemented — issue #32)
 PUT  /v1/devices/me       (X-Device-Token) { push_token }                        → 204   (not yet — issue #32 scope)
-POST /v1/auth/otp/request               { phone }                                → 202
-POST /v1/auth/otp/verify  (X-Device-Token) { phone, code }                       → { access_token, refresh_token, user_id }
-POST /v1/auth/refresh                   { refresh_token }                       → { access_token, refresh_token }
-GET  /v1/me               (X-Device-Token, optional Bearer)                     → { device_id, user_id|null, phone_verified }
+POST /v1/auth/otp/request               { phone }                                → 202                                       (implemented — issue #58)
+POST /v1/auth/otp/verify  (X-Device-Token) { phone, code }                       → 200 { access_token, refresh_token, user_id, is_new_account } (implemented — issue #58)
+POST /v1/auth/refresh                   { refresh_token }                       → 200 { access_token, refresh_token }        (implemented — issue #58)
+POST /v1/auth/logout      (Bearer)      { refresh_token }                       → 204                                       (implemented — issue #58)
+GET  /v1/me               (X-Device-Token, optional Bearer)                     → 200 { device_id, user_id|null, phone_verified } (implemented — issue #58)
+PATCH /v1/me              (Bearer)      { display_name }                        → 204                                       (implemented — issue #58)
 ```
+
+`is_new_account` on otp/verify tells the client whether to show the approved prototype's new-account minimum-profile (display name) step next — true only the first time an account is created for that phone number, never on a returning login. `PATCH /v1/me` is how the client then sets it: a client only calls this right after `is_new_account: true`; the server doesn't itself enforce "only once" or "only for a new account" (that's a client flow convention, not a data invariant) — `users.display_name` has no uniqueness constraint, matching the prototype where multiple accounts may share a display name.
+
+`POST /v1/auth/logout` wasn't in this doc's earlier sketch — added by issue #58, since the product decisions require logout to revoke the account session (not just have the client discard its tokens). It revokes exactly the presented refresh token; it is idempotent (revoking an already-revoked or unknown token still answers 204) and never touches the device's own identity or its follows.
+
+Otp/verify errors: `400` invalid phone, `401` invalid code (not requested or wrong code — the two collapse to one response so a client can't distinguish "you never asked for a code" from "you guessed wrong"), `410` code expired or already consumed (replay), `429` too many attempts, `409` device already linked to a different account. Otp/request: `400` invalid phone, `429` resend requested before the per-phone cooldown elapses. Refresh: `401` for an expired, revoked, or unknown refresh token — collapsed the same way as otp/verify, so a client can't distinguish why.
+
+Device-to-account linking (otp/verify) resolves-or-creates exactly one account per normalized phone number and sets `devices.user_id` once, idempotently — see [[db]]. Linking a device already linked to a *different* account is rejected (`409`) rather than silently reassigning it, so a device's prior authored content is never retroactively re-attributed to a second account.
 
 ### cats
 

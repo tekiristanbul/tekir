@@ -28,8 +28,8 @@ define how [[api]] and [[db]] get deployed and operated for a solo, currently-un
 
 ### auth / security
 
-- short-lived jwt `access_token` plus a hashed, revocable `refresh_token` after otp verification.
-- twilio is the selected sms otp provider for mvp, hidden behind an `SmsSender` interface.
+- short-lived jwt `access_token` plus a hashed, revocable `refresh_token` after otp verification (implemented — issue #58).
+- otp delivery is hidden behind an `SmsSender` interface (implemented — issue #58) so the domain model never couples to one vendor. twilio remains the selected sms provider for mvp, but only a deterministic, no-network, log-only `FakeSmsSender` is wired as of issue #58 — selected via `OTP_PROVIDER` (`fake` is the only implemented value; the server fails to start on any other value rather than silently falling back). a real `TwilioSmsSender` is future work, gated on having a live twilio account to test against.
 - provider credentials are deployment secrets and never committed to the repository.
 - device identity is used for installation association, push delivery, and account linking; contribution authorization follows [[api]] and [[trust]].
 

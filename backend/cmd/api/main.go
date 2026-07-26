@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -54,7 +55,16 @@ func run() error {
 	devicesHandler := handler.NewDevicesHandler(devicesSvc)
 	followsSvc := service.NewFollowsService(store)
 	followsHandler := handler.NewFollowsHandler(followsSvc)
-	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, devicesSvc, cfg.CORSOrigins)
+
+	sms, err := newSmsSender(cfg.OTPProvider)
+	if err != nil {
+		return err
+	}
+	sessionsSvc := service.NewSessionService(store, []byte(cfg.JWTSigningKey), cfg.AccessTokenTTL, cfg.RefreshTokenTTL, service.WithSessionTxRunner(store))
+	authSvc := service.NewAuthService(store, sms, sessionsSvc, cfg.OTPCodeTTL, cfg.OTPMaxAttempts, cfg.OTPResendCooldown, service.WithAuthTxRunner(store))
+	authHandler := handler.NewAuthHandler(authSvc, authSvc, sessionsSvc, sessionsSvc, authSvc)
+
+	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -89,6 +99,20 @@ func run() error {
 
 	logger.Info("server stopped")
 	return nil
+}
+
+// newSmsSender selects the SmsSender implementation named by provider.
+// Only "fake" (the deterministic, log-only, no-network dev/test provider —
+// see docs/architecture/backend.md) is implemented as of issue #58; an
+// unrecognized value fails loudly at startup rather than silently
+// defaulting to a provider the operator didn't ask for.
+func newSmsSender(provider string) (service.SmsSender, error) {
+	switch provider {
+	case "fake":
+		return service.NewFakeSmsSender(), nil
+	default:
+		return nil, fmt.Errorf("unsupported OTP_PROVIDER %q (only \"fake\" is implemented)", provider)
+	}
 }
 
 func logLevel(level string) slog.Level {
