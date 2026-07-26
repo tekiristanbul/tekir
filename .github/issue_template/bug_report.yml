@@ -1,0 +1,67 @@
+name: bug report
+description: report a reproducible defect in the current implementation
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        use this form only for reproducible bugs. ideas, feature requests, product suggestions, ux proposals, and questions belong in github discussions.
+
+        do not include secrets, credentials, personal data, real phone numbers, production payloads, or precise private locations.
+  - type: textarea
+    id: summary
+    attributes:
+      label: summary
+      description: what is broken?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: reproduction steps
+      description: provide the smallest reliable sequence that reproduces the problem.
+      placeholder: |
+        1. start ...
+        2. open ...
+        3. observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: environment
+      description: commit or version, operating system, browser/device, go/flutter versions, and relevant local configuration without secret values.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: logs or screenshots
+      description: add sanitized evidence if available. remove tokens, phone numbers, personal data, and precise private locations.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: checks
+      options:
+        - label: i searched existing issues and did not find the same bug.
+          required: true
+        - label: this is a bug report, not a feature request, product suggestion, ux proposal, or support question.
+          required: true
+        - label: i removed secrets, personal data, production payloads, and precise private locations.
+          required: true
