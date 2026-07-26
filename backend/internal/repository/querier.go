@@ -37,6 +37,25 @@ type Querier interface {
 	// recently issued code is ever checked" behavior — a race can't smuggle in
 	// consumption of a superseded code.
 	ConsumeOtpCodeIfValid(ctx context.Context, arg ConsumeOtpCodeIfValidParams) (pgtype.UUID, error)
+	// issue #70: created_by_user_id is required (resolved from the
+	// authenticated bearer session, never client-supplied); created_by_device_id
+	// is optional (X-Device-Token, installation/abuse-control association only).
+	// area_label stays null — there is no runtime reverse-geocoding service
+	// (see docs/architecture/db.md), matching how seed data is the only current
+	// source of that field. last_update_at is left null: cat creation does not
+	// itself post an update (docs/product/updates.md defines freshness purely
+	// from actual updates), so a newly created cat starts in the same
+	// long_not_seen state any never-updated cat would. idempotent by
+	// construction, same shape as CreateMedia: on conflict do nothing on the
+	// partial (created_by_user_id, idempotency_key) unique index means a
+	// retried creation with the same key never creates a second cat — no row
+	// comes back on the conflicting retry, and the caller (CatsService) looks
+	// the existing row up via GetCatByIdempotencyKey instead.
+	// returning computes lng/lat the same way GetCatByID/ListCatsInBounds do
+	// (postgis geography has no plain Go scan type — see their comments) rather
+	// than `returning *`, so CatsService never has to special-case this row's
+	// shape against every other cat-reading query.
+	CreateCat(ctx context.Context, arg CreateCatParams) (CreateCatRow, error)
 	// no endpoint sets this yet — trait selection is out of scope for issue #21
 	// and belongs to the future add/edit-cat flow. used by seed data only.
 	CreateCatTrait(ctx context.Context, arg CreateCatTraitParams) error
@@ -53,6 +72,15 @@ type Querier interface {
 	// including two concurrent duplicate requests — leaves exactly one row,
 	// never an error or a duplicate.
 	CreateFollow(ctx context.Context, arg CreateFollowParams) error
+	// issue #70: uploaded_by_user_id is required (resolved from the
+	// authenticated bearer session, never client-supplied); uploaded_by_device_id
+	// is optional (X-Device-Token, installation/abuse-control association only).
+	// idempotent by construction: on conflict do nothing on the partial
+	// (uploaded_by_user_id, idempotency_key) unique index means a retried
+	// upload with the same key never creates a second row — no row comes back
+	// (pgx.ErrNoRows) on the conflicting retry, and the caller (MediaService)
+	// looks the existing row up via GetMediaByIdempotencyKey instead.
+	CreateMedia(ctx context.Context, arg CreateMediaParams) (Medium, error)
 	// issue #38: explicit enqueue replaces the removed updates_enqueue_outbox
 	// trigger (migration 00009) — Store.CreateOrdinaryUpdate is now the only
 	// caller, inside the same transaction as the update/statuses/last_update_at
@@ -101,8 +129,10 @@ type Querier interface {
 	// vocabulary) rather than aggregated in here, so each trait can carry its
 	// display_name without hand-rolling composite-type aggregation in sql. the
 	// lateral join is the same latest-needs-help-update lookup as
-	// ListCatsInBounds, unfiltered by expiry for the same reason.
+	// ListCatsInBounds, unfiltered by expiry for the same reason. photo_url
+	// coalesce mirrors ListCatsInBounds — see its comment.
 	GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error)
+	GetCatByIdempotencyKey(ctx context.Context, arg GetCatByIdempotencyKeyParams) (GetCatByIdempotencyKeyRow, error)
 	// issue #58: read a device's current account link before deciding whether
 	// otp verification may link it (see LinkDeviceToUser).
 	GetDeviceByID(ctx context.Context, id pgtype.UUID) (GetDeviceByIDRow, error)
@@ -116,6 +146,8 @@ type Querier interface {
 	// against its own injected clock so behavior stays deterministically
 	// testable (issue #58).
 	GetLatestOtpCode(ctx context.Context, phone string) (OtpCode, error)
+	GetMediaByID(ctx context.Context, id pgtype.UUID) (Medium, error)
+	GetMediaByIdempotencyKey(ctx context.Context, arg GetMediaByIdempotencyKeyParams) (Medium, error)
 	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	GetUserByPhone(ctx context.Context, phone string) (User, error)
@@ -155,7 +187,10 @@ type Querier interface {
 	// fetch on marker tap. the lateral join returns each cat's latest
 	// needs-help update (issue #4/#23), whether or not it has since expired —
 	// ListNearby (service layer) is the one that decides active-vs-expired,
-	// against an injected clock, not this query's own now().
+	// against an injected clock, not this query's own now(). issue #70: a cat
+	// created through POST /v1/cats has primary_photo_id (media table) instead
+	// of photo_url (seed-only column, issue #7) — coalesce so both read paths
+	// resolve to the same primary_photo field.
 	ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error)
 	// issue #65: an account's followed cats, ordered by most recent cat
 	// activity. last_update_at desc nulls last puts a cat that has never had an
@@ -170,6 +205,13 @@ type Querier interface {
 	// active-vs-expired against its own injected clock, never this query's own
 	// now().
 	ListFollowedCats(ctx context.Context, userID pgtype.UUID) ([]ListFollowedCatsRow, error)
+	// issue #70: powers GET /v1/cats/nearby, the add-cat flow's non-blocking
+	// duplicate-candidate check (docs/product/cats.md, docs/product/trust.md —
+	// advisory only, never blocks creation on its own). st_dwithin on the
+	// geography column uses cats_area_gix the same way ListCatsInBounds' &&
+	// bounding-box check does; radius_m is in meters, matching geography's
+	// native unit. photo_url coalesce mirrors ListCatsInBounds/GetCatByID.
+	ListNearbyCatsForDuplicateCheck(ctx context.Context, arg ListNearbyCatsForDuplicateCheckParams) ([]ListNearbyCatsForDuplicateCheckRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
 	// idempotent, unconditional revoke — used only by logout, where "already
 	// revoked/expired" is not an error (see SessionService.Revoke). Never used

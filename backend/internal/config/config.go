@@ -33,6 +33,20 @@ type Config struct {
 	// deterministic, no-network, log-only provider) is wired as of issue
 	// #58 — see docs/architecture/backend.md.
 	OTPProvider string
+
+	// ObjectStorageProvider selects the ObjectStore implementation for
+	// media uploads (issue #70). Only "fake" (a deterministic, local-disk
+	// provider — see docs/architecture/backend.md) is wired; a real
+	// s3-compatible provider (digitalocean spaces) is future work, mirroring
+	// OTPProvider's "fake"-only status.
+	ObjectStorageProvider string
+	// MediaLocalDir is where FakeObjectStore reads/writes uploaded media
+	// when ObjectStorageProvider is "fake". Unused by any other provider.
+	MediaLocalDir string
+	// MediaMaxBytes bounds an uploaded file's size before it's ever decoded,
+	// so a request can't force the server to decompress an arbitrarily
+	// large image (issue #70's malformed/oversized-media rejection).
+	MediaMaxBytes int
 }
 
 func Load() (Config, error) {
@@ -50,6 +64,10 @@ func Load() (Config, error) {
 		OTPMaxAttempts:    getEnvInt32("OTP_MAX_ATTEMPTS", 5),
 		OTPResendCooldown: getEnvDuration("OTP_RESEND_COOLDOWN", 60*time.Second),
 		OTPProvider:       getEnv("OTP_PROVIDER", "fake"),
+
+		ObjectStorageProvider: getEnv("OBJECT_STORAGE_PROVIDER", "fake"),
+		MediaLocalDir:         getEnv("MEDIA_LOCAL_DIR", "./data/media"),
+		MediaMaxBytes:         getEnvInt("MEDIA_MAX_BYTES", 8*1024*1024),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -82,6 +100,15 @@ func getEnvInt32(key string, fallback int32) int32 {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return int32(n)
+		}
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
 		}
 	}
 	return fallback

@@ -73,6 +73,52 @@ type CreateOrdinaryUpdateParams struct {
 // authenticated write). notification_outbox.update_id is unique, so a retry
 // of the same update id fails the enqueue and rolls the whole write back
 // rather than duplicating notification work.
+// CreateCatWithMediaParams groups the atomic write behind POST /v1/cats
+// (issue #70): the media row for the uploaded photo and the cats row
+// referencing it commit together or not at all — never an orphan cat with
+// no photo, or an orphan media row no cat references. Cat.PrimaryPhotoID is
+// overwritten with the media row's own id once it's inserted; callers don't
+// need to (and shouldn't) set it themselves.
+type CreateCatWithMediaParams struct {
+	Media CreateMediaParams
+	Cat   CreateCatParams
+}
+
+// CreateCatWithMediaRow is the pair of rows CreateCatWithMedia commits.
+type CreateCatWithMediaRow struct {
+	Cat   CreateCatRow
+	Media Medium
+}
+
+// CreateCatWithMedia inserts the media row for a new cat's required photo,
+// then the cats row referencing it via primary_photo_id, both in one
+// transaction — mirroring CreateOrdinaryUpdate's shape below. If either
+// insert fails (including the cats-table idempotency conflict — see
+// CreateCat's comment — which surfaces as pgx.ErrNoRows here), the whole
+// transaction rolls back: the media row never survives without a cat
+// pointing at it. CatsService.Create is responsible for compensating the
+// object already uploaded to storage on any error this returns, and for
+// resolving the idempotency-conflict case to the cat an earlier, successful
+// call already created.
+func (s *Store) CreateCatWithMedia(ctx context.Context, arg CreateCatWithMediaParams) (CreateCatWithMediaRow, error) {
+	var result CreateCatWithMediaRow
+	err := s.withTx(ctx, func(q *Queries) error {
+		media, err := q.CreateMedia(ctx, arg.Media)
+		if err != nil {
+			return err
+		}
+		catParams := arg.Cat
+		catParams.PrimaryPhotoID = pgtype.UUID{Bytes: media.ID.Bytes, Valid: true}
+		cat, err := q.CreateCat(ctx, catParams)
+		if err != nil {
+			return err
+		}
+		result = CreateCatWithMediaRow{Cat: cat, Media: media}
+		return nil
+	})
+	return result, err
+}
+
 func (s *Store) CreateOrdinaryUpdate(ctx context.Context, arg CreateOrdinaryUpdateParams) (CreateUpdateRow, error) {
 	var row CreateUpdateRow
 	err := s.withTx(ctx, func(q *Queries) error {

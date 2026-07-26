@@ -1,9 +1,14 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +23,29 @@ import (
 	"github.com/tekiristanbul/tekir/backend/internal/repository"
 	"github.com/tekiristanbul/tekir/backend/internal/service"
 )
+
+// validTestJPEG returns real, decodable jpeg bytes — CatsService.Create's
+// shared media pipeline (issue #70) genuinely decodes/re-encodes a photo
+// before storing it, so a handler-level "success" test needs a real image,
+// not an arbitrary byte string.
+func validTestJPEG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 10), G: uint8(y * 10), B: 100, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatalf("encode test jpeg: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// testMaxUploadBytes is a stand-in maxUploadBytes for tests that don't
+// exercise Create's multipart size limit itself.
+const testMaxUploadBytes = 8 * 1024 * 1024
 
 type fakeCatsLister struct {
 	rows []repository.ListCatsInBoundsRow
@@ -37,6 +65,15 @@ type fakeCatsLister struct {
 	// call received — a pointer field so the write is visible through the
 	// copy of fakeCatsLister that ends up inside the service.
 	captured *repository.CreateOrdinaryUpdateParams
+
+	idempotencyRow repository.GetCatByIdempotencyKeyRow
+	idempotencyErr error
+
+	nearbyDuplicateRows []repository.ListNearbyCatsForDuplicateCheckRow
+	nearbyDuplicateErr  error
+
+	createCatWithMediaRow repository.CreateCatWithMediaRow
+	createCatWithMediaErr error
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
@@ -60,6 +97,18 @@ func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository
 		*f.captured = arg
 	}
 	return f.createRow, f.createErr
+}
+
+func (f fakeCatsLister) GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error) {
+	return f.idempotencyRow, f.idempotencyErr
+}
+
+func (f fakeCatsLister) ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error) {
+	return f.nearbyDuplicateRows, f.nearbyDuplicateErr
+}
+
+func (f fakeCatsLister) CreateCatWithMedia(ctx context.Context, arg repository.CreateCatWithMediaParams) (repository.CreateCatWithMediaRow, error) {
+	return f.createCatWithMediaRow, f.createCatWithMediaErr
 }
 
 // fakeDeviceResolver stands in for service.DevicesService in tests that
@@ -133,12 +182,12 @@ func TestCatsHandler_Nearby(t *testing.T) {
 		{
 			ID:        id,
 			Name:      pgtype.Text{String: "tekir", Valid: true},
-			PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+			PhotoUrl:  "https://placecats.com/millie/300/200",
 			Lng:       28.9744,
 			Lat:       41.0256,
 			AreaLabel: pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
 		},
-	}}))
+	}}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats?bbox=28,41,29,42", nil)
@@ -167,7 +216,7 @@ func TestCatsHandler_Nearby(t *testing.T) {
 }
 
 func TestCatsHandler_Nearby_MissingBbox(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats", nil)
@@ -179,7 +228,7 @@ func TestCatsHandler_Nearby_MissingBbox(t *testing.T) {
 }
 
 func TestCatsHandler_Nearby_MalformedBbox(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats?bbox=not,a,valid,bbox", nil)
@@ -191,7 +240,7 @@ func TestCatsHandler_Nearby_MalformedBbox(t *testing.T) {
 }
 
 func TestCatsHandler_Nearby_InvalidBoundsOrder(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats?bbox=29,41,28,42", nil)
@@ -203,7 +252,7 @@ func TestCatsHandler_Nearby_InvalidBoundsOrder(t *testing.T) {
 }
 
 func TestCatsHandler_Nearby_NanAndInfiniteBounds(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 
 	cases := []string{"NaN,41,29,42", "28,41,29,Inf", "-Inf,41,29,42"}
 	for _, bbox := range cases {
@@ -229,10 +278,10 @@ func TestCatsHandler_Detail(t *testing.T) {
 			Lng:       28.9744,
 			Lat:       41.0256,
 			AreaLabel: pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
-			PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+			PhotoUrl:  "https://placecats.com/millie/300/200",
 			CreatedAt: pgtype.Timestamptz{Time: created, Valid: true},
 		},
-	}))
+	}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String(), nil)
@@ -267,7 +316,7 @@ func TestCatsHandler_Detail_NoTraitsField(t *testing.T) {
 			ID:   pgtype.UUID{Bytes: id, Valid: true},
 			Name: pgtype.Text{String: "tekir", Valid: true},
 		},
-	}))
+	}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String(), nil)
@@ -287,7 +336,7 @@ func TestCatsHandler_Detail_NoTraitsField(t *testing.T) {
 }
 
 func TestCatsHandler_Detail_NotFound(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{catErr: pgx.ErrNoRows}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{catErr: pgx.ErrNoRows}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String(), nil)
@@ -299,7 +348,7 @@ func TestCatsHandler_Detail_NotFound(t *testing.T) {
 }
 
 func TestCatsHandler_Detail_InvalidID(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/not-a-uuid", nil)
@@ -311,7 +360,7 @@ func TestCatsHandler_Detail_InvalidID(t *testing.T) {
 }
 
 func TestCatsHandler_Detail_RepositoryFailure(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{catErr: errors.New("connection refused")}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{catErr: errors.New("connection refused")}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String(), nil)
@@ -335,7 +384,7 @@ func TestCatsHandler_UpdateHistory(t *testing.T) {
 				Statuses:  []string{"seen", "fed"},
 			},
 		},
-	}))
+	}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String()+"/updates", nil)
@@ -364,7 +413,7 @@ func TestCatsHandler_UpdateHistory(t *testing.T) {
 }
 
 func TestCatsHandler_UpdateHistory_NotFound(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: false}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: false}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String()+"/updates", nil)
@@ -376,7 +425,7 @@ func TestCatsHandler_UpdateHistory_NotFound(t *testing.T) {
 }
 
 func TestCatsHandler_UpdateHistory_InvalidLimit(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String()+"/updates?limit=not-a-number", nil)
@@ -388,7 +437,7 @@ func TestCatsHandler_UpdateHistory_InvalidLimit(t *testing.T) {
 }
 
 func TestCatsHandler_UpdateHistory_LimitOutOfRange(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String()+"/updates?limit=1000", nil)
@@ -400,7 +449,7 @@ func TestCatsHandler_UpdateHistory_LimitOutOfRange(t *testing.T) {
 }
 
 func TestCatsHandler_UpdateHistory_RepositoryFailure(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true, updatesErr: errors.New("connection refused")}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true, updatesErr: errors.New("connection refused")}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String()+"/updates", nil)
@@ -422,7 +471,7 @@ func TestCatsHandler_Nearby_ActiveAlertMetadata(t *testing.T) {
 			NeedsHelpCreatedAt: pgtype.Timestamptz{Time: fixedNow.Add(-time.Hour), Valid: true},
 			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: fixedNow.Add(71 * time.Hour), Valid: true},
 		},
-	}}, service.WithClock(func() time.Time { return fixedNow })))
+	}}, service.WithClock(func() time.Time { return fixedNow })), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats?bbox=28,41,29,42", nil)
@@ -446,7 +495,7 @@ func TestCatsHandler_Nearby_ActiveAlertMetadata(t *testing.T) {
 func TestCatsHandler_Nearby_NoActiveAlertIsNull(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{rows: []repository.ListCatsInBoundsRow{
 		{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, Name: pgtype.Text{String: "tekir", Valid: true}},
-	}}))
+	}}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats?bbox=28,41,29,42", nil)
@@ -472,7 +521,7 @@ func TestCatsHandler_Detail_ActiveAlertMetadata(t *testing.T) {
 			NeedsHelpCreatedAt: pgtype.Timestamptz{Time: fixedNow.Add(-71 * time.Hour), Valid: true},
 			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: fixedNow.Add(time.Hour), Valid: true},
 		},
-	}, service.WithClock(func() time.Time { return fixedNow })))
+	}, service.WithClock(func() time.Time { return fixedNow })), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String(), nil)
@@ -508,7 +557,7 @@ func TestCatsHandler_UpdateHistory_NeedsHelpEntry(t *testing.T) {
 				Statuses:           []string{},
 			},
 		},
-	}, service.WithClock(func() time.Time { return fixedNow })))
+	}, service.WithClock(func() time.Time { return fixedNow })), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String()+"/updates", nil)
@@ -542,7 +591,7 @@ func TestCatsHandler_GuestReads_NoAuthHeadersRequired(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
 		catRow: repository.GetCatByIDRow{ID: catID, Name: pgtype.Text{String: "tekir", Valid: true}},
 		exists: true,
-	}))
+	}), testMaxUploadBytes)
 	r := routerFor(h)
 
 	detailRec := httptest.NewRecorder()
@@ -578,7 +627,7 @@ func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
 		exists:    true,
 		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
 		captured:  &captured,
-	}, service.WithClock(func() time.Time { return created })))
+	}, service.WithClock(func() time.Time { return created })), testMaxUploadBytes)
 
 	r := routerForWithResolver(h,
 		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: deviceID.String()}},
@@ -636,7 +685,7 @@ func TestCatsHandler_CreateUpdate_WithCommentAndMultipleStatuses(t *testing.T) {
 		exists:    true,
 		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
 		captured:  &captured,
-	}))
+	}), testMaxUploadBytes)
 
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["fed","seen"],"comment":"mama verildi"}`)
@@ -662,7 +711,7 @@ func TestCatsHandler_CreateUpdate_WithCommentAndMultipleStatuses(t *testing.T) {
 }
 
 func TestCatsHandler_CreateUpdate_EmptyStatuses(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":[]}`)
 	routerFor(h).ServeHTTP(rec, req)
@@ -673,7 +722,7 @@ func TestCatsHandler_CreateUpdate_EmptyStatuses(t *testing.T) {
 }
 
 func TestCatsHandler_CreateUpdate_MissingStatuses(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(uuid.New().String(), `{}`)
 	routerFor(h).ServeHTTP(rec, req)
@@ -684,7 +733,7 @@ func TestCatsHandler_CreateUpdate_MissingStatuses(t *testing.T) {
 }
 
 func TestCatsHandler_CreateUpdate_CommentOnly(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(uuid.New().String(), `{"comment":"mama verildi"}`)
 	routerFor(h).ServeHTTP(rec, req)
@@ -695,7 +744,7 @@ func TestCatsHandler_CreateUpdate_CommentOnly(t *testing.T) {
 }
 
 func TestCatsHandler_CreateUpdate_UnknownStatusValue(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["flying"]}`)
 	routerFor(h).ServeHTTP(rec, req)
@@ -706,7 +755,7 @@ func TestCatsHandler_CreateUpdate_UnknownStatusValue(t *testing.T) {
 }
 
 func TestCatsHandler_CreateUpdate_DuplicateStatus(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["seen","seen"]}`)
 	routerFor(h).ServeHTTP(rec, req)
@@ -717,7 +766,7 @@ func TestCatsHandler_CreateUpdate_DuplicateStatus(t *testing.T) {
 }
 
 func TestCatsHandler_CreateUpdate_MalformedJSON(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":`)
 	routerFor(h).ServeHTTP(rec, req)
@@ -748,7 +797,7 @@ func TestCatsHandler_CreateUpdate_RejectsUnknownFields(t *testing.T) {
 
 	for name, body := range bodies {
 		t.Run(name, func(t *testing.T) {
-			h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+			h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 			rec := httptest.NewRecorder()
 			req := newCreateUpdateRequest(uuid.New().String(), body)
 			routerFor(h).ServeHTTP(rec, req)
@@ -761,7 +810,7 @@ func TestCatsHandler_CreateUpdate_RejectsUnknownFields(t *testing.T) {
 }
 
 func TestCatsHandler_CreateUpdate_CatNotFound(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: false}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: false}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["seen"]}`)
 	routerFor(h).ServeHTTP(rec, req)
@@ -772,7 +821,7 @@ func TestCatsHandler_CreateUpdate_CatNotFound(t *testing.T) {
 }
 
 func TestCatsHandler_CreateUpdate_InvalidCatID(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest("not-a-uuid", `{"statuses":["seen"]}`)
 	routerFor(h).ServeHTTP(rec, req)
@@ -783,7 +832,7 @@ func TestCatsHandler_CreateUpdate_InvalidCatID(t *testing.T) {
 }
 
 func TestCatsHandler_CreateUpdate_RepositoryFailure(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true, createErr: errors.New("connection refused")}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true, createErr: errors.New("connection refused")}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()
 	req := newCreateUpdateRequest(uuid.New().String(), `{"statuses":["seen"]}`)
 	routerFor(h).ServeHTTP(rec, req)
@@ -798,7 +847,7 @@ func TestCatsHandler_CreateUpdate_RepositoryFailure(t *testing.T) {
 // #65); the exhaustive missing/unknown/expired-token matrix lives in
 // bearer_auth_test.go against the middleware directly.
 func TestCatsHandler_CreateUpdate_RequiresBearer(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}), testMaxUploadBytes)
 	r := routerFor(h)
 
 	rec := httptest.NewRecorder()
@@ -811,7 +860,7 @@ func TestCatsHandler_CreateUpdate_RequiresBearer(t *testing.T) {
 }
 
 func TestCatsHandler_CreateUpdate_InvalidBearer(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}), testMaxUploadBytes)
 	r := routerForWithResolver(h,
 		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.NewString()}},
 		fakeAccessValidator{err: service.ErrSessionInvalid},
@@ -831,7 +880,7 @@ func TestCatsHandler_CreateUpdate_InvalidBearer(t *testing.T) {
 // #65: device association is optional, never required for authorization).
 func TestCatsHandler_CreateUpdate_DeviceTokenOptional(t *testing.T) {
 	var captured repository.CreateOrdinaryUpdateParams
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true, captured: &captured}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true, captured: &captured}), testMaxUploadBytes)
 	r := routerFor(h)
 
 	rec := httptest.NewRecorder()
@@ -854,7 +903,7 @@ func TestCatsHandler_CreateUpdate_DeviceTokenOptional(t *testing.T) {
 // OptionalDeviceToken never rejects) — only the bearer session determines
 // authorization.
 func TestCatsHandler_CreateUpdate_UnknownDeviceToken_StillSucceeds(t *testing.T) {
-	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}))
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}), testMaxUploadBytes)
 	r := routerForWithResolver(h, fakeDeviceResolver{err: service.ErrDeviceNotFound}, fakeAccessValidator{userID: defaultTestUserID})
 
 	rec := httptest.NewRecorder()
@@ -865,3 +914,183 @@ func TestCatsHandler_CreateUpdate_UnknownDeviceToken_StillSucceeds(t *testing.T)
 		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// createCatRouterFor wires POST /v1/cats and GET /v1/cats/nearby behind the
+// same middleware chain server.NewRouter uses in production.
+func createCatRouterFor(h *CatsHandler) http.Handler {
+	r := chi.NewRouter()
+	r.Get("/v1/cats/nearby", h.NearbyDuplicates)
+	r.With(
+		RequireBearer(fakeAccessValidator{userID: defaultTestUserID}),
+		OptionalDeviceToken(fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.NewString()}}),
+	).Post("/v1/cats", h.Create)
+	return r
+}
+
+// newCreateCatRequest builds a POST /v1/cats multipart request with the
+// given lat/lng/name/confirmedNew fields and, when photo is non-nil, a
+// "photo" file field carrying it. Tests whose expected outcome is decided
+// before CatsService.Create ever validates the photo's content (missing
+// photo, invalid area, duplicate candidates) can pass arbitrary bytes;
+// TestCatsHandler_Create_Success is the only case that needs validTestJPEG.
+func newCreateCatRequest(fields map[string]string, photo []byte) *http.Request {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	for k, v := range fields {
+		_ = w.WriteField(k, v)
+	}
+	if photo != nil {
+		part, _ := w.CreateFormFile("photo", "cat.jpg")
+		_, _ = part.Write(photo)
+	}
+	_ = w.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/cats", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	return req
+}
+
+func TestCatsHandler_Create_Success(t *testing.T) {
+	catID := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		createCatWithMediaRow: repository.CreateCatWithMediaRow{
+			Cat:   repository.CreateCatRow{ID: pgtype.UUID{Bytes: catID, Valid: true}, Lat: 41.03, Lng: 28.98},
+			Media: repository.Medium{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, Url: "/v1/media/objects/x.jpg"},
+		},
+	}, service.WithCatsMediaPipeline(&fakeHandlerObjectStore{}, 1<<20)), testMaxUploadBytes)
+
+	req := withBearerToken(newCreateCatRequest(map[string]string{"lat": "41.03", "lng": "28.98", "confirmed_new": "true"}, validTestJPEG(t)))
+	rec := httptest.NewRecorder()
+	createCatRouterFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body createCatResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Cat.ID != catID.String() {
+		t.Errorf("expected cat id %s, got %s", catID.String(), body.Cat.ID)
+	}
+}
+
+func TestCatsHandler_Create_RequiresBearer(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}, service.WithCatsMediaPipeline(&fakeHandlerObjectStore{}, 1<<20)), testMaxUploadBytes)
+
+	req := newCreateCatRequest(map[string]string{"lat": "41.03", "lng": "28.98", "confirmed_new": "true"}, []byte("fake-photo-bytes"))
+	rec := httptest.NewRecorder()
+	createCatRouterFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestCatsHandler_Create_MissingPhoto(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}, service.WithCatsMediaPipeline(&fakeHandlerObjectStore{}, 1<<20)), testMaxUploadBytes)
+
+	req := withBearerToken(newCreateCatRequest(map[string]string{"lat": "41.03", "lng": "28.98", "confirmed_new": "true"}, nil))
+	rec := httptest.NewRecorder()
+	createCatRouterFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 without a photo, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Create_MissingLatLng(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}, service.WithCatsMediaPipeline(&fakeHandlerObjectStore{}, 1<<20)), testMaxUploadBytes)
+
+	req := withBearerToken(newCreateCatRequest(map[string]string{"confirmed_new": "true"}, []byte("fake-photo-bytes")))
+	rec := httptest.NewRecorder()
+	createCatRouterFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 without lat/lng, got %d", rec.Code)
+	}
+}
+
+func TestCatsHandler_Create_DuplicateCandidatesReturns409(t *testing.T) {
+	nearbyID := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		nearbyDuplicateRows: []repository.ListNearbyCatsForDuplicateCheckRow{
+			{ID: pgtype.UUID{Bytes: nearbyID, Valid: true}, Name: pgtype.Text{String: "existing", Valid: true}, PhotoUrl: "https://example.com/x.jpg"},
+		},
+	}, service.WithCatsMediaPipeline(&fakeHandlerObjectStore{}, 1<<20)), testMaxUploadBytes)
+
+	req := withBearerToken(newCreateCatRequest(map[string]string{"lat": "41.03", "lng": "28.98"}, []byte("fake-photo-bytes")))
+	rec := httptest.NewRecorder()
+	createCatRouterFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body duplicateCandidatesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Candidates) != 1 || body.Candidates[0].ID != nearbyID.String() {
+		t.Errorf("unexpected candidates: %+v", body.Candidates)
+	}
+}
+
+func TestCatsHandler_Create_InvalidAreaOutsideIstanbul(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}, service.WithCatsMediaPipeline(&fakeHandlerObjectStore{}, 1<<20)), testMaxUploadBytes)
+
+	req := withBearerToken(newCreateCatRequest(map[string]string{"lat": "48.85", "lng": "2.35", "confirmed_new": "true"}, []byte("fake-photo-bytes")))
+	rec := httptest.NewRecorder()
+	createCatRouterFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an out-of-bounds area, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_NearbyDuplicates_Success(t *testing.T) {
+	nearbyID := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		nearbyDuplicateRows: []repository.ListNearbyCatsForDuplicateCheckRow{
+			{ID: pgtype.UUID{Bytes: nearbyID, Valid: true}, Name: pgtype.Text{String: "tekir", Valid: true}, PhotoUrl: "https://example.com/x.jpg"},
+		},
+	}), testMaxUploadBytes)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/nearby?lat=41.03&lng=28.98", nil)
+	rec := httptest.NewRecorder()
+	createCatRouterFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body []duplicateCandidateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body) != 1 || body[0].ID != nearbyID.String() {
+		t.Errorf("unexpected body: %+v", body)
+	}
+}
+
+func TestCatsHandler_NearbyDuplicates_MissingLatLng(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/nearby", nil)
+	rec := httptest.NewRecorder()
+	createCatRouterFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+// fakeHandlerObjectStore is a minimal ObjectStore for handler-level tests
+// that only need CatsService.Create's pipeline to run without touching
+// disk — the handler tests stub the repository layer, so the actual
+// stored bytes/content-type never matter here.
+type fakeHandlerObjectStore struct{}
+
+func (fakeHandlerObjectStore) Put(_ context.Context, key, _ string, _ []byte) (string, error) {
+	return "/v1/media/objects/" + key, nil
+}
+
+func (fakeHandlerObjectStore) Delete(_ context.Context, _ string) error { return nil }

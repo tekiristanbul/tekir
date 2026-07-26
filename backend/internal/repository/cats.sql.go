@@ -24,6 +24,94 @@ func (q *Queries) CatExists(ctx context.Context, id pgtype.UUID) (bool, error) {
 	return exists, err
 }
 
+const createCat = `-- name: CreateCat :one
+insert into cats (id, name, area, primary_photo_id, status, created_by_user_id, created_by_device_id, idempotency_key)
+values (
+  $1,
+  $2,
+  st_setsrid(st_makepoint($3::float8, $4::float8), 4326)::geography,
+  $5,
+  'active',
+  $6,
+  $7,
+  $8
+)
+on conflict (created_by_user_id, idempotency_key) where idempotency_key is not null do nothing
+returning id, name, area_label, primary_photo_id, status, created_by_user_id, created_by_device_id, created_at, last_update_at,
+  st_x(area::geometry)::float8 as lng, st_y(area::geometry)::float8 as lat
+`
+
+type CreateCatParams struct {
+	ID                pgtype.UUID `json:"id"`
+	Name              pgtype.Text `json:"name"`
+	Lng               float64     `json:"lng"`
+	Lat               float64     `json:"lat"`
+	PrimaryPhotoID    pgtype.UUID `json:"primary_photo_id"`
+	CreatedByUserID   pgtype.UUID `json:"created_by_user_id"`
+	CreatedByDeviceID pgtype.UUID `json:"created_by_device_id"`
+	IdempotencyKey    pgtype.Text `json:"idempotency_key"`
+}
+
+type CreateCatRow struct {
+	ID                pgtype.UUID        `json:"id"`
+	Name              pgtype.Text        `json:"name"`
+	AreaLabel         pgtype.Text        `json:"area_label"`
+	PrimaryPhotoID    pgtype.UUID        `json:"primary_photo_id"`
+	Status            string             `json:"status"`
+	CreatedByUserID   pgtype.UUID        `json:"created_by_user_id"`
+	CreatedByDeviceID pgtype.UUID        `json:"created_by_device_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	LastUpdateAt      pgtype.Timestamptz `json:"last_update_at"`
+	Lng               float64            `json:"lng"`
+	Lat               float64            `json:"lat"`
+}
+
+// issue #70: created_by_user_id is required (resolved from the
+// authenticated bearer session, never client-supplied); created_by_device_id
+// is optional (X-Device-Token, installation/abuse-control association only).
+// area_label stays null — there is no runtime reverse-geocoding service
+// (see docs/architecture/db.md), matching how seed data is the only current
+// source of that field. last_update_at is left null: cat creation does not
+// itself post an update (docs/product/updates.md defines freshness purely
+// from actual updates), so a newly created cat starts in the same
+// long_not_seen state any never-updated cat would. idempotent by
+// construction, same shape as CreateMedia: on conflict do nothing on the
+// partial (created_by_user_id, idempotency_key) unique index means a
+// retried creation with the same key never creates a second cat — no row
+// comes back on the conflicting retry, and the caller (CatsService) looks
+// the existing row up via GetCatByIdempotencyKey instead.
+// returning computes lng/lat the same way GetCatByID/ListCatsInBounds do
+// (postgis geography has no plain Go scan type — see their comments) rather
+// than `returning *`, so CatsService never has to special-case this row's
+// shape against every other cat-reading query.
+func (q *Queries) CreateCat(ctx context.Context, arg CreateCatParams) (CreateCatRow, error) {
+	row := q.db.QueryRow(ctx, createCat,
+		arg.ID,
+		arg.Name,
+		arg.Lng,
+		arg.Lat,
+		arg.PrimaryPhotoID,
+		arg.CreatedByUserID,
+		arg.CreatedByDeviceID,
+		arg.IdempotencyKey,
+	)
+	var i CreateCatRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.AreaLabel,
+		&i.PrimaryPhotoID,
+		&i.Status,
+		&i.CreatedByUserID,
+		&i.CreatedByDeviceID,
+		&i.CreatedAt,
+		&i.LastUpdateAt,
+		&i.Lng,
+		&i.Lat,
+	)
+	return i, err
+}
+
 const getCatByID = `-- name: GetCatByID :one
 select
   c.id,
@@ -31,13 +119,14 @@ select
   st_x(c.area::geometry)::float8 as lng,
   st_y(c.area::geometry)::float8 as lat,
   c.area_label,
-  c.photo_url,
+  coalesce(c.photo_url, m.url) as photo_url,
   c.created_at,
   c.last_update_at,
   nh.needs_help_category,
   nh.created_at as needs_help_created_at,
   nh.needs_help_expires_at
 from cats c
+left join media m on m.id = c.primary_photo_id
 left join lateral (
   select u.needs_help_category, u.created_at, u.needs_help_expires_at
   from updates u
@@ -54,7 +143,7 @@ type GetCatByIDRow struct {
 	Lng                float64            `json:"lng"`
 	Lat                float64            `json:"lat"`
 	AreaLabel          pgtype.Text        `json:"area_label"`
-	PhotoUrl           pgtype.Text        `json:"photo_url"`
+	PhotoUrl           string             `json:"photo_url"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
@@ -66,7 +155,8 @@ type GetCatByIDRow struct {
 // vocabulary) rather than aggregated in here, so each trait can carry its
 // display_name without hand-rolling composite-type aggregation in sql. the
 // lateral join is the same latest-needs-help-update lookup as
-// ListCatsInBounds, unfiltered by expiry for the same reason.
+// ListCatsInBounds, unfiltered by expiry for the same reason. photo_url
+// coalesce mirrors ListCatsInBounds — see its comment.
 func (q *Queries) GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error) {
 	row := q.db.QueryRow(ctx, getCatByID, id)
 	var i GetCatByIDRow
@@ -86,11 +176,56 @@ func (q *Queries) GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow
 	return i, err
 }
 
+const getCatByIdempotencyKey = `-- name: GetCatByIdempotencyKey :one
+select id, name, area_label, primary_photo_id, status, created_by_user_id, created_by_device_id, created_at, last_update_at,
+  st_x(area::geometry)::float8 as lng, st_y(area::geometry)::float8 as lat
+from cats
+where created_by_user_id = $1 and idempotency_key = $2
+`
+
+type GetCatByIdempotencyKeyParams struct {
+	CreatedByUserID pgtype.UUID `json:"created_by_user_id"`
+	IdempotencyKey  pgtype.Text `json:"idempotency_key"`
+}
+
+type GetCatByIdempotencyKeyRow struct {
+	ID                pgtype.UUID        `json:"id"`
+	Name              pgtype.Text        `json:"name"`
+	AreaLabel         pgtype.Text        `json:"area_label"`
+	PrimaryPhotoID    pgtype.UUID        `json:"primary_photo_id"`
+	Status            string             `json:"status"`
+	CreatedByUserID   pgtype.UUID        `json:"created_by_user_id"`
+	CreatedByDeviceID pgtype.UUID        `json:"created_by_device_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	LastUpdateAt      pgtype.Timestamptz `json:"last_update_at"`
+	Lng               float64            `json:"lng"`
+	Lat               float64            `json:"lat"`
+}
+
+func (q *Queries) GetCatByIdempotencyKey(ctx context.Context, arg GetCatByIdempotencyKeyParams) (GetCatByIdempotencyKeyRow, error) {
+	row := q.db.QueryRow(ctx, getCatByIdempotencyKey, arg.CreatedByUserID, arg.IdempotencyKey)
+	var i GetCatByIdempotencyKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.AreaLabel,
+		&i.PrimaryPhotoID,
+		&i.Status,
+		&i.CreatedByUserID,
+		&i.CreatedByDeviceID,
+		&i.CreatedAt,
+		&i.LastUpdateAt,
+		&i.Lng,
+		&i.Lat,
+	)
+	return i, err
+}
+
 const listCatsInBounds = `-- name: ListCatsInBounds :many
 select
   c.id,
   c.name,
-  c.photo_url,
+  coalesce(c.photo_url, m.url) as photo_url,
   st_x(c.area::geometry)::float8 as lng,
   st_y(c.area::geometry)::float8 as lat,
   c.area_label,
@@ -99,6 +234,7 @@ select
   nh.created_at as needs_help_created_at,
   nh.needs_help_expires_at
 from cats c
+left join media m on m.id = c.primary_photo_id
 left join lateral (
   select u.needs_help_category, u.created_at, u.needs_help_expires_at
   from updates u
@@ -124,7 +260,7 @@ type ListCatsInBoundsParams struct {
 type ListCatsInBoundsRow struct {
 	ID                 pgtype.UUID        `json:"id"`
 	Name               pgtype.Text        `json:"name"`
-	PhotoUrl           pgtype.Text        `json:"photo_url"`
+	PhotoUrl           string             `json:"photo_url"`
 	Lng                float64            `json:"lng"`
 	Lat                float64            `json:"lat"`
 	AreaLabel          pgtype.Text        `json:"area_label"`
@@ -141,7 +277,10 @@ type ListCatsInBoundsRow struct {
 // fetch on marker tap. the lateral join returns each cat's latest
 // needs-help update (issue #4/#23), whether or not it has since expired —
 // ListNearby (service layer) is the one that decides active-vs-expired,
-// against an injected clock, not this query's own now().
+// against an injected clock, not this query's own now(). issue #70: a cat
+// created through POST /v1/cats has primary_photo_id (media table) instead
+// of photo_url (seed-only column, issue #7) — coalesce so both read paths
+// resolve to the same primary_photo field.
 func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsParams) ([]ListCatsInBoundsRow, error) {
 	rows, err := q.db.Query(ctx, listCatsInBounds,
 		arg.MinLng,
@@ -168,6 +307,56 @@ func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsPara
 			&i.NeedsHelpCreatedAt,
 			&i.NeedsHelpExpiresAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNearbyCatsForDuplicateCheck = `-- name: ListNearbyCatsForDuplicateCheck :many
+select
+  c.id,
+  c.name,
+  coalesce(c.photo_url, m.url) as photo_url
+from cats c
+left join media m on m.id = c.primary_photo_id
+where c.status = 'active'
+  and st_dwithin(c.area, st_setsrid(st_makepoint($1::float8, $2::float8), 4326)::geography, $3::float8)
+order by st_distance(c.area, st_setsrid(st_makepoint($1::float8, $2::float8), 4326)::geography) asc
+`
+
+type ListNearbyCatsForDuplicateCheckParams struct {
+	Lng     float64 `json:"lng"`
+	Lat     float64 `json:"lat"`
+	RadiusM float64 `json:"radius_m"`
+}
+
+type ListNearbyCatsForDuplicateCheckRow struct {
+	ID       pgtype.UUID `json:"id"`
+	Name     pgtype.Text `json:"name"`
+	PhotoUrl string      `json:"photo_url"`
+}
+
+// issue #70: powers GET /v1/cats/nearby, the add-cat flow's non-blocking
+// duplicate-candidate check (docs/product/cats.md, docs/product/trust.md —
+// advisory only, never blocks creation on its own). st_dwithin on the
+// geography column uses cats_area_gix the same way ListCatsInBounds' &&
+// bounding-box check does; radius_m is in meters, matching geography's
+// native unit. photo_url coalesce mirrors ListCatsInBounds/GetCatByID.
+func (q *Queries) ListNearbyCatsForDuplicateCheck(ctx context.Context, arg ListNearbyCatsForDuplicateCheckParams) ([]ListNearbyCatsForDuplicateCheckRow, error) {
+	rows, err := q.db.Query(ctx, listNearbyCatsForDuplicateCheck, arg.Lng, arg.Lat, arg.RadiusM)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNearbyCatsForDuplicateCheckRow
+	for rows.Next() {
+		var i ListNearbyCatsForDuplicateCheckRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.PhotoUrl); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

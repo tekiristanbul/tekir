@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,10 +16,46 @@ import (
 
 type CatsHandler struct {
 	cats *service.CatsService
+	// maxUploadBytes bounds POST /v1/cats' multipart request body via
+	// http.MaxBytesReader — ParseMultipartForm's own maxMemory argument only
+	// bounds what's kept in memory before spilling to disk, never the total
+	// request size, so this is the actual defense against an oversized
+	// request (issue #70). A margin above the photo's own byte-size limit
+	// (see service.MediaService/CatsService's shared pipeline) covers the
+	// surrounding multipart form fields/boundaries.
+	maxUploadBytes int64
 }
 
-func NewCatsHandler(cats *service.CatsService) *CatsHandler {
-	return &CatsHandler{cats: cats}
+func NewCatsHandler(cats *service.CatsService, maxUploadBytes int) *CatsHandler {
+	return &CatsHandler{cats: cats, maxUploadBytes: int64(maxUploadBytes) + multipartOverheadBytes}
+}
+
+// multipartOverheadBytes is generous headroom above the configured photo
+// byte-size limit for the surrounding multipart form fields/boundaries —
+// none of which are themselves large, but a fixed cap must allow for them.
+const multipartOverheadBytes = 64 * 1024
+
+// multipartMemoryThreshold is ParseMultipartForm's own maxMemory argument:
+// how much of the (already size-capped, via http.MaxBytesReader above) body
+// it keeps in memory before spilling the rest to a temp file. Distinct from
+// maxUploadBytes, which bounds the request itself.
+const multipartMemoryThreshold = 10 << 20
+
+// duplicateCandidateResponse is one entry of GET /v1/cats/nearby's array, and
+// of POST /v1/cats' 409 candidates list — the same shape both places
+// (docs/architecture/api.md).
+type duplicateCandidateResponse struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	PrimaryPhoto string `json:"primary_photo"`
+}
+
+func toDuplicateCandidateResponses(candidates []service.DuplicateCandidate) []duplicateCandidateResponse {
+	resp := make([]duplicateCandidateResponse, 0, len(candidates))
+	for _, c := range candidates {
+		resp = append(resp, duplicateCandidateResponse{ID: c.ID, Name: c.Name, PrimaryPhoto: c.PrimaryPhoto})
+	}
+	return resp
 }
 
 type catMarkerResponse struct {
@@ -127,6 +164,121 @@ func (h *CatsHandler) Nearby(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// NearbyDuplicates answers GET /v1/cats/nearby?lat&lng&radius=50 — the
+// add-cat flow's non-blocking duplicate-candidate check
+// (docs/architecture/api.md). Public: a guest reaches this in the add-cat
+// flow up to the moment the auth gate requires signing in (issue #70),
+// same as any other public read.
+func (h *CatsHandler) NearbyDuplicates(w http.ResponseWriter, r *http.Request) {
+	lat, lng, err := parseLatLng(r.URL.Query().Get("lat"), r.URL.Query().Get("lng"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	candidates, err := h.cats.ListNearbyDuplicates(r.Context(), lat, lng)
+	if err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toDuplicateCandidateResponses(candidates))
+}
+
+// createCatResponse wraps the created cat per docs/architecture/api.md's
+// `201 { cat }` sketch.
+type createCatResponse struct {
+	Cat catDetailResponse `json:"cat"`
+}
+
+// duplicateCandidatesResponse wraps the 409 candidates list per
+// docs/architecture/api.md's `409 { candidates:[...] }` sketch.
+type duplicateCandidatesResponse struct {
+	Candidates []duplicateCandidateResponse `json:"candidates"`
+}
+
+// Create answers POST /v1/cats: a multipart request with lat/lng form
+// fields (area), a required photo file, an optional name, and an optional
+// confirmed_new flag ("true" to proceed past a duplicate-candidate match —
+// docs/architecture/api.md's confirmed_new). Ownership is always resolved
+// from the authenticated bearer session (see RequireBearer) and the
+// optional X-Device-Token (see OptionalDeviceToken) — never from the
+// request body. An optional Idempotency-Key header makes a retried request
+// return the original result instead of creating a second cat.
+func (h *CatsHandler) Create(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
+	if err := r.ParseMultipartForm(multipartMemoryThreshold); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid multipart form, or request too large"})
+		return
+	}
+
+	lat, lng, err := parseLatLng(r.FormValue("lat"), r.FormValue("lng"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	var name *string
+	if v := strings.TrimSpace(r.FormValue("name")); v != "" {
+		name = &v
+	}
+	confirmedNew := r.FormValue("confirmed_new") == "true"
+
+	var idempotencyKey *string
+	if v := strings.TrimSpace(r.Header.Get("Idempotency-Key")); v != "" {
+		idempotencyKey = &v
+	}
+
+	file, _, ferr := r.FormFile("photo")
+	if ferr != nil {
+		writeCatsServiceError(w, service.ErrMissingPhoto)
+		return
+	}
+	defer func() { _ = file.Close() }()
+	photoBytes, err := io.ReadAll(file)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid photo"})
+		return
+	}
+
+	user := UserFromContext(r.Context())
+	device := DeviceFromContext(r.Context())
+	cat, err := h.cats.Create(r.Context(), user.UserID, device.DeviceID, idempotencyKey, lat, lng, name, confirmedNew, photoBytes)
+	if err != nil {
+		var dupErr *service.DuplicateCandidatesError
+		if errors.As(err, &dupErr) {
+			writeJSON(w, http.StatusConflict, duplicateCandidatesResponse{Candidates: toDuplicateCandidateResponses(dupErr.Candidates)})
+			return
+		}
+		writeCatsServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, createCatResponse{Cat: catDetailResponse{
+		ID:           cat.ID,
+		Name:         cat.Name,
+		Area:         areaLatLng{Lat: cat.Lat, Lng: cat.Lng},
+		AreaLabel:    cat.AreaLabel,
+		PrimaryPhoto: cat.PrimaryPhoto,
+		CreatedAt:    cat.CreatedAt,
+		LastUpdateAt: cat.LastUpdateAt,
+		ActiveAlert:  toActiveAlertResponse(cat.ActiveAlert),
+	}})
+}
+
+// parseLatLng parses required lat/lng values shared by GET /v1/cats/nearby
+// and POST /v1/cats' area field.
+func parseLatLng(rawLat, rawLng string) (lat, lng float64, err error) {
+	lat, err = strconv.ParseFloat(rawLat, 64)
+	if err != nil {
+		return 0, 0, errors.New("lat is required and must be a number")
+	}
+	lng, err = strconv.ParseFloat(rawLng, 64)
+	if err != nil {
+		return 0, 0, errors.New("lng is required and must be a number")
+	}
+	return lat, lng, nil
 }
 
 // Detail answers GET /v1/cats/{cat_id} with the cat-detail representation.
@@ -243,6 +395,16 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"})
 	case errors.Is(err, service.ErrInvalidStatuses):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid statuses"})
+	case errors.Is(err, service.ErrInvalidArea):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid area"})
+	case errors.Is(err, service.ErrMissingPhoto):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "photo is required"})
+	case errors.Is(err, service.ErrMediaTooLarge):
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "photo too large"})
+	case errors.Is(err, service.ErrUnsupportedMediaType):
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "unsupported photo type"})
+	case errors.Is(err, service.ErrMalformedMedia):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed photo"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 	}
