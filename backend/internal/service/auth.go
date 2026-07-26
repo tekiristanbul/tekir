@@ -61,13 +61,14 @@ const otpCodeDigits = 6
 // and rendering cost.
 const maxDisplayNameLength = 60
 
-// AuthStore is satisfied by repository.Store; kept as an interface so
-// AuthService stays testable without a real database connection.
+// AuthStore is satisfied by repository.Store (and, transaction-scoped, by
+// *repository.Queries — see TxRunner); kept as an interface so AuthService
+// stays testable without a real database connection.
 type AuthStore interface {
 	CreateOtpCode(ctx context.Context, arg repository.CreateOtpCodeParams) (repository.CreateOtpCodeRow, error)
 	GetLatestOtpCode(ctx context.Context, phone string) (repository.OtpCode, error)
 	IncrementOtpAttempts(ctx context.Context, id pgtype.UUID) error
-	ConsumeOtpCode(ctx context.Context, arg repository.ConsumeOtpCodeParams) error
+	ConsumeOtpCodeIfValid(ctx context.Context, arg repository.ConsumeOtpCodeIfValidParams) (pgtype.UUID, error)
 
 	GetUserByPhone(ctx context.Context, phone string) (repository.User, error)
 	CreateUser(ctx context.Context, arg repository.CreateUserParams) (repository.User, error)
@@ -87,6 +88,7 @@ type AuthService struct {
 	db             AuthStore
 	sms            SmsSender
 	sessions       *SessionService
+	txRunner       TxRunner
 	otpTTL         time.Duration
 	otpMaxAttempts int32
 	resendCooldown time.Duration
@@ -101,6 +103,16 @@ type AuthServiceOption func(*AuthService)
 // deterministically.
 func WithAuthClock(clock func() time.Time) AuthServiceOption {
 	return func(s *AuthService) { s.clock = clock }
+}
+
+// WithAuthTxRunner wires a TxRunner so VerifyOTP's otp consumption,
+// account resolution, device linking, and session issuance commit or roll
+// back together (code review fix, issue #58): a failure partway through
+// never leaves an otp code permanently consumed with no session issued.
+// Unset in unit tests, which exercise the non-transactional fallback with
+// hand-rolled fakes instead.
+func WithAuthTxRunner(tx TxRunner) AuthServiceOption {
+	return func(s *AuthService) { s.txRunner = tx }
 }
 
 func NewAuthService(db AuthStore, sms SmsSender, sessions *SessionService, otpTTL time.Duration, otpMaxAttempts int32, resendCooldown time.Duration, opts ...AuthServiceOption) *AuthService {
@@ -166,6 +178,16 @@ func (s *AuthService) RequestOTP(ctx context.Context, rawPhone string) error {
 // normalized phone, idempotently links deviceID to that account, and
 // issues a new session. deviceID always comes from the caller's resolved
 // X-Device-Token (see handler.RequireDeviceToken) — never client-supplied.
+//
+// Consuming the code is an atomic compare-and-set (ConsumeOtpCodeIfValid):
+// two concurrent verifications presenting the same code can never both
+// win, since only one commits before the other re-evaluates the same
+// predicates and finds the code already spent (code review fix, issue
+// #58) — the loser is rejected here, before ever reaching account
+// resolution, device linking, or session issuance. When a TxRunner is
+// configured, that consumption plus the downstream account/device/session
+// writes all commit or roll back together, so a failure partway through
+// never permanently burns the code with no session issued.
 func (s *AuthService) VerifyOTP(ctx context.Context, rawPhone, code, deviceID string) (Session, error) {
 	phone, err := NormalizePhone(rawPhone)
 	if err != nil {
@@ -185,6 +207,10 @@ func (s *AuthService) VerifyOTP(ctx context.Context, rawPhone, code, deviceID st
 	}
 
 	now := s.clock()
+	// Pre-checks purely for a precise error message on the common paths —
+	// the actual security boundary is the atomic compare-and-set below,
+	// which re-validates all of this itself regardless of what this read
+	// observed.
 	switch {
 	case row.ConsumedAt.Valid:
 		return Session{}, ErrOTPAlreadyConsumed
@@ -194,26 +220,64 @@ func (s *AuthService) VerifyOTP(ctx context.Context, rawPhone, code, deviceID st
 		return Session{}, ErrOTPTooManyAttempts
 	}
 
-	if HashOTPCode(phone, code) != row.CodeHash {
+	presentedHash := HashOTPCode(phone, code)
+	if presentedHash != row.CodeHash {
 		if err := s.db.IncrementOtpAttempts(ctx, row.ID); err != nil {
 			return Session{}, err
 		}
 		return Session{}, ErrOTPCodeMismatch
 	}
 
-	if err := s.db.ConsumeOtpCode(ctx, repository.ConsumeOtpCodeParams{
+	consumeArgs := repository.ConsumeOtpCodeIfValidParams{
 		ID:         row.ID,
+		Phone:      phone,
+		CodeHash:   presentedHash,
 		ConsumedAt: pgtype.Timestamptz{Time: now, Valid: true},
-	}); err != nil {
+		Now:        pgtype.Timestamptz{Time: now, Valid: true},
+	}
+
+	if s.txRunner != nil {
+		var session Session
+		err := s.txRunner.WithinTx(ctx, func(q *repository.Queries) error {
+			if _, err := q.ConsumeOtpCodeIfValid(ctx, consumeArgs); err != nil {
+				return err
+			}
+			user, isNew, err := s.resolveOrCreateUser(ctx, q, phone, now)
+			if err != nil {
+				return err
+			}
+			if err := s.linkDevice(ctx, q, did, uuid.UUID(user.ID.Bytes)); err != nil {
+				return err
+			}
+			session, err = s.sessions.IssueTx(ctx, q, uuid.UUID(user.ID.Bytes))
+			if err != nil {
+				return err
+			}
+			session.IsNewAccount = isNew
+			return nil
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Session{}, ErrOTPAlreadyConsumed
+			}
+			return Session{}, err
+		}
+		return session, nil
+	}
+
+	if _, err := s.db.ConsumeOtpCodeIfValid(ctx, consumeArgs); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Session{}, ErrOTPAlreadyConsumed
+		}
 		return Session{}, err
 	}
 
-	user, isNew, err := s.resolveOrCreateUser(ctx, phone, now)
+	user, isNew, err := s.resolveOrCreateUser(ctx, s.db, phone, now)
 	if err != nil {
 		return Session{}, err
 	}
 
-	if err := s.linkDevice(ctx, did, uuid.UUID(user.ID.Bytes)); err != nil {
+	if err := s.linkDevice(ctx, s.db, did, uuid.UUID(user.ID.Bytes)); err != nil {
 		return Session{}, err
 	}
 
@@ -230,9 +294,11 @@ func (s *AuthService) VerifyOTP(ctx context.Context, rawPhone, code, deviceID st
 // constraint is what makes this resolve to exactly one account even when
 // two verify requests for the same number race: the losing insert hits
 // the constraint and this falls back to a lookup (isNew false) rather
-// than erroring.
-func (s *AuthService) resolveOrCreateUser(ctx context.Context, phone string, now time.Time) (repository.User, bool, error) {
-	existing, err := s.db.GetUserByPhone(ctx, phone)
+// than erroring. db is explicit (rather than always s.db) so the same
+// logic runs either directly against the service's store or, inside
+// VerifyOTP's transaction, against a transaction-scoped *repository.Queries.
+func (s *AuthService) resolveOrCreateUser(ctx context.Context, db AuthStore, phone string, now time.Time) (repository.User, bool, error) {
+	existing, err := db.GetUserByPhone(ctx, phone)
 	if err == nil {
 		return existing, false, nil
 	}
@@ -240,14 +306,14 @@ func (s *AuthService) resolveOrCreateUser(ctx context.Context, phone string, now
 		return repository.User{}, false, err
 	}
 
-	created, err := s.db.CreateUser(ctx, repository.CreateUserParams{
+	created, err := db.CreateUser(ctx, repository.CreateUserParams{
 		ID:              pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		Phone:           phone,
 		PhoneVerifiedAt: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			existing, err := s.db.GetUserByPhone(ctx, phone)
+			existing, err := db.GetUserByPhone(ctx, phone)
 			return existing, false, err
 		}
 		return repository.User{}, false, err
@@ -284,9 +350,10 @@ func (s *AuthService) SetDisplayName(ctx context.Context, userID, displayName st
 // device already linked to a *different* account is rejected rather than
 // silently reassigning it, so a device's prior authored content
 // (cats.created_by_device_id / updates.author_device_id, both keyed by
-// device_id) is never retroactively re-attributed to a second account.
-func (s *AuthService) linkDevice(ctx context.Context, deviceID, userID uuid.UUID) error {
-	device, err := s.db.GetDeviceByID(ctx, pgtype.UUID{Bytes: deviceID, Valid: true})
+// device_id) is never retroactively re-attributed to a second account. db
+// is explicit for the same reason as resolveOrCreateUser's.
+func (s *AuthService) linkDevice(ctx context.Context, db AuthStore, deviceID, userID uuid.UUID) error {
+	device, err := db.GetDeviceByID(ctx, pgtype.UUID{Bytes: deviceID, Valid: true})
 	if err != nil {
 		return err
 	}
@@ -296,7 +363,7 @@ func (s *AuthService) linkDevice(ctx context.Context, deviceID, userID uuid.UUID
 		}
 		return ErrDeviceLinkedToOtherAccount
 	}
-	return s.db.LinkDeviceToUser(ctx, repository.LinkDeviceToUserParams{
+	return db.LinkDeviceToUser(ctx, repository.LinkDeviceToUserParams{
 		ID:     pgtype.UUID{Bytes: deviceID, Valid: true},
 		UserID: pgtype.UUID{Bytes: userID, Valid: true},
 	})

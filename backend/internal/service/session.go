@@ -55,12 +55,14 @@ type accessClaims struct {
 	jwt.RegisteredClaims
 }
 
-// SessionStore is satisfied by repository.Store; kept as an interface so
+// SessionStore is satisfied by repository.Store (and, transaction-scoped,
+// by *repository.Queries — see TxRunner); kept as an interface so
 // SessionService stays testable without a real database connection.
 type SessionStore interface {
 	CreateRefreshToken(ctx context.Context, arg repository.CreateRefreshTokenParams) (repository.CreateRefreshTokenRow, error)
 	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (repository.RefreshToken, error)
 	RevokeRefreshToken(ctx context.Context, arg repository.RevokeRefreshTokenParams) error
+	RevokeRefreshTokenIfActive(ctx context.Context, arg repository.RevokeRefreshTokenIfActiveParams) (pgtype.UUID, error)
 }
 
 // SessionService issues, refreshes, validates, and revokes authenticated
@@ -68,6 +70,7 @@ type SessionStore interface {
 // long-lived, hashed, revocable, rotating refresh token.
 type SessionService struct {
 	db              SessionStore
+	txRunner        TxRunner
 	signingKey      []byte
 	accessTokenTTL  time.Duration
 	refreshTokenTTL time.Duration
@@ -82,6 +85,14 @@ type SessionServiceOption func(*SessionService)
 // deterministically (mirrors WithFollowsClock's convention).
 func WithSessionClock(clock func() time.Time) SessionServiceOption {
 	return func(s *SessionService) { s.clock = clock }
+}
+
+// WithSessionTxRunner wires a TxRunner so Refresh's atomic conditional
+// revoke and its replacement token's creation commit or roll back
+// together (code review fix, issue #58). Unset in unit tests, which
+// exercise the non-transactional fallback with hand-rolled fakes instead.
+func WithSessionTxRunner(tx TxRunner) SessionServiceOption {
+	return func(s *SessionService) { s.txRunner = tx }
 }
 
 func NewSessionService(db SessionStore, signingKey []byte, accessTokenTTL, refreshTokenTTL time.Duration, opts ...SessionServiceOption) *SessionService {
@@ -100,6 +111,18 @@ func NewSessionService(db SessionStore, signingKey []byte, accessTokenTTL, refre
 
 // Issue mints a new access/refresh token pair for userID.
 func (s *SessionService) Issue(ctx context.Context, userID uuid.UUID) (Session, error) {
+	return s.issue(ctx, s.db, userID)
+}
+
+// IssueTx is Issue, but writes the new refresh token through db instead of
+// the service's own store — used by AuthService.VerifyOTP to keep session
+// issuance inside the same transaction as otp consumption, account
+// resolution, and device linking.
+func (s *SessionService) IssueTx(ctx context.Context, db SessionStore, userID uuid.UUID) (Session, error) {
+	return s.issue(ctx, db, userID)
+}
+
+func (s *SessionService) issue(ctx context.Context, db SessionStore, userID uuid.UUID) (Session, error) {
 	access, err := s.signAccessToken(userID)
 	if err != nil {
 		return Session{}, err
@@ -111,7 +134,7 @@ func (s *SessionService) Issue(ctx context.Context, userID uuid.UUID) (Session, 
 	}
 
 	now := s.clock()
-	if _, err := s.db.CreateRefreshToken(ctx, repository.CreateRefreshTokenParams{
+	if _, err := db.CreateRefreshToken(ctx, repository.CreateRefreshTokenParams{
 		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		UserID:    pgtype.UUID{Bytes: userID, Valid: true},
 		TokenHash: HashRefreshToken(rawRefresh),
@@ -124,11 +147,18 @@ func (s *SessionService) Issue(ctx context.Context, userID uuid.UUID) (Session, 
 }
 
 // Refresh rotates a valid, unexpired, unrevoked refresh token into a new
-// pair. The presented token is revoked as part of rotation — replaying it
-// again (e.g. a stolen copy racing the legitimate client) fails with
-// ErrSessionRevoked rather than minting a second pair from the same token.
+// pair. The presented token is atomically revoked as part of rotation —
+// two concurrent refresh calls presenting the same token can never both
+// win: RevokeRefreshTokenIfActive re-evaluates "unrevoked and unexpired"
+// atomically against the row's committed state, so only one revoke can
+// ever succeed (code review fix, issue #58); the loser gets
+// ErrSessionRevoked rather than a second minted pair. When a TxRunner is
+// configured, the revoke and its replacement token's creation commit or
+// roll back together, so a failure minting the replacement never leaves
+// the client with no valid token at all.
 func (s *SessionService) Refresh(ctx context.Context, rawRefreshToken string) (Session, error) {
-	row, err := s.db.GetRefreshTokenByHash(ctx, HashRefreshToken(rawRefreshToken))
+	tokenHash := HashRefreshToken(rawRefreshToken)
+	row, err := s.db.GetRefreshTokenByHash(ctx, tokenHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Session{}, ErrSessionInvalid
@@ -137,6 +167,10 @@ func (s *SessionService) Refresh(ctx context.Context, rawRefreshToken string) (S
 	}
 
 	now := s.clock()
+	// Pre-checks purely for a precise error message on the common paths —
+	// the actual security boundary is the atomic conditional revoke below,
+	// which re-validates both predicates itself regardless of what this
+	// read observed.
 	if row.RevokedAt.Valid {
 		return Session{}, ErrSessionRevoked
 	}
@@ -144,14 +178,39 @@ func (s *SessionService) Refresh(ctx context.Context, rawRefreshToken string) (S
 		return Session{}, ErrSessionExpired
 	}
 
-	if err := s.db.RevokeRefreshToken(ctx, repository.RevokeRefreshTokenParams{
+	revokeArgs := repository.RevokeRefreshTokenIfActiveParams{
 		ID:        row.ID,
 		RevokedAt: pgtype.Timestamptz{Time: now, Valid: true},
-	}); err != nil {
-		return Session{}, err
+		Now:       pgtype.Timestamptz{Time: now, Valid: true},
 	}
 
-	return s.Issue(ctx, uuid.UUID(row.UserID.Bytes))
+	if s.txRunner != nil {
+		var session Session
+		err := s.txRunner.WithinTx(ctx, func(q *repository.Queries) error {
+			userID, err := q.RevokeRefreshTokenIfActive(ctx, revokeArgs)
+			if err != nil {
+				return err
+			}
+			session, err = s.issue(ctx, q, uuid.UUID(userID.Bytes))
+			return err
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Session{}, ErrSessionRevoked
+			}
+			return Session{}, err
+		}
+		return session, nil
+	}
+
+	userID, err := s.db.RevokeRefreshTokenIfActive(ctx, revokeArgs)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Session{}, ErrSessionRevoked
+		}
+		return Session{}, err
+	}
+	return s.issue(ctx, s.db, uuid.UUID(userID.Bytes))
 }
 
 // Revoke invalidates a refresh token (logout). Revoking an unknown or

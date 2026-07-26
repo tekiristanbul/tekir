@@ -14,7 +14,19 @@ type Querier interface {
 	// lets the updates-history endpoint 404 on an unknown cat instead of
 	// silently returning an empty page indistinguishable from "no history yet".
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
-	ConsumeOtpCode(ctx context.Context, arg ConsumeOtpCodeParams) error
+	// atomic compare-and-set (code review fix, issue #58): the previous
+	// read-then-unconditional-update let two concurrent verifications of the
+	// same code both pass validation in application code before either wrote
+	// consumed_at, so both could proceed to account linking and session
+	// issuance. this single statement re-evaluates every validity predicate
+	// (still the phone's latest code, unconsumed, unexpired, attempts
+	// remaining) atomically against the row's current committed state; a
+	// concurrent loser's update commits after the winner's and matches zero
+	// rows, since consumed_at is no longer null by the time it runs. the
+	// "still the latest" subquery preserves the existing "only the most
+	// recently issued code is ever checked" behavior — a race can't smuggle in
+	// consumption of a superseded code.
+	ConsumeOtpCodeIfValid(ctx context.Context, arg ConsumeOtpCodeIfValidParams) (pgtype.UUID, error)
 	// no endpoint sets this yet — trait selection is out of scope for issue #21
 	// and belongs to the future add/edit-cat flow. used by seed data only.
 	CreateCatTrait(ctx context.Context, arg CreateCatTraitParams) error
@@ -140,9 +152,19 @@ type Querier interface {
 	// injected clock, never this query's own now().
 	ListFollowedCats(ctx context.Context, deviceID pgtype.UUID) ([]ListFollowedCatsRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
-	// idempotent: revoking an already-revoked row just rewrites the same
-	// revoked_at-is-set fact, never errors (issue #58 logout/refresh-rotation).
+	// idempotent, unconditional revoke — used only by logout, where "already
+	// revoked/expired" is not an error (see SessionService.Revoke). Never used
+	// for rotation; see RevokeRefreshTokenIfActive for that.
 	RevokeRefreshToken(ctx context.Context, arg RevokeRefreshTokenParams) error
+	// atomic conditional revoke (code review fix, issue #58): the previous
+	// read-then-unconditional-revoke let two concurrent refresh calls
+	// presenting the same token both pass validation before either revoked
+	// it, so both could mint a replacement session from one token. this
+	// statement re-evaluates "unrevoked and unexpired" atomically against the
+	// row's current committed state; a concurrent loser's update commits
+	// after the winner's and matches zero rows, since revoked_at is no longer
+	// null by then.
+	RevokeRefreshTokenIfActive(ctx context.Context, arg RevokeRefreshTokenIfActiveParams) (pgtype.UUID, error)
 	// issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
 	// so a new ordinary update and the cat's last_update_at commit atomically.
 	// issue #38: monotonic — greatest() already ignores a null argument

@@ -11,6 +11,23 @@ from refresh_tokens
 where token_hash = sqlc.arg(token_hash);
 
 -- name: RevokeRefreshToken :exec
--- idempotent: revoking an already-revoked row just rewrites the same
--- revoked_at-is-set fact, never errors (issue #58 logout/refresh-rotation).
+-- idempotent, unconditional revoke — used only by logout, where "already
+-- revoked/expired" is not an error (see SessionService.Revoke). Never used
+-- for rotation; see RevokeRefreshTokenIfActive for that.
 update refresh_tokens set revoked_at = sqlc.arg(revoked_at) where id = sqlc.arg(id);
+
+-- name: RevokeRefreshTokenIfActive :one
+-- atomic conditional revoke (code review fix, issue #58): the previous
+-- read-then-unconditional-revoke let two concurrent refresh calls
+-- presenting the same token both pass validation before either revoked
+-- it, so both could mint a replacement session from one token. this
+-- statement re-evaluates "unrevoked and unexpired" atomically against the
+-- row's current committed state; a concurrent loser's update commits
+-- after the winner's and matches zero rows, since revoked_at is no longer
+-- null by then.
+update refresh_tokens
+set revoked_at = sqlc.arg(revoked_at)
+where id = sqlc.arg(id)
+  and revoked_at is null
+  and expires_at > sqlc.arg(now)
+returning user_id;

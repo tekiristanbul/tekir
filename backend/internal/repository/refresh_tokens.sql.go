@@ -72,9 +72,40 @@ type RevokeRefreshTokenParams struct {
 	ID        pgtype.UUID        `json:"id"`
 }
 
-// idempotent: revoking an already-revoked row just rewrites the same
-// revoked_at-is-set fact, never errors (issue #58 logout/refresh-rotation).
+// idempotent, unconditional revoke — used only by logout, where "already
+// revoked/expired" is not an error (see SessionService.Revoke). Never used
+// for rotation; see RevokeRefreshTokenIfActive for that.
 func (q *Queries) RevokeRefreshToken(ctx context.Context, arg RevokeRefreshTokenParams) error {
 	_, err := q.db.Exec(ctx, revokeRefreshToken, arg.RevokedAt, arg.ID)
 	return err
+}
+
+const revokeRefreshTokenIfActive = `-- name: RevokeRefreshTokenIfActive :one
+update refresh_tokens
+set revoked_at = $1
+where id = $2
+  and revoked_at is null
+  and expires_at > $3
+returning user_id
+`
+
+type RevokeRefreshTokenIfActiveParams struct {
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+	ID        pgtype.UUID        `json:"id"`
+	Now       pgtype.Timestamptz `json:"now"`
+}
+
+// atomic conditional revoke (code review fix, issue #58): the previous
+// read-then-unconditional-revoke let two concurrent refresh calls
+// presenting the same token both pass validation before either revoked
+// it, so both could mint a replacement session from one token. this
+// statement re-evaluates "unrevoked and unexpired" atomically against the
+// row's current committed state; a concurrent loser's update commits
+// after the winner's and matches zero rows, since revoked_at is no longer
+// null by then.
+func (q *Queries) RevokeRefreshTokenIfActive(ctx context.Context, arg RevokeRefreshTokenIfActiveParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, revokeRefreshTokenIfActive, arg.RevokedAt, arg.ID, arg.Now)
+	var user_id pgtype.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
 }

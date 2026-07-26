@@ -56,6 +56,23 @@ func (f *fakeSessionStore) RevokeRefreshToken(_ context.Context, arg repository.
 	return nil
 }
 
+// RevokeRefreshTokenIfActive mirrors the real atomic conditional revoke
+// query's predicates (unrevoked, unexpired), returning pgx.ErrNoRows when
+// they don't hold — matching ConsumeOtpCodeIfValid's fake convention.
+func (f *fakeSessionStore) RevokeRefreshTokenIfActive(_ context.Context, arg repository.RevokeRefreshTokenIfActiveParams) (pgtype.UUID, error) {
+	for hash, row := range f.rows {
+		if row.ID == arg.ID {
+			if row.RevokedAt.Valid || !row.ExpiresAt.Time.After(arg.Now.Time) {
+				return pgtype.UUID{}, pgx.ErrNoRows
+			}
+			row.RevokedAt = arg.RevokedAt
+			f.rows[hash] = row
+			return row.UserID, nil
+		}
+	}
+	return pgtype.UUID{}, pgx.ErrNoRows
+}
+
 func TestSessionService_Issue_ProducesValidAccessToken(t *testing.T) {
 	store := newFakeSessionStore()
 	svc := service.NewSessionService(store, []byte("test-signing-key"), time.Hour, 24*time.Hour)

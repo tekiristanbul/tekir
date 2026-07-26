@@ -66,14 +66,20 @@ func (f *fakeAuthStore) IncrementOtpAttempts(_ context.Context, id pgtype.UUID) 
 	return nil
 }
 
-func (f *fakeAuthStore) ConsumeOtpCode(_ context.Context, arg repository.ConsumeOtpCodeParams) error {
-	for phone, row := range f.otpCodes {
-		if row.ID == arg.ID {
-			row.ConsumedAt = arg.ConsumedAt
-			f.otpCodes[phone] = row
-		}
+// ConsumeOtpCodeIfValid mirrors the real atomic compare-and-set query's
+// predicates (id/code_hash match, unconsumed, unexpired, attempts under
+// limit) — f.otpCodes only ever holds one (the latest) row per phone, so
+// "still the latest" is automatically true for whatever's stored here.
+func (f *fakeAuthStore) ConsumeOtpCodeIfValid(_ context.Context, arg repository.ConsumeOtpCodeIfValidParams) (pgtype.UUID, error) {
+	row, ok := f.otpCodes[arg.Phone]
+	if !ok || row.ID != arg.ID || row.CodeHash != arg.CodeHash ||
+		row.ConsumedAt.Valid || !row.ExpiresAt.Time.After(arg.Now.Time) ||
+		row.Attempts >= row.MaxAttempts {
+		return pgtype.UUID{}, pgx.ErrNoRows
 	}
-	return nil
+	row.ConsumedAt = arg.ConsumedAt
+	f.otpCodes[arg.Phone] = row
+	return row.ID, nil
 }
 
 func (f *fakeAuthStore) GetUserByPhone(_ context.Context, phone string) (repository.User, error) {

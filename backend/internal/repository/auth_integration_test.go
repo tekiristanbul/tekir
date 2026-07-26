@@ -26,9 +26,12 @@ import (
 // newAuthService wires a real-store-backed AuthService with an injected
 // clock, mirroring the unit tests' fake-clock convention (issue #58) so
 // otp expiry/cooldown behavior stays deterministic even against postgres.
+// Wires the same TxRunner production uses (see cmd/api/main.go), so these
+// integration tests exercise the real atomic-consume-plus-transaction
+// path, not just the non-transactional fallback unit tests use.
 func newAuthService(store *repository.Store, sms service.SmsSender, clock func() time.Time) *service.AuthService {
-	sessions := service.NewSessionService(store, []byte("integration-test-key"), time.Hour, 24*time.Hour, service.WithSessionClock(clock))
-	return service.NewAuthService(store, sms, sessions, 5*time.Minute, 5, time.Minute, service.WithAuthClock(clock))
+	sessions := service.NewSessionService(store, []byte("integration-test-key"), time.Hour, 24*time.Hour, service.WithSessionClock(clock), service.WithSessionTxRunner(store))
+	return service.NewAuthService(store, sms, sessions, 5*time.Minute, 5, time.Minute, service.WithAuthClock(clock), service.WithAuthTxRunner(store))
 }
 
 type recordingSms struct {
@@ -90,10 +93,15 @@ func TestStore_CreateUser_UniquePhoneConstraint(t *testing.T) {
 }
 
 // TestAuthService_VerifyOTP_ConcurrentSamePhone_ResolvesToOneAccount races
-// two verifications for the same phone number (two different devices)
-// against a real database, asserting the unique constraint on users.phone
-// makes them resolve to exactly one account rather than racing into two
-// (issue #58 acceptance criterion).
+// two verifications for the same phone number and code (two different
+// devices) against a real database, asserting the atomic
+// ConsumeOtpCodeIfValid compare-and-set (code review fix, issue #58)
+// guarantees exactly one wins — never both, never zero — rather than
+// racing into two sessions from one code. A start-gate channel maximizes
+// the chance the two goroutines' VerifyOTP calls genuinely overlap, so
+// this test would have been flaky-but-failing against the pre-fix
+// read-then-unconditional-update implementation rather than passing by
+// scheduling luck.
 func TestAuthService_VerifyOTP_ConcurrentSamePhone_ResolvesToOneAccount(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -110,43 +118,168 @@ func TestAuthService_VerifyOTP_ConcurrentSamePhone_ResolvesToOneAccount(t *testi
 	}
 	code := sms.codeFor("+90" + phone)
 
+	const rounds = 20
+	for round := 0; round < rounds; round++ {
+		if round > 0 {
+			// Each round after the first needs a fresh code: the previous
+			// round's winner already consumed the last one.
+			now = now.Add(2 * time.Minute) // past the otp resend cooldown
+			if err := svc.RequestOTP(ctx, phone); err != nil {
+				t.Fatalf("round %d: request otp: %v", round, err)
+			}
+			code = sms.codeFor("+90" + phone)
+		}
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		results := make([]service.Session, 2)
+		errs := make([]error, 2)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			results[0], errs[0] = svc.VerifyOTP(ctx, phone, code, uuid.UUID(deviceA.Bytes).String())
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			results[1], errs[1] = svc.VerifyOTP(ctx, phone, code, uuid.UUID(deviceB.Bytes).String())
+		}()
+		close(start)
+		wg.Wait()
+
+		// exactly one of the two concurrent verifications may consume the
+		// single-use code; the other must fail with a well-defined otp
+		// error, never a corrupted/duplicate account.
+		successes := 0
+		var winner service.Session
+		for i, err := range errs {
+			if err == nil {
+				successes++
+				winner = results[i]
+			} else if !errors.Is(err, service.ErrOTPAlreadyConsumed) && !errors.Is(err, service.ErrOTPCodeMismatch) {
+				t.Errorf("round %d: unexpected error from concurrent verify: %v", round, err)
+			}
+		}
+		if successes != 1 {
+			t.Fatalf("round %d: expected exactly 1 successful verify out of 2 concurrent attempts, got %d", round, successes)
+		}
+
+		user, err := store.GetUserByPhone(ctx, "+90"+phone)
+		if err != nil {
+			t.Fatalf("round %d: get user by phone: %v", round, err)
+		}
+		if uuid.UUID(user.ID.Bytes).String() != winner.UserID {
+			t.Errorf("round %d: expected exactly one account to exist for the phone number", round)
+		}
+	}
+}
+
+// TestSessionService_Refresh_ConcurrentSameToken races two refresh calls
+// presenting the exact same refresh token against a real database,
+// asserting the atomic RevokeRefreshTokenIfActive compare-and-set (code
+// review fix, issue #58) guarantees exactly one wins — never both minting
+// a replacement session from a single token.
+func TestSessionService_Refresh_ConcurrentSameToken(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	svc := service.NewSessionService(store, []byte("integration-test-key"), time.Hour, 24*time.Hour, service.WithSessionTxRunner(store))
+
+	userID := uuid.New()
+	if _, err := store.CreateUser(ctx, repository.CreateUserParams{
+		ID:              pgtype.UUID{Bytes: userID, Valid: true},
+		Phone:           "+90555" + testDigits(t),
+		PhoneVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	session, err := svc.Issue(ctx, userID)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	results := make([]service.Session, 2)
 	errs := make([]error, 2)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		results[0], errs[0] = svc.VerifyOTP(ctx, phone, code, uuid.UUID(deviceA.Bytes).String())
+		<-start
+		results[0], errs[0] = svc.Refresh(ctx, session.RefreshToken)
 	}()
 	go func() {
 		defer wg.Done()
-		results[1], errs[1] = svc.VerifyOTP(ctx, phone, code, uuid.UUID(deviceB.Bytes).String())
+		<-start
+		results[1], errs[1] = svc.Refresh(ctx, session.RefreshToken)
 	}()
+	close(start)
 	wg.Wait()
 
-	// exactly one of the two concurrent verifications may consume the
-	// single-use code; the other must fail with a well-defined otp error,
-	// never a corrupted/duplicate account.
 	successes := 0
 	var winner service.Session
 	for i, err := range errs {
 		if err == nil {
 			successes++
 			winner = results[i]
-		} else if !errors.Is(err, service.ErrOTPAlreadyConsumed) && !errors.Is(err, service.ErrOTPCodeMismatch) {
-			t.Errorf("unexpected error from concurrent verify: %v", err)
+		} else if !errors.Is(err, service.ErrSessionRevoked) {
+			t.Errorf("unexpected error from concurrent refresh: %v", err)
 		}
 	}
 	if successes != 1 {
-		t.Fatalf("expected exactly 1 successful verify out of 2 concurrent attempts, got %d", successes)
+		t.Fatalf("expected exactly 1 successful refresh out of 2 concurrent attempts, got %d", successes)
+	}
+	if winner.UserID != userID.String() {
+		t.Error("expected the replacement session to belong to the same account")
+	}
+}
+
+// TestAuthService_VerifyOTP_FailedLinkDoesNotBurnTheCode proves the
+// transactional wrapping (code review fix, issue #58): when a downstream
+// step (device linking) fails after the otp was atomically consumed, the
+// whole transaction — including that consumption — rolls back, so the
+// code remains valid for a legitimate retry rather than being wasted.
+func TestAuthService_VerifyOTP_FailedLinkDoesNotBurnTheCode(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	sms := newRecordingSms()
+	now := time.Now()
+	svc := newAuthService(store, sms, func() time.Time { return now })
+
+	// device is already linked to a different account, so verifying phone
+	// on this device will fail at the linkDevice step, after the otp
+	// consume has already run inside the same transaction.
+	linkedDevice := createTestDevice(t, ctx, store)
+	otherPhone := "555" + testDigits(t)
+	if err := svc.RequestOTP(ctx, otherPhone); err != nil {
+		t.Fatalf("request otp (other account): %v", err)
+	}
+	if _, err := svc.VerifyOTP(ctx, otherPhone, sms.codeFor("+90"+otherPhone), uuid.UUID(linkedDevice.Bytes).String()); err != nil {
+		t.Fatalf("verify otp (other account): %v", err)
 	}
 
-	user, err := store.GetUserByPhone(ctx, "+90"+phone)
-	if err != nil {
-		t.Fatalf("get user by phone: %v", err)
+	phone := "555" + testDigits(t)
+	if err := svc.RequestOTP(ctx, phone); err != nil {
+		t.Fatalf("request otp: %v", err)
 	}
-	if uuid.UUID(user.ID.Bytes).String() != winner.UserID {
-		t.Error("expected exactly one account to exist for the phone number")
+	code := sms.codeFor("+90" + phone)
+
+	_, err := svc.VerifyOTP(ctx, phone, code, uuid.UUID(linkedDevice.Bytes).String())
+	if !errors.Is(err, service.ErrDeviceLinkedToOtherAccount) {
+		t.Fatalf("expected ErrDeviceLinkedToOtherAccount, got %v", err)
+	}
+
+	// the transaction must have rolled back the otp consumption along with
+	// everything else — a fresh device presenting the same code now
+	// succeeds, proving the code was never actually spent.
+	freshDevice := createTestDevice(t, ctx, store)
+	session, err := svc.VerifyOTP(ctx, phone, code, uuid.UUID(freshDevice.Bytes).String())
+	if err != nil {
+		t.Fatalf("expected the otp to still be valid after the failed link, got: %v", err)
+	}
+	if !session.IsNewAccount {
+		t.Error("expected a new account for the previously-unverified phone")
 	}
 }
 

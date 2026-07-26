@@ -60,8 +60,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	sessionsSvc := service.NewSessionService(store, []byte(cfg.JWTSigningKey), cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
-	authSvc := service.NewAuthService(store, sms, sessionsSvc, cfg.OTPCodeTTL, cfg.OTPMaxAttempts, cfg.OTPResendCooldown)
+	sessionsSvc := service.NewSessionService(store, []byte(cfg.JWTSigningKey), cfg.AccessTokenTTL, cfg.RefreshTokenTTL, service.WithSessionTxRunner(store))
+	authSvc := service.NewAuthService(store, sms, sessionsSvc, cfg.OTPCodeTTL, cfg.OTPMaxAttempts, cfg.OTPResendCooldown, service.WithAuthTxRunner(store))
 	authHandler := handler.NewAuthHandler(authSvc, authSvc, sessionsSvc, sessionsSvc, authSvc)
 
 	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
