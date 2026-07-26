@@ -5,11 +5,13 @@ tekir is in early development. maintainers control product scope, architecture, 
 ## where to participate
 
 - report reproducible bugs through the bug report issue form.
-- share ideas, feature proposals, ux suggestions, and general questions in github discussions.
+- share high-level product or community ideas in github discussions.
+- share prototypes, concepts, and experiments in the Show & Tell discussion category.
+- use issues for concrete feature requests and maintainer-prepared implementation work.
 - implement code or documentation only from an open issue labeled `help wanted`.
 - report vulnerabilities privately according to [`SECURITY.md`](SECURITY.md).
 
-ideas posted in discussions are welcome for conversation, but they are not commitments and may not be accepted or scheduled.
+discussions are intentionally small and are not a support forum. ideas posted there are welcome for conversation, but they are not commitments and may not be accepted or scheduled.
 
 ## help wanted workflow
 
@@ -27,11 +29,11 @@ bug reports are accepted while the project is in early development. provide a mi
 
 use discussions rather than issues for:
 
-- new feature ideas
-- product or roadmap suggestions
-- visual or ux proposals
-- architecture proposals not requested by maintainers
-- support questions and general conversation
+- high-level product or community ideas
+- early visual or ux concepts
+- prototypes and experiments
+
+use maintainer-created issues for concrete feature requests, approved product work, and implementation tasks. tekir does not use discussions for support, troubleshooting, or general conversation.
 
 ## ownership boundaries
 
