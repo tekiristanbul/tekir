@@ -28,7 +28,7 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	// deployed app origin isn't decided yet.
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: corsOrigins,
-		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete},
+		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
 		AllowedHeaders: []string{"Content-Type", "Authorization", "X-Device-Token"},
 	}))
 
