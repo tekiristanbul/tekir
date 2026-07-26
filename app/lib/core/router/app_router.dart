@@ -1,6 +1,7 @@
 import 'package:go_router/go_router.dart';
 
 import '../../features/account/ui/account_screen.dart';
+import '../../features/add_cat/ui/add_cat_screen.dart';
 import '../../features/auth/ui/login_screen.dart';
 import '../../features/cat_detail/ui/cat_detail_screen.dart';
 import '../../features/map/ui/map_screen.dart';
@@ -30,6 +31,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/account',
       builder: (context, state) => const AccountScreen(),
+    ),
+    GoRoute(
+      path: '/add-cat',
+      builder: (context, state) => const AddCatScreen(),
     ),
   ],
 );

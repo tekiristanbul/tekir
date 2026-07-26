@@ -8,6 +8,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../auth/ui/auth_gate.dart';
 import '../data/cat_marker.dart';
 import '../data/location_service.dart';
 import '../data/map_style.dart';
@@ -176,6 +177,29 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (_, _) =>
             _buildMap(center: istanbulFallback, showFallbackBanner: true),
+      ),
+      floatingActionButton: PointerInterceptor(
+        child: FloatingActionButton(
+          backgroundColor: AppColors.primary,
+          foregroundColor: AppColors.primaryInk,
+          onPressed: () => _handleAddCat(context, ref),
+          child: const Icon(Icons.add),
+        ),
+      ),
+    );
+  }
+
+  // Gate-at-intent (issue #70, mirroring FollowButton exactly): a guest's
+  // tap never shows the add-cat form before authentication succeeds — it
+  // shows AuthGate's prompt sheet first, and only pushes /add-cat once
+  // sign-in completes (resumed intent).
+  void _handleAddCat(BuildContext context, WidgetRef ref) {
+    unawaited(
+      AuthGate.require(
+        context,
+        ref,
+        contextText: 'Kedi eklemek için giriş yap',
+        onAuthenticated: () => context.push('/add-cat'),
       ),
     );
   }
