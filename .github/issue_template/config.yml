@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: ideas, features, ux, and questions
+    url: https://github.com/tekiristanbul/tekir/discussions
+    about: use github discussions for ideas, feature proposals, product or ux suggestions, architecture conversation, support questions, and general discussion. posts are not commitments or roadmap items.
+  - name: private security report
+    url: mailto:security@tekir.istanbul
+    about: report vulnerabilities privately. do not open a public issue.
