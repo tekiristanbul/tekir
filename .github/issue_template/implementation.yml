@@ -1,12 +1,14 @@
-name: implementation
-description: define ready maintainer-approved implementation work for copilot coding agent
+name: maintainer implementation task
+description: maintainer-authored ready implementation work; not a public request form
 title: ""
 labels: []
 body:
   - type: markdown
     attributes:
       value: |
-        use this form only after product and technical decisions are sufficiently clear. it is not a feature-request form. unresolved decisions must be called out explicitly before assignment.
+        maintainers use this form only after product and technical decisions are sufficiently clear. it is not a feature-request, ux-proposal, architecture-proposal, or support form.
+
+        external contributors should not create implementation issues. they may report bugs or claim an existing issue explicitly labeled `help wanted` after maintainer acknowledgement. ideas and questions belong in github discussions.
   - type: textarea
     id: problem
     attributes:
