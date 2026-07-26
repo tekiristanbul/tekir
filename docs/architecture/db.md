@@ -55,12 +55,27 @@ create table otp_codes (
   created_at   timestamptz not null default now()
 );
 
+-- implemented (migration 00017, issue #70): uploaded_by_user_id is required
+-- from the start (unlike cats.created_by_device_id/media's own earlier
+-- sketch here, which predated any account model) — there is no pre-#70
+-- media data to migrate, so this never needed the users-first,
+-- devices-nullable deferral pattern migration 00016 used for follows/
+-- updates. object_key/content_type/byte_size are what the provider-neutral
+-- ObjectStore boundary and server-side media validation need (see
+-- [[backend]]); idempotency_key backs POST /v1/media's Idempotency-Key
+-- header — see design notes below.
 create table media (
   id                    uuid primary key default gen_random_uuid(),
+  object_key            text not null,
   url                   text not null,
-  uploaded_by_device_id uuid not null references devices(id),
+  content_type          text not null,
+  byte_size             int not null,
+  uploaded_by_user_id   uuid not null references users(id),
+  uploaded_by_device_id uuid references devices(id),
+  idempotency_key       text,
   created_at            timestamptz not null default now()
 );
+create unique index media_user_idempotency_uq on media (uploaded_by_user_id, idempotency_key) where idempotency_key is not null;
 
 create table cats (
   id                 uuid primary key default gen_random_uuid(),
@@ -72,13 +87,22 @@ create table cats (
   -- service, so this is never derived from `area` on read, and `area`
   -- itself remains the only source of truth for actual coordinates.
   area_label         text,
+  -- photo_url (issue #7) is seed-only: every cat created through
+  -- POST /v1/cats (issue #70) instead sets primary_photo_id, referencing
+  -- its required media row. read paths coalesce(photo_url, media.url) so
+  -- both a seeded and a created cat resolve the same primary_photo field —
+  -- see design notes below.
+  photo_url          text,
   primary_photo_id   uuid references media(id),
   status             text not null default 'active' check (status in ('active','inactive')),
   last_update_at     timestamptz,
-  created_by_device_id uuid not null references devices(id),
+  created_by_device_id uuid references devices(id), -- nullable: see design notes below
+  created_by_user_id  uuid references users(id), -- implemented (migration 00017, issue #70): see design notes below
+  idempotency_key     text, -- backs POST /v1/cats' Idempotency-Key header — see design notes below
   created_at         timestamptz not null default now()
 );
 create index cats_area_gix on cats using gist (area);
+create unique index cats_user_idempotency_uq on cats (created_by_user_id, idempotency_key) where idempotency_key is not null;
 
 -- dormant legacy storage (issue #21/#23, superseded by issue #42): permanent
 -- cat traits are no longer part of the mvp surface — behavioral
@@ -229,6 +253,8 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 - `cats.last_update_at`: refreshed on every new update, so the map's "recently updated" highlight ([[map]]) needs no join.
 - `cats.status`: cats are never deleted, only marked `inactive`, per [[cats]]. the threshold for going inactive (silence duration) is undecided — left as a job/cron concern, the schema doesn't need to know the number.
 - no duplicate-merge table exists yet. `nearby` lookups are computed on the fly; once a merge mechanism is decided ([[cats]]), a `cats.merged_into` column is the likely addition.
+- `media` (implemented, migration 00017, issue #70): created for the first time by this migration — there was no pre-#70 media data, so unlike `cats.created_by_device_id`/`updates.author_device_id`, `uploaded_by_user_id` is `not null` from the start; `uploaded_by_device_id` is still nullable (installation/abuse-control association only, per the same pattern). `object_key`/`content_type`/`byte_size` are what `service.ObjectStore` (a provider-neutral s3-compatible boundary — see [[backend]]) and server-side media validation (decode/re-encode as jpeg/png, size cap) need; `url` is what a client reads, produced by whichever provider `Put` wrote to (a local static-serve route for the `fake` dev provider, a real s3-compatible url for a future production provider). `idempotency_key` plus the partial `media_user_idempotency_uq` index is the same idempotent-retry pattern `follows_user_cat_uq` established (migration 00016): `CreateMedia` inserts `on conflict (uploaded_by_user_id, idempotency_key) where idempotency_key is not null do nothing`, so a retried `POST /v1/media` with the same key never creates a second row.
+- `cats.created_by_user_id`/`primary_photo_id`/`idempotency_key` (implemented, migration 00017, issue #70) bring `cats` up to what this doc had already sketched, deferred by migration 00003 until add-cat existed. `created_by_device_id` — sketched above as `not null` — is actually nullable, matching `updates.author_device_id`'s deferral reasoning: seeded cats predate any real device. `photo_url` (issue #7) is not replaced — it stays as the seed-only photo column; `POST /v1/cats` (issue #70) sets `primary_photo_id` instead, referencing the media row its required photo was stored as. `ListCatsInBounds`/`GetCatByID`/`ListFollowedCats` all resolve `coalesce(cats.photo_url, media.url)` via a `left join media on media.id = cats.primary_photo_id`, so a seeded and a created cat both surface the same `primary_photo` field without either read path needing to know which column the value actually came from. `idempotency_key` plus `cats_user_idempotency_uq` is the identical pattern to `media`'s own idempotency column above — `CreateCat` (called inside `Store.CreateCatWithMedia`, which commits the new media row and the new cats row as one transaction) inserts `on conflict (created_by_user_id, idempotency_key) where idempotency_key is not null do nothing`; a conflicting retry rolls the whole transaction back (including the media insert), so `CatsService.Create` resolves it via `GetCatByIdempotencyKey` and deletes the object it had just uploaded to storage rather than leaving an orphan.
 - `devices.user_id` (implemented, migration 00012, issue #58): set once phone verification succeeds — `AuthService.VerifyOTP` resolves-or-creates exactly one account per normalized phone number (enforced by `users.phone`'s unique constraint, safe under two concurrent verifications for the same number) and then idempotently sets this column. linking a device already linked to a *different* account is rejected rather than silently reassigning it, so a device's prior authored content is never retroactively re-attributed to a second account; re-verifying the same phone on the same already-linked device is a no-op on the link itself.
   as of migration 00016 (issue #65), `AuthService.linkDevice` also backfills the device's pre-existing `follows.user_id` and `updates.author_user_id` onto the linked account, in the same transaction, immediately after (or in place of, on the no-op path) the link itself — `update follows set user_id = $account where device_id = $device and user_id is null`, and the equivalent for `updates`. both queries only touch rows still missing the account column, so calling them again (a retried transaction, or re-verifying an already-linked device) is a safe no-op rather than a re-assignment, and neither ever runs on the rejected-other-account path. this is what makes "existing device-owned follows/updates remain associated after linking" true without a one-off data migration for every device linked after this shipped (the migration itself does the equivalent one-time backfill for devices already linked before it shipped).
 

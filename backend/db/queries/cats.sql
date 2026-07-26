@@ -26,11 +26,14 @@ returning id;
 -- fetch on marker tap. the lateral join returns each cat's latest
 -- needs-help update (issue #4/#23), whether or not it has since expired —
 -- ListNearby (service layer) is the one that decides active-vs-expired,
--- against an injected clock, not this query's own now().
+-- against an injected clock, not this query's own now(). issue #70: a cat
+-- created through POST /v1/cats has primary_photo_id (media table) instead
+-- of photo_url (seed-only column, issue #7) — coalesce so both read paths
+-- resolve to the same primary_photo field.
 select
   c.id,
   c.name,
-  c.photo_url,
+  coalesce(c.photo_url, m.url, '') as photo_url,
   st_x(c.area::geometry)::float8 as lng,
   st_y(c.area::geometry)::float8 as lat,
   c.area_label,
@@ -39,6 +42,7 @@ select
   nh.created_at as needs_help_created_at,
   nh.needs_help_expires_at
 from cats c
+left join media m on m.id = c.primary_photo_id
 left join lateral (
   select u.needs_help_category, u.created_at, u.needs_help_expires_at
   from updates u
@@ -58,20 +62,22 @@ order by c.created_at desc;
 -- vocabulary) rather than aggregated in here, so each trait can carry its
 -- display_name without hand-rolling composite-type aggregation in sql. the
 -- lateral join is the same latest-needs-help-update lookup as
--- ListCatsInBounds, unfiltered by expiry for the same reason.
+-- ListCatsInBounds, unfiltered by expiry for the same reason. photo_url
+-- coalesce mirrors ListCatsInBounds — see its comment.
 select
   c.id,
   c.name,
   st_x(c.area::geometry)::float8 as lng,
   st_y(c.area::geometry)::float8 as lat,
   c.area_label,
-  c.photo_url,
+  coalesce(c.photo_url, m.url, '') as photo_url,
   c.created_at,
   c.last_update_at,
   nh.needs_help_category,
   nh.created_at as needs_help_created_at,
   nh.needs_help_expires_at
 from cats c
+left join media m on m.id = c.primary_photo_id
 left join lateral (
   select u.needs_help_category, u.created_at, u.needs_help_expires_at
   from updates u
@@ -95,3 +101,60 @@ select exists(select 1 from cats where id = sqlc.arg(id)) as exists;
 -- correctly. this keeps an out-of-order commit (an older update committing
 -- after a newer one) from moving a cat's displayed freshness backwards.
 update cats set last_update_at = greatest(last_update_at, sqlc.arg(last_update_at)) where id = sqlc.arg(id);
+
+-- name: CreateCat :one
+-- issue #70: created_by_user_id is required (resolved from the
+-- authenticated bearer session, never client-supplied); created_by_device_id
+-- is optional (X-Device-Token, installation/abuse-control association only).
+-- area_label stays null — there is no runtime reverse-geocoding service
+-- (see docs/architecture/db.md), matching how seed data is the only current
+-- source of that field. last_update_at is left null: cat creation does not
+-- itself post an update (docs/product/updates.md defines freshness purely
+-- from actual updates), so a newly created cat starts in the same
+-- long_not_seen state any never-updated cat would. idempotent by
+-- construction, same shape as CreateMedia: on conflict do nothing on the
+-- partial (created_by_user_id, idempotency_key) unique index means a
+-- retried creation with the same key never creates a second cat — no row
+-- comes back on the conflicting retry, and the caller (CatsService) looks
+-- the existing row up via GetCatByIdempotencyKey instead.
+-- returning computes lng/lat the same way GetCatByID/ListCatsInBounds do
+-- (postgis geography has no plain Go scan type — see their comments) rather
+-- than `returning *`, so CatsService never has to special-case this row's
+-- shape against every other cat-reading query.
+insert into cats (id, name, area, primary_photo_id, status, created_by_user_id, created_by_device_id, idempotency_key)
+values (
+  sqlc.arg(id),
+  sqlc.narg(name),
+  st_setsrid(st_makepoint(sqlc.arg(lng)::float8, sqlc.arg(lat)::float8), 4326)::geography,
+  sqlc.arg(primary_photo_id),
+  'active',
+  sqlc.arg(created_by_user_id),
+  sqlc.narg(created_by_device_id),
+  sqlc.narg(idempotency_key)
+)
+on conflict (created_by_user_id, idempotency_key) where idempotency_key is not null do nothing
+returning id, name, area_label, primary_photo_id, status, created_by_user_id, created_by_device_id, created_at, last_update_at,
+  st_x(area::geometry)::float8 as lng, st_y(area::geometry)::float8 as lat;
+
+-- name: GetCatByIdempotencyKey :one
+select id, name, area_label, primary_photo_id, status, created_by_user_id, created_by_device_id, created_at, last_update_at,
+  st_x(area::geometry)::float8 as lng, st_y(area::geometry)::float8 as lat
+from cats
+where created_by_user_id = sqlc.arg(created_by_user_id) and idempotency_key = sqlc.arg(idempotency_key);
+
+-- name: ListNearbyCatsForDuplicateCheck :many
+-- issue #70: powers GET /v1/cats/nearby, the add-cat flow's non-blocking
+-- duplicate-candidate check (docs/product/cats.md, docs/product/trust.md —
+-- advisory only, never blocks creation on its own). st_dwithin on the
+-- geography column uses cats_area_gix the same way ListCatsInBounds' &&
+-- bounding-box check does; radius_m is in meters, matching geography's
+-- native unit. photo_url coalesce mirrors ListCatsInBounds/GetCatByID.
+select
+  c.id,
+  c.name,
+  coalesce(c.photo_url, m.url, '') as photo_url
+from cats c
+left join media m on m.id = c.primary_photo_id
+where c.status = 'active'
+  and st_dwithin(c.area, st_setsrid(st_makepoint(sqlc.arg(lng)::float8, sqlc.arg(lat)::float8), 4326)::geography, sqlc.arg(radius_m)::float8)
+order by st_distance(c.area, st_setsrid(st_makepoint(sqlc.arg(lng)::float8, sqlc.arg(lat)::float8), 4326)::geography) asc;

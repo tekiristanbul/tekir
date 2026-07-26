@@ -139,7 +139,7 @@ func (s *FollowsService) ListFollows(ctx context.Context, userID string) ([]CatM
 		markers = append(markers, CatMarker{
 			ID:           uuid.UUID(r.ID.Bytes).String(),
 			Name:         r.Name.String,
-			PrimaryPhoto: r.PhotoUrl.String,
+			PrimaryPhoto: r.PhotoUrl,
 			Lat:          r.Lat,
 			Lng:          r.Lng,
 			AreaLabel:    textPtr(r.AreaLabel),

@@ -237,7 +237,7 @@ func TestFollowsService_ListFollows_MapsCatSummary(t *testing.T) {
 		{
 			ID:                 pgtype.UUID{Bytes: id, Valid: true},
 			Name:               pgtype.Text{String: "tekir", Valid: true},
-			PhotoUrl:           pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+			PhotoUrl:           "https://placecats.com/millie/300/200",
 			Lng:                28.9744,
 			Lat:                41.0256,
 			AreaLabel:          pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
@@ -276,7 +276,7 @@ func TestFollowsService_ListFollows_NullLastUpdateAt(t *testing.T) {
 		{
 			ID:       pgtype.UUID{Bytes: id, Valid: true},
 			Name:     pgtype.Text{String: "never updated", Valid: true},
-			PhotoUrl: pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+			PhotoUrl: "https://placecats.com/millie/300/200",
 			Lng:      28.9744,
 			Lat:      41.0256,
 			// LastUpdateAt intentionally left zero-value (Valid: false).

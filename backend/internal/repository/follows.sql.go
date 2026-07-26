@@ -77,7 +77,7 @@ const listFollowedCats = `-- name: ListFollowedCats :many
 select
   c.id,
   c.name,
-  c.photo_url,
+  coalesce(c.photo_url, m.url, '') as photo_url,
   st_x(c.area::geometry)::float8 as lng,
   st_y(c.area::geometry)::float8 as lat,
   c.area_label,
@@ -87,6 +87,7 @@ select
   nh.needs_help_expires_at
 from follows f
 join cats c on c.id = f.cat_id
+left join media m on m.id = c.primary_photo_id
 left join lateral (
   select u.needs_help_category, u.created_at, u.needs_help_expires_at
   from updates u
@@ -101,7 +102,7 @@ order by c.last_update_at desc nulls last, c.id desc
 type ListFollowedCatsRow struct {
 	ID                 pgtype.UUID        `json:"id"`
 	Name               pgtype.Text        `json:"name"`
-	PhotoUrl           pgtype.Text        `json:"photo_url"`
+	PhotoUrl           string             `json:"photo_url"`
 	Lng                float64            `json:"lng"`
 	Lat                float64            `json:"lat"`
 	AreaLabel          pgtype.Text        `json:"area_label"`

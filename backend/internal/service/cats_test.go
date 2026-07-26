@@ -33,6 +33,18 @@ type fakeCatsLister struct {
 	// call received — a pointer field so the write is visible through the
 	// copy of fakeCatsLister that ends up inside CatsService.
 	captured *repository.CreateOrdinaryUpdateParams
+
+	idempotencyRow repository.GetCatByIdempotencyKeyRow
+	idempotencyErr error
+
+	nearbyDuplicateRows []repository.ListNearbyCatsForDuplicateCheckRow
+	nearbyDuplicateErr  error
+
+	createCatWithMediaRow repository.CreateCatWithMediaRow
+	createCatWithMediaErr error
+	// capturedCreateCat, if non-nil, records the arg the last
+	// CreateCatWithMedia call received, mirroring captured above.
+	capturedCreateCat *repository.CreateCatWithMediaParams
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
@@ -58,6 +70,21 @@ func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository
 	return f.createRow, f.createErr
 }
 
+func (f fakeCatsLister) GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error) {
+	return f.idempotencyRow, f.idempotencyErr
+}
+
+func (f fakeCatsLister) ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error) {
+	return f.nearbyDuplicateRows, f.nearbyDuplicateErr
+}
+
+func (f fakeCatsLister) CreateCatWithMedia(ctx context.Context, arg repository.CreateCatWithMediaParams) (repository.CreateCatWithMediaRow, error) {
+	if f.capturedCreateCat != nil {
+		*f.capturedCreateCat = arg
+	}
+	return f.createCatWithMediaRow, f.createCatWithMediaErr
+}
+
 func TestCatsService_ListNearby(t *testing.T) {
 	fixedNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	id := pgtype.UUID{Bytes: uuid.New(), Valid: true}
@@ -65,7 +92,7 @@ func TestCatsService_ListNearby(t *testing.T) {
 		{
 			ID:                 id,
 			Name:               pgtype.Text{String: "tekir", Valid: true},
-			PhotoUrl:           pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+			PhotoUrl:           "https://placecats.com/millie/300/200",
 			Lng:                28.9744,
 			Lat:                41.0256,
 			AreaLabel:          pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
@@ -143,7 +170,7 @@ func TestCatsService_GetCatDetail(t *testing.T) {
 			Lng:       28.9744,
 			Lat:       41.0256,
 			AreaLabel: pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
-			PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+			PhotoUrl:  "https://placecats.com/millie/300/200",
 			CreatedAt: pgtype.Timestamptz{Time: created, Valid: true},
 		},
 	})
@@ -625,5 +652,269 @@ func TestCatsService_CreateOrdinaryUpdate_RepositoryFailure(t *testing.T) {
 	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
+	}
+}
+
+// istanbulLat/istanbulLng are inside istanbulBounds (Kadıköy-ish); parisLat/
+// parisLng are well outside it, for area-validation tests.
+const (
+	istanbulLat = 41.03
+	istanbulLng = 28.98
+	parisLat    = 48.85
+	parisLng    = 2.35
+)
+
+func TestCatsService_Create_Success(t *testing.T) {
+	userID := uuid.New()
+	deviceID := uuid.New()
+	createdCatID := uuid.New()
+	createdMediaID := uuid.New()
+	fixedNow := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
+
+	var captured repository.CreateCatWithMediaParams
+	store := &fakeObjectStore{}
+	name := "Boncuk"
+	svc := NewCatsService(fakeCatsLister{
+		createCatWithMediaRow: repository.CreateCatWithMediaRow{
+			Cat: repository.CreateCatRow{
+				ID:        pgtype.UUID{Bytes: createdCatID, Valid: true},
+				Name:      pgtype.Text{String: name, Valid: true},
+				Lat:       istanbulLat,
+				Lng:       istanbulLng,
+				CreatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+			},
+			Media: repository.Medium{ID: pgtype.UUID{Bytes: createdMediaID, Valid: true}, Url: "/v1/media/objects/new.jpg"},
+		},
+		capturedCreateCat: &captured,
+	}, WithCatsMediaPipeline(store, 1<<20), WithClock(func() time.Time { return fixedNow }))
+
+	cat, err := svc.Create(context.Background(), userID.String(), deviceID.String(), nil, istanbulLat, istanbulLng, &name, true, validJPEGBytes(t))
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cat.ID != createdCatID.String() {
+		t.Errorf("expected cat id %s, got %s", createdCatID.String(), cat.ID)
+	}
+	if len(store.puts) != 1 {
+		t.Fatalf("expected exactly one object stored, got %d", len(store.puts))
+	}
+	wantURL := "/v1/media/objects/" + store.puts[0]
+	if cat.PrimaryPhoto == nil || *cat.PrimaryPhoto != wantURL {
+		t.Errorf("expected primary photo url %q from the just-uploaded media, got %v", wantURL, cat.PrimaryPhoto)
+	}
+	if uuid.UUID(captured.Cat.CreatedByUserID.Bytes).String() != userID.String() {
+		t.Errorf("expected created_by_user_id %s, got %v", userID.String(), captured.Cat.CreatedByUserID)
+	}
+	if uuid.UUID(captured.Cat.CreatedByDeviceID.Bytes).String() != deviceID.String() {
+		t.Errorf("expected created_by_device_id %s, got %v", deviceID.String(), captured.Cat.CreatedByDeviceID)
+	}
+	if uuid.UUID(captured.Media.UploadedByUserID.Bytes).String() != userID.String() {
+		t.Errorf("expected uploaded_by_user_id %s, got %v", userID.String(), captured.Media.UploadedByUserID)
+	}
+}
+
+func TestCatsService_Create_InvalidArea(t *testing.T) {
+	store := &fakeObjectStore{}
+	svc := NewCatsService(fakeCatsLister{}, WithCatsMediaPipeline(store, 1<<20))
+
+	_, err := svc.Create(context.Background(), uuid.New().String(), "", nil, parisLat, parisLng, nil, true, validJPEGBytes(t))
+	if !errors.Is(err, ErrInvalidArea) {
+		t.Fatalf("expected ErrInvalidArea, got %v", err)
+	}
+	if len(store.puts) != 0 {
+		t.Error("expected no upload attempt for an out-of-bounds area")
+	}
+}
+
+func TestCatsService_Create_MissingPhoto(t *testing.T) {
+	store := &fakeObjectStore{}
+	svc := NewCatsService(fakeCatsLister{}, WithCatsMediaPipeline(store, 1<<20))
+
+	_, err := svc.Create(context.Background(), uuid.New().String(), "", nil, istanbulLat, istanbulLng, nil, true, nil)
+	if !errors.Is(err, ErrMissingPhoto) {
+		t.Fatalf("expected ErrMissingPhoto, got %v", err)
+	}
+}
+
+func TestCatsService_Create_NoPipelineConfiguredFailsGracefully(t *testing.T) {
+	// NewCatsService without WithCatsMediaPipeline — Create must return a
+	// clear error, not panic on a nil s.pipeline dereference.
+	svc := NewCatsService(fakeCatsLister{})
+
+	_, err := svc.Create(context.Background(), uuid.New().String(), "", nil, istanbulLat, istanbulLng, nil, true, []byte("x"))
+	if !errors.Is(err, ErrMediaPipelineNotConfigured) {
+		t.Fatalf("expected ErrMediaPipelineNotConfigured, got %v", err)
+	}
+}
+
+func TestCatsService_Create_DuplicateCandidatesNonBlocking(t *testing.T) {
+	nearbyID := uuid.New()
+	store := &fakeObjectStore{}
+	var captured repository.CreateCatWithMediaParams
+	svc := NewCatsService(fakeCatsLister{
+		nearbyDuplicateRows: []repository.ListNearbyCatsForDuplicateCheckRow{
+			{ID: pgtype.UUID{Bytes: nearbyID, Valid: true}, Name: pgtype.Text{String: "existing cat", Valid: true}, PhotoUrl: "https://example.com/cat.jpg"},
+		},
+		capturedCreateCat: &captured,
+	}, WithCatsMediaPipeline(store, 1<<20))
+
+	_, err := svc.Create(context.Background(), uuid.New().String(), "", nil, istanbulLat, istanbulLng, nil, false, validJPEGBytes(t))
+
+	var dupErr *DuplicateCandidatesError
+	if !errors.As(err, &dupErr) {
+		t.Fatalf("expected *DuplicateCandidatesError, got %v", err)
+	}
+	if len(dupErr.Candidates) != 1 || dupErr.Candidates[0].ID != nearbyID.String() {
+		t.Errorf("unexpected candidates: %+v", dupErr.Candidates)
+	}
+	// advisory only: creation must not have been attempted, and nothing uploaded.
+	if len(store.puts) != 0 {
+		t.Error("expected no upload when short-circuited by duplicate candidates")
+	}
+	if captured.Cat.ID.Valid {
+		t.Error("expected CreateCatWithMedia to never be called when duplicates block (non-confirmed) submission")
+	}
+}
+
+func TestCatsService_Create_ConfirmedNewBypassesDuplicateCheck(t *testing.T) {
+	store := &fakeObjectStore{}
+	var captured repository.CreateCatWithMediaParams
+	svc := NewCatsService(fakeCatsLister{
+		nearbyDuplicateRows: []repository.ListNearbyCatsForDuplicateCheckRow{
+			{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, Name: pgtype.Text{String: "existing cat", Valid: true}},
+		},
+		createCatWithMediaRow: repository.CreateCatWithMediaRow{
+			Cat:   repository.CreateCatRow{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}},
+			Media: repository.Medium{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, Url: "/v1/media/objects/x.jpg"},
+		},
+		capturedCreateCat: &captured,
+	}, WithCatsMediaPipeline(store, 1<<20))
+
+	_, err := svc.Create(context.Background(), uuid.New().String(), "", nil, istanbulLat, istanbulLng, nil, true, validJPEGBytes(t))
+	if err != nil {
+		t.Fatalf("expected confirmed_new to bypass duplicate candidates, got error: %v", err)
+	}
+	if !captured.Cat.ID.Valid {
+		t.Error("expected CreateCatWithMedia to be called when confirmedNew is true")
+	}
+}
+
+func TestCatsService_Create_IdempotentRetryReturnsExistingWithoutReupload(t *testing.T) {
+	existingID := uuid.New()
+	store := &fakeObjectStore{}
+	var captured repository.CreateCatWithMediaParams
+	svc := NewCatsService(fakeCatsLister{
+		idempotencyRow: repository.GetCatByIdempotencyKeyRow{
+			ID: pgtype.UUID{Bytes: existingID, Valid: true}, Lat: istanbulLat, Lng: istanbulLng,
+		},
+		catRow: repository.GetCatByIDRow{
+			ID: pgtype.UUID{Bytes: existingID, Valid: true}, Lat: istanbulLat, Lng: istanbulLng,
+			PhotoUrl: "/v1/media/objects/already-created.jpg",
+		},
+		capturedCreateCat: &captured,
+	}, WithCatsMediaPipeline(store, 1<<20))
+
+	key := "cat-idem-key"
+	cat, err := svc.Create(context.Background(), uuid.New().String(), "", &key, istanbulLat, istanbulLng, nil, true, validJPEGBytes(t))
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cat.ID != existingID.String() {
+		t.Errorf("expected the existing cat's id %s, got %s", existingID.String(), cat.ID)
+	}
+	if len(store.puts) != 0 {
+		t.Error("expected no upload on an idempotent retry")
+	}
+	if captured.Cat.ID.Valid {
+		t.Error("expected CreateCatWithMedia to never be called on an idempotent retry")
+	}
+}
+
+func TestCatsService_Create_CompensatesOnDBFailure(t *testing.T) {
+	store := &fakeObjectStore{}
+	svc := NewCatsService(fakeCatsLister{
+		createCatWithMediaErr: errors.New("db exploded"),
+	}, WithCatsMediaPipeline(store, 1<<20))
+
+	if _, err := svc.Create(context.Background(), uuid.New().String(), "", nil, istanbulLat, istanbulLng, nil, true, validJPEGBytes(t)); err == nil {
+		t.Fatal("expected an error")
+	}
+	if len(store.puts) != 1 {
+		t.Fatalf("expected the object to have been uploaded once, got %v", store.puts)
+	}
+	if len(store.deletes) != 1 || store.deletes[0] != store.puts[0] {
+		t.Errorf("expected the uploaded object to be compensated (deleted) after the db failure, got puts=%v deletes=%v", store.puts, store.deletes)
+	}
+}
+
+// statefulCatsLister lets a test vary GetCatByIdempotencyKey's answer across
+// calls (first miss, then hit) without a full mock framework — mirrors
+// statefulMediaStore in media_test.go.
+type statefulCatsLister struct {
+	fakeCatsLister
+	onGetIdempotency func() (repository.GetCatByIdempotencyKeyRow, error)
+}
+
+func (s statefulCatsLister) GetCatByIdempotencyKey(_ context.Context, _ repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error) {
+	return s.onGetIdempotency()
+}
+
+func TestCatsService_Create_RaceOnIdempotencyKeyRecoversExisting(t *testing.T) {
+	existingID := uuid.New()
+	store := &fakeObjectStore{}
+	firstCall := true
+	lister := statefulCatsLister{
+		fakeCatsLister: fakeCatsLister{
+			createCatWithMediaErr: pgx.ErrNoRows,
+			catRow: repository.GetCatByIDRow{
+				ID: pgtype.UUID{Bytes: existingID, Valid: true}, Lat: istanbulLat, Lng: istanbulLng,
+				PhotoUrl: "/v1/media/objects/won-the-race.jpg",
+			},
+		},
+		onGetIdempotency: func() (repository.GetCatByIdempotencyKeyRow, error) {
+			if firstCall {
+				firstCall = false
+				return repository.GetCatByIdempotencyKeyRow{}, pgx.ErrNoRows
+			}
+			return repository.GetCatByIdempotencyKeyRow{ID: pgtype.UUID{Bytes: existingID, Valid: true}}, nil
+		},
+	}
+	svc := NewCatsService(lister, WithCatsMediaPipeline(store, 1<<20))
+
+	key := "race-cat-key"
+	cat, err := svc.Create(context.Background(), uuid.New().String(), "", &key, istanbulLat, istanbulLng, nil, true, validJPEGBytes(t))
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cat.ID != existingID.String() {
+		t.Errorf("expected the concurrently-created cat to be returned, got %s", cat.ID)
+	}
+	if len(store.deletes) != 1 {
+		t.Errorf("expected this attempt's own upload to be cleaned up, got %v", store.deletes)
+	}
+}
+
+func TestCatsService_ListNearbyDuplicates_Success(t *testing.T) {
+	nearbyID := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		nearbyDuplicateRows: []repository.ListNearbyCatsForDuplicateCheckRow{
+			{ID: pgtype.UUID{Bytes: nearbyID, Valid: true}, Name: pgtype.Text{String: "tekir", Valid: true}, PhotoUrl: "https://example.com/cat.jpg"},
+		},
+	})
+
+	candidates, err := svc.ListNearbyDuplicates(context.Background(), istanbulLat, istanbulLng)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].ID != nearbyID.String() {
+		t.Errorf("unexpected candidates: %+v", candidates)
+	}
+}
+
+func TestCatsService_ListNearbyDuplicates_InvalidArea(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{})
+
+	if _, err := svc.ListNearbyDuplicates(context.Background(), parisLat, parisLng); !errors.Is(err, ErrInvalidArea) {
+		t.Fatalf("expected ErrInvalidArea, got %v", err)
 	}
 }

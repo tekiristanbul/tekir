@@ -14,7 +14,7 @@ define the mobile app architecture consuming [[api]], scoped to mvp — no more 
 - **map**: `google_maps_flutter` with native clustering. clusters separate into individual cat markers as users zoom in; colonies are not a separate mvp entity.
 - **push**: `firebase_messaging`.
 - **secure storage**: `flutter_secure_storage` for device, access, and refresh tokens.
-- **media**: `image_picker` for capture/selection and `cached_network_image` for display.
+- **media**: `image_picker` for capture/selection (added — issue #70) and `cached_network_image` for display.
 
 ### structure
 
@@ -37,6 +37,7 @@ lib/
     follow/
 ```
 
+- of this tree, `map/`, `cat_detail/`, `auth/`, `follow/`, `account/`, and `add_cat/` (issue #70) exist; `add_update/`, `discover/`, and `notifications/` are still planned, not yet built — ordinary-update composition currently lives inside `cat_detail/ui/` (`CatUpdateSheet`) rather than its own feature slice.
 - each feature has a small `data/` and `ui/` boundary; no separate domain layer is required for mvp.
 - the approved interactive mvp prototype and `docs/design/implementation-contract.md` are the source of truth for final visual tokens and component behavior.
 - `app_theme.dart` implements those approved tokens; visual choices are not left as an architecture open question.
@@ -48,6 +49,7 @@ lib/
 - authenticated actions redirect to phone otp login and return the user to the interrupted flow after success.
 - following, ordinary updates, needs-help, media uploads, and new-cat creation require an authenticated account.
 - notification permission is requested after following or an explicit notification opt-in, not on first launch.
+- `add_cat/` (issue #70) is the first feature besides follow to call `AuthGate.require` (the map screen's add-cat button); it also introduces this app's first multi-step, single-notifier flow shape (location → non-blocking duplicate check → details/photo/name → submit), mirroring `AuthNotifier`/`LoginScreen`'s one-route, step-switching pattern rather than one go_router route per step. A retried submission (after a transient failure) reuses the same client-generated `Idempotency-Key` for the lifetime of that attempt, matching [[api]]'s retry contract.
 
 ## open questions
 

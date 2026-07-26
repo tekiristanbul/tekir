@@ -9,14 +9,18 @@ import (
 )
 
 type Cat struct {
-	ID           pgtype.UUID        `json:"id"`
-	Name         pgtype.Text        `json:"name"`
-	Area         interface{}        `json:"area"`
-	PhotoUrl     pgtype.Text        `json:"photo_url"`
-	Status       string             `json:"status"`
-	LastUpdateAt pgtype.Timestamptz `json:"last_update_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	AreaLabel    pgtype.Text        `json:"area_label"`
+	ID                pgtype.UUID        `json:"id"`
+	Name              pgtype.Text        `json:"name"`
+	Area              interface{}        `json:"area"`
+	PhotoUrl          pgtype.Text        `json:"photo_url"`
+	Status            string             `json:"status"`
+	LastUpdateAt      pgtype.Timestamptz `json:"last_update_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	AreaLabel         pgtype.Text        `json:"area_label"`
+	CreatedByUserID   pgtype.UUID        `json:"created_by_user_id"`
+	CreatedByDeviceID pgtype.UUID        `json:"created_by_device_id"`
+	PrimaryPhotoID    pgtype.UUID        `json:"primary_photo_id"`
+	IdempotencyKey    pgtype.Text        `json:"idempotency_key"`
 }
 
 type CatTrait struct {
@@ -39,6 +43,18 @@ type Follow struct {
 	CatID     pgtype.UUID        `json:"cat_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UserID    pgtype.UUID        `json:"user_id"`
+}
+
+type Medium struct {
+	ID                 pgtype.UUID        `json:"id"`
+	ObjectKey          string             `json:"object_key"`
+	Url                string             `json:"url"`
+	ContentType        string             `json:"content_type"`
+	ByteSize           int32              `json:"byte_size"`
+	UploadedByUserID   pgtype.UUID        `json:"uploaded_by_user_id"`
+	UploadedByDeviceID pgtype.UUID        `json:"uploaded_by_device_id"`
+	IdempotencyKey     pgtype.Text        `json:"idempotency_key"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
 type NotificationOutbox struct {

@@ -7,7 +7,9 @@ import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
+import '../../../core/geo/istanbul_bounds.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../auth/ui/auth_gate.dart';
 import '../data/cat_marker.dart';
 import '../data/location_service.dart';
 import '../data/map_style.dart';
@@ -18,16 +20,6 @@ import 'cats_map_notifier.dart';
 /// istanbul street-level: about 2-3 streets, per docs/product/map.md.
 const _initialZoom = 17.0;
 const _debounceDuration = Duration(milliseconds: 400);
-
-// keeps the camera within greater istanbul so the map can't be panned out
-// to a city/country view — the product wants a street-level experience,
-// not a general-purpose map.
-final _istanbulBounds = LatLngBounds(
-  southwest: const LatLng(40.80, 28.35),
-  northeast: const LatLng(41.40, 29.55),
-);
-const _minZoom = 12.0;
-const _maxZoom = 20.0;
 
 // how far a single cluster tap zooms in. fitting the camera to the
 // cluster's own bounds (CameraUpdate.newLatLngBounds) sounds more
@@ -98,7 +90,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final controller = _controller;
     if (controller == null) return;
     final currentZoom = await controller.getZoomLevel();
-    final targetZoom = math.min(currentZoom + _clusterTapZoomStep, _maxZoom);
+    final targetZoom = math.min(
+      currentZoom + _clusterTapZoomStep,
+      istanbulMaxZoom,
+    );
     await controller.animateCamera(
       CameraUpdate.newLatLngZoom(cluster.position, targetZoom),
     );
@@ -177,6 +172,29 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         error: (_, _) =>
             _buildMap(center: istanbulFallback, showFallbackBanner: true),
       ),
+      floatingActionButton: PointerInterceptor(
+        child: FloatingActionButton(
+          backgroundColor: AppColors.primary,
+          foregroundColor: AppColors.primaryInk,
+          onPressed: () => _handleAddCat(context, ref),
+          child: const Icon(Icons.add),
+        ),
+      ),
+    );
+  }
+
+  // Gate-at-intent (issue #70, mirroring FollowButton exactly): a guest's
+  // tap never shows the add-cat form before authentication succeeds — it
+  // shows AuthGate's prompt sheet first, and only pushes /add-cat once
+  // sign-in completes (resumed intent).
+  void _handleAddCat(BuildContext context, WidgetRef ref) {
+    unawaited(
+      AuthGate.require(
+        context,
+        ref,
+        contextText: 'Kedi eklemek için giriş yap',
+        onAuthenticated: () => context.push('/add-cat'),
+      ),
     );
   }
 
@@ -191,8 +209,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             zoom: _initialZoom,
           ),
           style: catsOfIstanbulMapStyle,
-          cameraTargetBounds: CameraTargetBounds(_istanbulBounds),
-          minMaxZoomPreference: const MinMaxZoomPreference(_minZoom, _maxZoom),
+          cameraTargetBounds: CameraTargetBounds(istanbulBounds),
+          minMaxZoomPreference: const MinMaxZoomPreference(
+            istanbulMinZoom,
+            istanbulMaxZoom,
+          ),
           myLocationButtonEnabled: false,
           zoomControlsEnabled: false,
           mapToolbarEnabled: false,

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"strconv"
@@ -39,10 +40,54 @@ var ErrInvalidLimit = errors.New("invalid limit")
 // enough; the handler doesn't need to distinguish which rule failed.
 var ErrInvalidStatuses = errors.New("invalid statuses")
 
+// ErrInvalidArea means the submitted location falls outside the product's
+// geographic boundary (istanbulBounds below) or isn't well-formed
+// (nan/inf/out-of-range lat/lng).
+var ErrInvalidArea = errors.New("invalid area")
+
+// ErrMissingPhoto means POST /v1/cats was submitted without the required
+// initial photo (docs/product/cats.md: "the minimum information to add a
+// cat is a photo and a location").
+var ErrMissingPhoto = errors.New("missing photo")
+
+// ErrMediaPipelineNotConfigured means Create was called on a CatsService
+// built without WithCatsMediaPipeline — a wiring mistake (cmd/api/main.go
+// always supplies one), not a client input problem. Create is a public
+// method, so this fails with a clear error rather than a nil-pointer panic
+// on first use.
+var ErrMediaPipelineNotConfigured = errors.New("cats service media pipeline not configured")
+
 const (
 	defaultUpdatesLimit = 20
 	maxUpdatesLimit     = 50
+
+	// duplicateCheckRadiusMeters matches docs/architecture/api.md's
+	// GET /v1/cats/nearby?radius=50 sketch — the same radius backs both the
+	// standalone duplicate-candidate endpoint and POST /v1/cats' own
+	// server-side duplicate check (see Create).
+	duplicateCheckRadiusMeters = 50
 )
+
+// istanbulBounds is the product's one existing geographic-boundary
+// definition — app/lib/core/geo/istanbul_bounds.dart's istanbulBounds,
+// shared by the main map screen and the add-cat location picker, which
+// already keeps the map camera from panning out to a city/country
+// view. docs/architecture/api.md and db.md don't define their own boundary
+// constant, and issue #70 requires enforcing "the current Istanbul/product
+// boundary if defined by the current docs... do not invent a broader
+// geography rule" — reusing these exact numbers, rather than picking new
+// ones, is what that requires.
+var istanbulBounds = struct{ MinLat, MaxLat, MinLng, MaxLng float64 }{
+	MinLat: 40.80, MaxLat: 41.40, MinLng: 28.35, MaxLng: 29.55,
+}
+
+func withinIstanbul(lat, lng float64) bool {
+	if math.IsNaN(lat) || math.IsNaN(lng) || math.IsInf(lat, 0) || math.IsInf(lng, 0) {
+		return false
+	}
+	return lat >= istanbulBounds.MinLat && lat <= istanbulBounds.MaxLat &&
+		lng >= istanbulBounds.MinLng && lng <= istanbulBounds.MaxLng
+}
 
 // approvedStatuses is the closed mvp status vocabulary (issue #3/#36,
 // docs/product/updates.md): the only values an ordinary update's
@@ -137,6 +182,28 @@ type CatMarker struct {
 	LastUpdateAt *time.Time
 }
 
+// DuplicateCandidate is one nearby existing cat the add-cat flow shows
+// before final submission (issue #70, docs/product/cats.md/trust.md —
+// advisory only, never blocks creation on its own).
+type DuplicateCandidate struct {
+	ID           string
+	Name         string
+	PrimaryPhoto string
+}
+
+// DuplicateCandidatesError carries the nearby candidates Create found when
+// the caller hasn't yet confirmed the cat is different (confirmedNew
+// false) — the handler answers 409 with this list instead of creating a
+// cat, per docs/architecture/api.md. Candidates are advisory: a second call
+// with confirmedNew true always proceeds regardless of what this contains.
+type DuplicateCandidatesError struct {
+	Candidates []DuplicateCandidate
+}
+
+func (e *DuplicateCandidatesError) Error() string {
+	return "nearby duplicate candidates exist"
+}
+
 // CatDetail is the representation shown on the cat-detail view: identity,
 // location, and the cat-profile fields that don't depend on issue #4
 // (needs-help) or account/follow features that don't exist yet.
@@ -194,11 +261,15 @@ type CatsStore interface {
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	ListCatUpdates(ctx context.Context, arg repository.ListCatUpdatesParams) ([]repository.ListCatUpdatesRow, error)
 	CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error)
+	GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error)
+	ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error)
+	CreateCatWithMedia(ctx context.Context, arg repository.CreateCatWithMediaParams) (repository.CreateCatWithMediaRow, error)
 }
 
 type CatsService struct {
-	db    CatsStore
-	clock func() time.Time
+	db       CatsStore
+	clock    func() time.Time
+	pipeline *mediaPipeline
 }
 
 // CatsServiceOption configures optional CatsService behavior.
@@ -212,6 +283,16 @@ type CatsServiceOption func(*CatsService)
 // dependency on wall-clock timing.
 func WithClock(clock func() time.Time) CatsServiceOption {
 	return func(s *CatsService) { s.clock = clock }
+}
+
+// WithCatsMediaPipeline wires the validation+storage pipeline Create uses
+// for a new cat's required photo (issue #70) — the same pipeline shape
+// MediaService uses for standalone POST /v1/media, sharing store and
+// maxBytes so both endpoints enforce identical media rules. Only Create
+// needs this; every other CatsService method works without it, so tests
+// exercising just those don't need to supply one.
+func WithCatsMediaPipeline(store ObjectStore, maxBytes int) CatsServiceOption {
+	return func(s *CatsService) { s.pipeline = newMediaPipeline(store, maxBytes) }
 }
 
 func NewCatsService(db CatsStore, opts ...CatsServiceOption) *CatsService {
@@ -267,7 +348,7 @@ func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds) ([]CatMarke
 		markers = append(markers, CatMarker{
 			ID:           uuid.UUID(r.ID.Bytes).String(),
 			Name:         r.Name.String,
-			PrimaryPhoto: r.PhotoUrl.String,
+			PrimaryPhoto: r.PhotoUrl,
 			Lat:          r.Lat,
 			Lng:          r.Lng,
 			AreaLabel:    textPtr(r.AreaLabel),
@@ -291,6 +372,20 @@ func textPtr(t pgtype.Text) *string {
 		return nil
 	}
 	s := t.String
+	return &s
+}
+
+// nonEmptyStringPtr turns coalesce(cats.photo_url, media.url)'s plain
+// string result (sqlc infers coalesce as non-nullable — see ListCatsInBounds/
+// GetCatByID's query comments) back into the *string GetCatDetail's
+// nullable "primary_photo|null" api field expects. Every real cat has a
+// primary photo (seed data sets photo_url; POST /v1/cats requires one), so
+// an empty string here would only mean pre-#70 seed data missed it —
+// treated the same as null rather than surfaced as a literal empty photo url.
+func nonEmptyStringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
 	return &s
 }
 
@@ -342,7 +437,7 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		Lat:          row.Lat,
 		Lng:          row.Lng,
 		AreaLabel:    textPtr(row.AreaLabel),
-		PrimaryPhoto: textPtr(row.PhotoUrl),
+		PrimaryPhoto: nonEmptyStringPtr(row.PhotoUrl),
 		CreatedAt:    row.CreatedAt.Time,
 		LastUpdateAt: timestamptzPtr(row.LastUpdateAt),
 		ActiveAlert:  deriveActiveAlert(s.clock, row.NeedsHelpCategory, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),
@@ -499,6 +594,180 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		Comment:   comment,
 		CreatedAt: createdAt,
 	}, nil
+}
+
+// ListNearbyDuplicates answers GET /v1/cats/nearby: the active cats within
+// duplicateCheckRadiusMeters of (lat, lng), nearest first — the add-cat
+// flow's standalone, non-blocking duplicate-candidate check
+// (docs/architecture/api.md). Public: this is advisory information a guest
+// browsing the add-cat flow up to the auth gate can see the same as anyone.
+func (s *CatsService) ListNearbyDuplicates(ctx context.Context, lat, lng float64) ([]DuplicateCandidate, error) {
+	if !withinIstanbul(lat, lng) {
+		return nil, ErrInvalidArea
+	}
+	rows, err := s.db.ListNearbyCatsForDuplicateCheck(ctx, repository.ListNearbyCatsForDuplicateCheckParams{
+		Lat: lat, Lng: lng, RadiusM: duplicateCheckRadiusMeters,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return toDuplicateCandidates(rows), nil
+}
+
+func toDuplicateCandidates(rows []repository.ListNearbyCatsForDuplicateCheckRow) []DuplicateCandidate {
+	candidates := make([]DuplicateCandidate, 0, len(rows))
+	for _, r := range rows {
+		candidates = append(candidates, DuplicateCandidate{
+			ID:           uuid.UUID(r.ID.Bytes).String(),
+			Name:         r.Name.String,
+			PrimaryPhoto: r.PhotoUrl,
+		})
+	}
+	return candidates
+}
+
+// Create adds a new cat (issue #70), attributed to the authenticated
+// account identified by userID (never client-supplied) with deviceID
+// (optional, installation/abuse-control association only) recorded
+// alongside it. photoBytes is required (docs/product/cats.md: "the minimum
+// information to add a cat is a photo and a location") and is validated and
+// stored exactly like a standalone POST /v1/media upload (see
+// service.mediaPipeline) — Create just also writes the resulting media row
+// and the new cats row together in one transaction (see
+// repository.Store.CreateCatWithMedia).
+//
+// Duplicate handling (docs/product/cats.md/trust.md: advisory, never
+// blocking): when confirmedNew is false, an existing nearby cat within
+// duplicateCheckRadiusMeters short-circuits with *DuplicateCandidatesError
+// before any photo is uploaded or any row written — the caller (handler)
+// answers 409 with the candidate list. Passing confirmedNew true always
+// proceeds regardless of what's nearby.
+//
+// idempotencyKey, when non-nil, makes a retried call with the same key
+// return the original result instead of creating a second cat, a second
+// media row, or a second stored object — checked first, before any
+// validation, upload, or duplicate query, so a retry is always cheap and
+// side-effect-free.
+func (s *CatsService) Create(ctx context.Context, userID, deviceID string, idempotencyKey *string, lat, lng float64, name *string, confirmedNew bool, photoBytes []byte) (CatDetail, error) {
+	if s.pipeline == nil {
+		return CatDetail{}, ErrMediaPipelineNotConfigured
+	}
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return CatDetail{}, err
+	}
+	authorDeviceID, err := optionalUUID(deviceID)
+	if err != nil {
+		return CatDetail{}, err
+	}
+	ownerUUID := pgtype.UUID{Bytes: uid, Valid: true}
+	idemKey := nullableText(idempotencyKey)
+
+	if idemKey.Valid {
+		existing, err := s.db.GetCatByIdempotencyKey(ctx, repository.GetCatByIdempotencyKeyParams{
+			CreatedByUserID: ownerUUID,
+			IdempotencyKey:  idemKey,
+		})
+		if err == nil {
+			return s.GetCatDetail(ctx, uuid.UUID(existing.ID.Bytes).String())
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return CatDetail{}, err
+		}
+	}
+
+	if !withinIstanbul(lat, lng) {
+		return CatDetail{}, ErrInvalidArea
+	}
+	if len(photoBytes) == 0 {
+		return CatDetail{}, ErrMissingPhoto
+	}
+
+	if !confirmedNew {
+		candidates, err := s.ListNearbyDuplicates(ctx, lat, lng)
+		if err != nil {
+			return CatDetail{}, err
+		}
+		if len(candidates) > 0 {
+			return CatDetail{}, &DuplicateCandidatesError{Candidates: candidates}
+		}
+	}
+
+	processed, err := s.pipeline.process(photoBytes)
+	if err != nil {
+		return CatDetail{}, err
+	}
+	objectKey, url, err := s.pipeline.upload(ctx, processed)
+	if err != nil {
+		return CatDetail{}, err
+	}
+
+	row, err := s.db.CreateCatWithMedia(ctx, repository.CreateCatWithMediaParams{
+		Media: repository.CreateMediaParams{
+			ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			ObjectKey:          objectKey,
+			Url:                url,
+			ContentType:        processed.contentType,
+			ByteSize:           int32(len(processed.data)),
+			UploadedByUserID:   ownerUUID,
+			UploadedByDeviceID: authorDeviceID,
+		},
+		Cat: repository.CreateCatParams{
+			ID:                pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			Name:              nullableText(name),
+			Lng:               lng,
+			Lat:               lat,
+			CreatedByUserID:   ownerUUID,
+			CreatedByDeviceID: authorDeviceID,
+			IdempotencyKey:    idemKey,
+		},
+	})
+	if err != nil {
+		return s.recoverFromCreateCatFailure(ctx, err, objectKey, ownerUUID, idemKey)
+	}
+
+	return CatDetail{
+		ID:           uuid.UUID(row.Cat.ID.Bytes).String(),
+		Name:         row.Cat.Name.String,
+		Lat:          row.Cat.Lat,
+		Lng:          row.Cat.Lng,
+		AreaLabel:    textPtr(row.Cat.AreaLabel),
+		PrimaryPhoto: &url,
+		CreatedAt:    row.Cat.CreatedAt.Time,
+		LastUpdateAt: timestamptzPtr(row.Cat.LastUpdateAt),
+	}, nil
+}
+
+// recoverFromCreateCatFailure runs after CreateCatWithMedia fails: if the
+// failure was the cats-table idempotency conflict (no row returned — see
+// CreateCat's comment), it fetches and returns the cat an earlier,
+// successful call already created (a concurrent identical retry, or a
+// caller that lost the first response); otherwise it's a genuine error.
+// Either way, the transaction rolled back the media row that would have
+// pointed at the object just uploaded, so it's deleted best-effort — a
+// failed cleanup is logged, not escalated, mirroring
+// MediaService.recoverFromCreateFailure.
+func (s *CatsService) recoverFromCreateCatFailure(ctx context.Context, createErr error, objectKey string, ownerUUID pgtype.UUID, idemKey pgtype.Text) (CatDetail, error) {
+	var result CatDetail
+	var err error
+	if errors.Is(createErr, pgx.ErrNoRows) && idemKey.Valid {
+		existing, getErr := s.db.GetCatByIdempotencyKey(ctx, repository.GetCatByIdempotencyKeyParams{
+			CreatedByUserID: ownerUUID,
+			IdempotencyKey:  idemKey,
+		})
+		if getErr != nil {
+			err = getErr
+		} else {
+			result, err = s.GetCatDetail(ctx, uuid.UUID(existing.ID.Bytes).String())
+		}
+	} else {
+		err = createErr
+	}
+
+	if delErr := s.pipeline.store.Delete(ctx, objectKey); delErr != nil {
+		slog.Error("failed to clean up media object after cat create failure", "key", objectKey, "error", delErr)
+	}
+	return result, err
 }
 
 // validateStatuses enforces issue #36's status-set rules: at least one

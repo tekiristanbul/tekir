@@ -49,8 +49,6 @@ func run() error {
 	store := repository.NewStore(pool)
 	healthSvc := service.NewHealthService(store)
 	healthHandler := handler.NewHealthHandler(healthSvc)
-	catsSvc := service.NewCatsService(store)
-	catsHandler := handler.NewCatsHandler(catsSvc)
 	devicesSvc := service.NewDevicesService(store)
 	devicesHandler := handler.NewDevicesHandler(devicesSvc)
 	followsSvc := service.NewFollowsService(store)
@@ -60,11 +58,26 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	objectStore, err := newObjectStore(cfg.ObjectStorageProvider, cfg.MediaLocalDir)
+	if err != nil {
+		return err
+	}
+	catsSvc := service.NewCatsService(store, service.WithCatsMediaPipeline(objectStore, cfg.MediaMaxBytes))
+	catsHandler := handler.NewCatsHandler(catsSvc, cfg.MediaMaxBytes)
+	mediaSvc := service.NewMediaService(store, objectStore, cfg.MediaMaxBytes)
+	mediaHandler := handler.NewMediaHandler(mediaSvc, cfg.MediaMaxBytes)
+	// GET /v1/media/objects/{key} only ever serves what FakeObjectStore
+	// wrote — see docs/architecture/backend.md's OBJECT_STORAGE_PROVIDER.
+	// newObjectStore fails startup on any other provider value, so this
+	// concrete-type assertion always succeeds as of issue #70.
+	mediaServeHandler := handler.NewMediaServeHandler(objectStore.(*service.FakeObjectStore))
+
 	sessionsSvc := service.NewSessionService(store, []byte(cfg.JWTSigningKey), cfg.AccessTokenTTL, cfg.RefreshTokenTTL, service.WithSessionTxRunner(store))
 	authSvc := service.NewAuthService(store, sms, sessionsSvc, cfg.OTPCodeTTL, cfg.OTPMaxAttempts, cfg.OTPResendCooldown, service.WithAuthTxRunner(store))
 	authHandler := handler.NewAuthHandler(authSvc, authSvc, sessionsSvc, sessionsSvc, authSvc)
 
-	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
+	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -112,6 +125,20 @@ func newSmsSender(provider string) (service.SmsSender, error) {
 		return service.NewFakeSmsSender(), nil
 	default:
 		return nil, fmt.Errorf("unsupported OTP_PROVIDER %q (only \"fake\" is implemented)", provider)
+	}
+}
+
+// newObjectStore selects the ObjectStore implementation named by provider.
+// Only "fake" (the deterministic, local-disk dev/test provider — see
+// docs/architecture/backend.md) is implemented as of issue #70, mirroring
+// newSmsSender: an unrecognized value fails loudly at startup rather than
+// silently defaulting to a provider the operator didn't ask for.
+func newObjectStore(provider, localDir string) (service.ObjectStore, error) {
+	switch provider {
+	case "fake":
+		return service.NewFakeObjectStore(localDir)
+	default:
+		return nil, fmt.Errorf("unsupported OBJECT_STORAGE_PROVIDER %q (only \"fake\" is implemented)", provider)
 	}
 }
 
