@@ -232,6 +232,30 @@ void main() {
     );
 
     test(
+      'a stale session (401) maps to AddCatError.unauthorized, not a generic server error',
+      () async {
+        final api = _FakeAddCatApi()
+          ..createError = const AddCatUnauthorizedException();
+        final container = _containerWith(api: api);
+        container.read(addCatProvider.notifier).start();
+        await Future<void>.delayed(Duration.zero);
+        fakePlatform.nextFile = XFile.fromData(
+          Uint8List.fromList([1]),
+          name: 'photo.jpg',
+          path: 'photo.jpg',
+        );
+        await container
+            .read(addCatProvider.notifier)
+            .pickPhoto(ImageSource.gallery);
+
+        final result = await container.read(addCatProvider.notifier).save();
+
+        expect(result, isNull);
+        expect(container.read(addCatProvider).error, AddCatError.unauthorized);
+      },
+    );
+
+    test(
       'confirmedNew is threaded through to the create call after continueAsDifferent',
       () async {
         final api = _FakeAddCatApi()

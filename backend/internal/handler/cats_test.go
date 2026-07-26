@@ -1011,6 +1011,27 @@ func TestCatsHandler_Create_MissingLatLng(t *testing.T) {
 	}
 }
 
+// TestCatsHandler_Create_OversizedBodyReturns413 proves an
+// http.MaxBytesReader rejection (the request itself exceeds
+// maxUploadBytes) answers 413, distinguishable from a genuinely malformed
+// multipart body (400) — a client needs to tell "your photo was too big"
+// apart from "your request was broken".
+func TestCatsHandler_Create_OversizedBodyReturns413(t *testing.T) {
+	// maxUploadBytes always gets multipartOverheadBytes (64KB) added on top
+	// (see NewCatsHandler) for the surrounding form fields/boundaries, so
+	// the payload here must clear that plus the configured 10-byte limit.
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}, service.WithCatsMediaPipeline(&fakeHandlerObjectStore{}, 1<<20)), 10)
+
+	oversizedPhoto := bytes.Repeat([]byte("x"), 200_000)
+	req := withBearerToken(newCreateCatRequest(map[string]string{"lat": "41.03", "lng": "28.98", "confirmed_new": "true"}, oversizedPhoto))
+	rec := httptest.NewRecorder()
+	createCatRouterFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCatsHandler_Create_DuplicateCandidatesReturns409(t *testing.T) {
 	nearbyID := uuid.New()
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{

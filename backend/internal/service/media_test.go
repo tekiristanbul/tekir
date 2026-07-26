@@ -3,7 +3,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -39,6 +41,44 @@ func validPNGBytes(t *testing.T) []byte {
 		t.Fatalf("encode test png: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// oversizedDimensionsPNGBytes returns a syntactically valid PNG signature
+// plus a single IHDR chunk declaring width*height far beyond maxImagePixels
+// — no IDAT/IEND at all. image.DecodeConfig (which the decompression-bomb
+// guard in mediaPipeline.process must reject on) only ever needs the IHDR
+// chunk for a non-paletted color type, so this is enough to exercise that
+// check without materializing an actual multi-gigapixel pixel buffer.
+func oversizedDimensionsPNGBytes(t *testing.T) []byte {
+	t.Helper()
+	const width, height = 30000, 30000 // 900,000,000 px > maxImagePixels
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], width)
+	binary.BigEndian.PutUint32(ihdr[4:8], height)
+	ihdr[8] = 8  // bit depth
+	ihdr[9] = 2  // color type: truecolor (non-paletted)
+	ihdr[10] = 0 // compression method
+	ihdr[11] = 0 // filter method
+	ihdr[12] = 0 // interlace method
+
+	var buf bytes.Buffer
+	buf.Write([]byte("\x89PNG\r\n\x1a\n")) // png signature
+	writePNGChunk(&buf, "IHDR", ihdr)
+	return buf.Bytes()
+}
+
+func writePNGChunk(buf *bytes.Buffer, typ string, data []byte) {
+	var length [4]byte
+	binary.BigEndian.PutUint32(length[:], uint32(len(data)))
+	buf.Write(length[:])
+	buf.Write([]byte(typ))
+	buf.Write(data)
+	crc := crc32.NewIEEE()
+	crc.Write([]byte(typ))
+	crc.Write(data)
+	var sum [4]byte
+	binary.BigEndian.PutUint32(sum[:], crc.Sum32())
+	buf.Write(sum[:])
 }
 
 // fakeObjectStore is a minimal in-memory ObjectStore for tests that don't
@@ -104,6 +144,18 @@ func TestMediaPipeline_Process_RejectsMalformed(t *testing.T) {
 	p := newMediaPipeline(&fakeObjectStore{}, 1<<20)
 	if _, err := p.process([]byte("not an image, just text pretending to be one")); !errors.Is(err, ErrMalformedMedia) {
 		t.Errorf("expected ErrMalformedMedia, got %v", err)
+	}
+}
+
+// TestMediaPipeline_Process_RejectsOversizedDimensions guards against a
+// decompression bomb: a small file whose declared dimensions would still
+// force allocating an enormous pixel buffer on a full image.Decode. The
+// check must reject via image.DecodeConfig (header only) before ever
+// calling image.Decode.
+func TestMediaPipeline_Process_RejectsOversizedDimensions(t *testing.T) {
+	p := newMediaPipeline(&fakeObjectStore{}, 1<<20)
+	if _, err := p.process(oversizedDimensionsPNGBytes(t)); !errors.Is(err, ErrMediaDimensionsTooLarge) {
+		t.Errorf("expected ErrMediaDimensionsTooLarge, got %v", err)
 	}
 }
 

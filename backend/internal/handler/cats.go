@@ -41,6 +41,21 @@ const multipartOverheadBytes = 64 * 1024
 // maxUploadBytes, which bounds the request itself.
 const multipartMemoryThreshold = 10 << 20
 
+// writeMultipartParseError answers a ParseMultipartForm failure. An
+// http.MaxBytesReader-triggered failure (the request body itself exceeded
+// maxUploadBytes) is distinguishable from a genuinely malformed multipart
+// body via *http.MaxBytesError — worth a distinct 413 so a client isn't
+// left guessing whether its photo was too large or its request was simply
+// broken.
+func writeMultipartParseError(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request too large"})
+		return
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid multipart form"})
+}
+
 // duplicateCandidateResponse is one entry of GET /v1/cats/nearby's array, and
 // of POST /v1/cats' 409 candidates list — the same shape both places
 // (docs/architecture/api.md).
@@ -209,7 +224,7 @@ type duplicateCandidatesResponse struct {
 func (h *CatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
 	if err := r.ParseMultipartForm(multipartMemoryThreshold); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid multipart form, or request too large"})
+		writeMultipartParseError(w, err)
 		return
 	}
 
@@ -401,6 +416,8 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "photo is required"})
 	case errors.Is(err, service.ErrMediaTooLarge):
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "photo too large"})
+	case errors.Is(err, service.ErrMediaDimensionsTooLarge):
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "photo dimensions too large"})
 	case errors.Is(err, service.ErrUnsupportedMediaType):
 		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "unsupported photo type"})
 	case errors.Is(err, service.ErrMalformedMedia):

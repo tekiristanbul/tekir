@@ -32,6 +32,20 @@ var ErrUnsupportedMediaType = errors.New("unsupported media type")
 // extension — client-supplied metadata is never trusted on its own.
 var ErrMalformedMedia = errors.New("malformed media")
 
+// ErrMediaDimensionsTooLarge means the image's own declared width*height
+// exceeds maxImagePixels. A small, well-compressed file can still decode to
+// an enormous pixel buffer (a decompression bomb) — checked via
+// image.DecodeConfig, which reads only the header, before ever decoding the
+// full image, so this never depends on the compressed byte size alone.
+var ErrMediaDimensionsTooLarge = errors.New("media dimensions too large")
+
+// maxImagePixels caps width*height before a full decode is attempted.
+// Generous enough for any real phone camera photo (40 megapixels is well
+// above typical 12-48MP sensors' output once jpeg-compressed) while
+// rejecting a maliciously-crafted image whose declared dimensions imply a
+// pixel buffer far larger than its compressed size suggests.
+const maxImagePixels = 40_000_000
+
 // processedMedia is a validated, re-encoded upload ready for an ObjectStore.
 // Re-encoding from decoded pixel data (rather than storing the original
 // bytes) is what strips any exif/metadata the original file carried —
@@ -67,6 +81,17 @@ func (p *mediaPipeline) process(raw []byte) (processedMedia, error) {
 	}
 	if len(raw) > p.maxBytes {
 		return processedMedia{}, ErrMediaTooLarge
+	}
+
+	// image.DecodeConfig reads only the header (width/height/color model),
+	// never the pixel data — cheap enough to reject an oversized image
+	// before image.Decode below would allocate its full pixel buffer.
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		return processedMedia{}, ErrMalformedMedia
+	}
+	if cfg.Width*cfg.Height > maxImagePixels {
+		return processedMedia{}, ErrMediaDimensionsTooLarge
 	}
 
 	img, format, err := image.Decode(bytes.NewReader(raw))

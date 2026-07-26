@@ -43,7 +43,7 @@ type mediaResponse struct {
 func (h *MediaHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
 	if err := r.ParseMultipartForm(multipartMemoryThreshold); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid multipart form, or request too large"})
+		writeMultipartParseError(w, err)
 		return
 	}
 
@@ -79,6 +79,8 @@ func writeMediaServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrMediaTooLarge):
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "file too large"})
+	case errors.Is(err, service.ErrMediaDimensionsTooLarge):
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "file dimensions too large"})
 	case errors.Is(err, service.ErrUnsupportedMediaType):
 		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "unsupported file type"})
 	case errors.Is(err, service.ErrMalformedMedia):

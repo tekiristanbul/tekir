@@ -23,6 +23,7 @@ enum AddCatError {
   unsupportedMedia,
   network,
   server,
+  unauthorized,
 }
 
 /// Turkish, actionable copy for each mapped failure — matches the app's
@@ -37,6 +38,7 @@ String addCatErrorMessageTr(AddCatError error) {
     AddCatError.unsupportedMedia => 'Desteklenmeyen fotoğraf türü.',
     AddCatError.network => 'Bağlantı sorunu, tekrar dene.',
     AddCatError.server => 'Sunucuya ulaşılamadı, birazdan tekrar dene.',
+    AddCatError.unauthorized => 'Kimlik doğrulanamadı, tekrar dene.',
   };
 }
 
@@ -286,6 +288,13 @@ class AddCatNotifier extends Notifier<AddCatState> {
         saving: false,
         error: AddCatError.invalidSubmission,
       );
+      return null;
+    } on AddCatUnauthorizedException {
+      // The add-cat flow is only reachable behind AuthGate, so this means
+      // the session went stale mid-flow (e.g. revoked elsewhere) rather
+      // than a routine path — mirrors follow/update's explicit 401
+      // handling rather than falling through to the generic server error.
+      state = state.copyWith(saving: false, error: AddCatError.unauthorized);
       return null;
     } on AddCatNetworkException {
       state = state.copyWith(saving: false, error: AddCatError.network);
