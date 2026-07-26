@@ -9,12 +9,12 @@ configure exactly these categories:
 | category | format | who can create | purpose |
 | --- | --- | --- | --- |
 | Announcements | announcement | maintainers only | official project updates |
-| Ideas | open-ended discussion | everyone | high-level product or community ideas |
-| Show & Tell | open-ended discussion | everyone | prototypes, concepts, and experiments |
+| Ideas | open-ended discussion | everyone | high-level product or community exploration; not approval to begin implementation |
+| Show & Tell | open-ended discussion | everyone | prototypes, concepts, and experiments connected to maintainer-acknowledged work |
 
 remove or do not create Q&A, General, Support, Polls, and Feature requests categories.
 
-concrete feature requests and implementation work belong in maintainer-created issues. discussions are not a support or troubleshooting forum.
+concrete feature requests and implementation work belong in maintainer-created issues. discussions are not a support or troubleshooting forum, and posting an idea does not authorize implementation.
 
 ## first pinned announcement
 
@@ -26,7 +26,7 @@ Tekir is an open-source, map-first project for discovering and caring for Istanb
 
 We have now opened Tekir's visual identity work. The current design brief and contribution requirements are tracked in [the logo design issue](https://github.com/tekiristanbul/tekir/issues/24).
 
-Designers are warmly encouraged to share early directions, sketches, moodboards, or experiments in the **Show & Tell** category before opening a pull request. This helps us discuss the idea while it is still easy to explore and refine.
+Designers should first comment on issue #24 with their proposed direction and wait for maintainer acknowledgement. After that, they are warmly encouraged to share early directions, sketches, moodboards, or experiments in **Show & Tell** before opening a pull request. This lets the community discuss the idea while it is still easy to explore and refine without bypassing the contribution workflow.
 
 Any final contribution must include an editable SVG. A Figma source file is strongly preferred when Figma is used. Flattened images alone cannot be accepted as final deliverables.
 
