@@ -10,11 +10,13 @@ define the mvp schema backing [[api]], on postgres + postgis.
 create extension if not exists postgis;
 create extension if not exists pgcrypto; -- gen_random_uuid()
 
+-- implemented (migration 00011, issue #58).
 create table users (
   id                 uuid primary key default gen_random_uuid(),
   phone              text unique not null,
   phone_verified_at  timestamptz not null,
-  created_at         timestamptz not null default now()
+  created_at         timestamptz not null default now(),
+  display_name       text -- implemented (migration 00015, issue #58); nullable, see design notes below
 );
 
 create table devices (
@@ -23,17 +25,33 @@ create table devices (
   push_token       text,
   platform         text not null check (platform in ('ios', 'android', 'web')),
   revoked_at       timestamptz,
-  created_at       timestamptz not null default now()
+  created_at       timestamptz not null default now(),
+  user_id          uuid references users(id) -- implemented (migration 00012, issue #58); nullable, see design notes below
 );
--- user_id (references users) is intentionally absent from the implemented
--- 00007 migration because account/user migrations are not part of issue #32 yet.
 
+-- implemented (migration 00013, issue #58).
 create table refresh_tokens (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid not null references users(id),
   token_hash   text unique not null,
   expires_at   timestamptz not null,
   revoked_at   timestamptz,
+  created_at   timestamptz not null default now()
+);
+
+-- implemented (migration 00014, issue #58): one-time phone-verification
+-- codes. only the sha-256 hash of the code, bound to its phone number, is
+-- stored — never the plaintext. the service layer decides expiry/attempt-
+-- limit outcomes against its own injected clock, never this table's own
+-- now(), so behavior stays deterministically testable (see [[backend]]).
+create table otp_codes (
+  id           uuid primary key default gen_random_uuid(),
+  phone        text not null,
+  code_hash    text not null,
+  attempts     int not null default 0,
+  max_attempts int not null default 5,
+  expires_at   timestamptz not null,
+  consumed_at  timestamptz,
   created_at   timestamptz not null default now()
 );
 
@@ -191,8 +209,10 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 
 ### design notes
 
-- `devices.token_hash`: the client never sends a self-chosen identifier. `POST /v1/devices` (see [[api]]) generates the token server-side and returns it once; only its hash (sha-256, lower-hex) is stored, the same way a password would be. `devices.revoked_at` invalidates that one credential — it doesn't ban a person or a physical device, since nothing stops a client from calling `POST /v1/devices` again for a fresh identity. it's a mitigation for a single bad session, not an identity ban. `platform` accepts `'ios'`, `'android'`, and `'web'` (`'web'` is required because the flutter application has a web target). `user_id` is intentionally absent from the implemented migration (00007): it will be added as a foreign key once the `users` table lands.
-- `refresh_tokens`: backs the `access_token`/`refresh_token` pair in [[api]] — short-lived jwts plus a revocable, hashed refresh token, so login doesn't require a fresh otp on every app open.
+- `devices.token_hash`: the client never sends a self-chosen identifier. `POST /v1/devices` (see [[api]]) generates the token server-side and returns it once; only its hash (sha-256, lower-hex) is stored, the same way a password would be. `devices.revoked_at` invalidates that one credential — it doesn't ban a person or a physical device, since nothing stops a client from calling `POST /v1/devices` again for a fresh identity. it's a mitigation for a single bad session, not an identity ban. `platform` accepts `'ios'`, `'android'`, and `'web'` (`'web'` is required because the flutter application has a web target). `user_id` was intentionally absent from the original migration (00007) and added by migration 00012 (issue #58) once the `users` table existed.
+- `refresh_tokens` (implemented, migration 00013, issue #58): backs the `access_token`/`refresh_token` pair in [[api]] — short-lived jwts plus a revocable, hashed refresh token, so login doesn't require a fresh otp on every app open. refreshing rotates: the presented row is revoked and a new one inserted, rather than reused, so a stolen-and-replayed refresh token stops working the moment the legitimate client rotates it.
+- `otp_codes` (implemented, migration 00014, issue #58): `code_hash` is bound to its phone number (`sha256(phone + ":" + code)`), so the same digit string never collides across two different numbers. `attempts`/`max_attempts` bound brute-force guessing per issued code; `consumed_at` prevents a code from ever verifying twice (replay prevention). expiry and attempt-limit decisions are made by the service layer against its own injected clock, never this table's own `now()`.
+- `users.display_name` (implemented, migration 00015, issue #58): the approved prototype's new-account step ("Görünen adını seç") collects this before finishing sign-in. null at account creation — `POST /v1/auth/otp/verify` never sets it, only reports `is_new_account` (see [[api]]) so the client knows to collect it; `PATCH /v1/me` (Bearer) sets it afterward. no uniqueness constraint, matching the prototype (two accounts may share a display name).
 - `updates.author_device_id`: implemented (migration 00008) as nullable, not the `not null` sketched above — every update row seeded before issue #36's write path existed (and every needs-help row, since issue #23/#4's own write path still doesn't exist) predates authenticated writes and has no real device to attribute. mirrors the same deferral already used for `cats.created_by_device_id` (00003) and `devices.user_id` (00007): the column exists once its write path does, populated in full from then on, rather than forcing a fabricated backfill value onto rows never actually authored by a device. `POST /v1/cats/{cat_id}/updates` ([[api]]) is the only code path that populates it today, and always does.
 - `notification_outbox`: this is what the notification worker in [[backend]] actually polls. it exists separately from `notifications` because one update fans out to N follower rows. as of migration 00009 (issue #38), the outbox row is enqueued explicitly inside `Store.CreateOrdinaryUpdate`'s own transaction — not by a table-wide `updates` insert trigger — so only that authenticated write path ever produces outbox work; a seed fixture, test, or any other direct `CreateUpdate` call never does. `notification_outbox.update_id` is unique, so retrying (or otherwise repeating) an enqueue for the same update fails loudly and rolls the whole write back instead of duplicating it. **delivery semantics: at-most-once, not exactly-once.** the worker must `insert into notifications (...) on conflict (device_id, update_id) do nothing returning id` for each follower *before* sending that follower's push, sending only if a row was actually returned — this guarantees no follower is ever pushed twice. it does **not** guarantee every push is sent: if the worker crashes after that insert commits but before the push actually goes out, a retry of the same outbox row hits the conflict and skips the follower, so the push is silently lost rather than retried. for mvp this small loss window is accepted as-is. a stronger guarantee (no loss) would need a recoverable per-notification delivery state (e.g. `sent_at`/`attempts` on `notifications`) and a real retry protocol, not just "the row exists" as a proxy for "the push was sent" — not worth building until it's needed.
 - `update_statuses` + `updates.comment`: an update carries one or more structured statuses from the fixed mvp vocabulary (`seen`/`fed`/`water_provided`, approved on issue #3) plus an optional free-text comment. `updates.seq` is a monotonic tie-breaker for [[api]]'s keyset pagination — needed because two updates can share the same `created_at` under fast writes/seeding, and `created_at` alone wouldn't order them deterministically.
@@ -204,7 +224,7 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 - `cats.last_update_at`: refreshed on every new update, so the map's "recently updated" highlight ([[map]]) needs no join.
 - `cats.status`: cats are never deleted, only marked `inactive`, per [[cats]]. the threshold for going inactive (silence duration) is undecided — left as a job/cron concern, the schema doesn't need to know the number.
 - no duplicate-merge table exists yet. `nearby` lookups are computed on the fly; once a merge mechanism is decided ([[cats]]), a `cats.merged_into` column is the likely addition.
-- `devices.user_id`: set once phone verification succeeds. because follows/updates are already keyed by `device_id`, linking it to a `user_id` doesn't require a data migration — history, including every row in `follows`, is already attached and untouched by linking.
+- `devices.user_id` (implemented, migration 00012, issue #58): set once phone verification succeeds — `AuthService.VerifyOTP` resolves-or-creates exactly one account per normalized phone number (enforced by `users.phone`'s unique constraint, safe under two concurrent verifications for the same number) and then idempotently sets this column. because follows/updates are already keyed by `device_id`, linking it to a `user_id` doesn't require a data migration — history, including every row in `follows` and every `updates.author_device_id`, is already attached and untouched by linking. linking a device already linked to a *different* account is rejected rather than silently reassigning it, so a device's prior authored content is never retroactively re-attributed to a second account; re-verifying the same phone on the same already-linked device is a no-op.
 
 ## open questions
 

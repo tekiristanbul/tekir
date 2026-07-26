@@ -13,7 +13,7 @@ import (
 	"github.com/tekiristanbul/tekir/backend/internal/handler"
 )
 
-func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, deviceTokens handler.DeviceTokenResolver, corsOrigins []string) http.Handler {
+func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, auth *handler.AuthHandler, deviceTokens handler.DeviceTokenResolver, accessTokens handler.AccessTokenValidator, corsOrigins []string) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -44,6 +44,13 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.With(handler.RequireDeviceToken(deviceTokens)).Get("/v1/me/follows", follows.ListFollows)
 
 	r.Post("/v1/devices", devices.Register)
+
+	r.Post("/v1/auth/otp/request", auth.RequestOTP)
+	r.With(handler.RequireDeviceToken(deviceTokens)).Post("/v1/auth/otp/verify", auth.VerifyOTP)
+	r.Post("/v1/auth/refresh", auth.Refresh)
+	r.With(handler.RequireBearer(accessTokens)).Post("/v1/auth/logout", auth.Logout)
+	r.With(handler.RequireDeviceToken(deviceTokens), handler.OptionalBearer(accessTokens)).Get("/v1/me", auth.Me)
+	r.With(handler.RequireBearer(accessTokens)).Patch("/v1/me", auth.UpdateDisplayName)
 
 	return r
 }
