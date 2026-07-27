@@ -136,6 +136,19 @@ func (f *fakeAuthStore) LinkDeviceToUser(_ context.Context, arg repository.LinkD
 	return nil
 }
 
+// UnlinkDeviceFromUser mirrors the real query's own guard exactly: only
+// clears the link when the device is currently linked to this exact
+// account, a no-op otherwise (mismatched, unknown, or already-unlinked).
+func (f *fakeAuthStore) UnlinkDeviceFromUser(_ context.Context, arg repository.UnlinkDeviceFromUserParams) error {
+	row, ok := f.devices[uuid.UUID(arg.ID.Bytes)]
+	if !ok || !row.UserID.Valid || row.UserID != arg.UserID {
+		return nil
+	}
+	row.UserID = pgtype.UUID{}
+	f.devices[uuid.UUID(arg.ID.Bytes)] = row
+	return nil
+}
+
 func (f *fakeAuthStore) DeleteRedundantDeviceFollows(_ context.Context, _ repository.DeleteRedundantDeviceFollowsParams) error {
 	return nil
 }
@@ -173,6 +186,7 @@ func newTestAuthService(t *testing.T, store *fakeAuthStore, sms service.SmsSende
 }
 
 const testDeviceID = "11111111-1111-4111-8111-111111111111"
+const testUserID = "22222222-2222-4222-8222-222222222222"
 
 func TestAuthService_RequestOTP_SendsAndStoresCode(t *testing.T) {
 	store := newFakeAuthStore()
@@ -537,6 +551,146 @@ func TestAuthService_SetDisplayName_InvalidUserID(t *testing.T) {
 
 	if err := svc.SetDisplayName(context.Background(), "not-a-uuid", "Ayşe"); !errors.Is(err, service.ErrInvalidDisplayName) {
 		t.Errorf("expected ErrInvalidDisplayName for a malformed user id, got %v", err)
+	}
+}
+
+// ── UnlinkDevice / account switching (issue #80, product-owner review) ─────────
+
+func TestAuthService_UnlinkDevice_ClearsLinkForMatchingAccount(t *testing.T) {
+	store := newFakeAuthStore()
+	svc := newTestAuthService(t, store, &fakeSms{}, time.Now)
+	deviceID := uuid.MustParse(testDeviceID)
+
+	store.devices[deviceID] = repository.GetDeviceByIDRow{
+		ID:     pgtype.UUID{Bytes: deviceID, Valid: true},
+		UserID: pgtype.UUID{Bytes: uuid.MustParse(testUserID), Valid: true},
+	}
+
+	if err := svc.UnlinkDevice(context.Background(), testDeviceID, testUserID); err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+	if store.devices[deviceID].UserID.Valid {
+		t.Errorf("expected the device to be unlinked, got %v", store.devices[deviceID].UserID)
+	}
+}
+
+func TestAuthService_UnlinkDevice_NoopForMismatchedAccount(t *testing.T) {
+	store := newFakeAuthStore()
+	svc := newTestAuthService(t, store, &fakeSms{}, time.Now)
+	deviceID := uuid.MustParse(testDeviceID)
+	owner := uuid.MustParse(testUserID)
+
+	store.devices[deviceID] = repository.GetDeviceByIDRow{
+		ID:     pgtype.UUID{Bytes: deviceID, Valid: true},
+		UserID: pgtype.UUID{Bytes: owner, Valid: true},
+	}
+
+	stranger := uuid.New()
+	if err := svc.UnlinkDevice(context.Background(), testDeviceID, stranger.String()); err != nil {
+		t.Fatalf("unlink attempt (mismatched account): %v", err)
+	}
+	if store.devices[deviceID].UserID != (pgtype.UUID{Bytes: owner, Valid: true}) {
+		t.Errorf("expected the device to remain linked to its real owner, got %v", store.devices[deviceID].UserID)
+	}
+}
+
+func TestAuthService_UnlinkDevice_InvalidIDs(t *testing.T) {
+	store := newFakeAuthStore()
+	svc := newTestAuthService(t, store, &fakeSms{}, time.Now)
+
+	if err := svc.UnlinkDevice(context.Background(), "not-a-uuid", testUserID); err == nil {
+		t.Error("expected an error for a malformed device id")
+	}
+	if err := svc.UnlinkDevice(context.Background(), testDeviceID, "not-a-uuid"); err == nil {
+		t.Error("expected an error for a malformed user id")
+	}
+}
+
+// TestAuthService_AccountSwitch_LogoutThenDifferentPhoneLoginSucceeds is
+// the end-to-end regression for the exact bug the product-owner review
+// found: without an unlink step, a device permanently rejects any second
+// account (409, ErrDeviceLinkedToOtherAccount) forever. Simulates logout
+// via UnlinkDevice (the same call AuthHandler.Logout now makes) between
+// two real VerifyOTP flows on the same device.
+func TestAuthService_AccountSwitch_LogoutThenDifferentPhoneLoginSucceeds(t *testing.T) {
+	store := newFakeAuthStore()
+	sms := &fakeSms{}
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := &now
+	svc := newTestAuthService(t, store, sms, func() time.Time { return *clock })
+
+	// account A logs in on the device.
+	_ = svc.RequestOTP(context.Background(), "5321112233")
+	sessionA, err := svc.VerifyOTP(context.Background(), "5321112233", sms.sent[0].code, testDeviceID)
+	if err != nil {
+		t.Fatalf("A verify: %v", err)
+	}
+
+	// account A "logs out": the device unlinks (AuthHandler.Logout's new step).
+	if err := svc.UnlinkDevice(context.Background(), testDeviceID, sessionA.UserID); err != nil {
+		t.Fatalf("unlink A: %v", err)
+	}
+
+	// account B logs in on the SAME device — must succeed now, not 409.
+	_ = svc.RequestOTP(context.Background(), "5339998877")
+	sessionB, err := svc.VerifyOTP(context.Background(), "5339998877", sms.sent[len(sms.sent)-1].code, testDeviceID)
+	if err != nil {
+		t.Fatalf("expected B's login on the unlinked device to succeed, got %v", err)
+	}
+	if sessionB.UserID == sessionA.UserID {
+		t.Fatal("expected B to resolve to a distinct account from A")
+	}
+
+	// account B "logs out" too, and account A logs back in — must resolve
+	// to A's *original* account, not create a new one. Advance past the
+	// per-phone otp resend cooldown so this second request for A's own
+	// phone number isn't silently dropped.
+	if err := svc.UnlinkDevice(context.Background(), testDeviceID, sessionB.UserID); err != nil {
+		t.Fatalf("unlink B: %v", err)
+	}
+	*clock = clock.Add(2 * time.Minute)
+	if err := svc.RequestOTP(context.Background(), "5321112233"); err != nil {
+		t.Fatalf("A's second otp request: %v", err)
+	}
+	sessionA2, err := svc.VerifyOTP(context.Background(), "5321112233", sms.sent[len(sms.sent)-1].code, testDeviceID)
+	if err != nil {
+		t.Fatalf("expected A's re-login to succeed, got %v", err)
+	}
+	if sessionA2.UserID != sessionA.UserID {
+		t.Fatalf("expected re-login to restore A's original account %s, got %s", sessionA.UserID, sessionA2.UserID)
+	}
+
+	// B's own backfill (from its own link above) must never have touched
+	// A's follows/updates — asserted at the call-args level here; the real
+	// no-cross-contamination guarantee against actual data is covered by
+	// TestStore_AccountSwitch_SameDeviceDifferentAccount_NeverLeaksOwnership
+	// in internal/repository/devices_integration_test.go.
+	for _, call := range store.backfillFollowsCalls {
+		if call.userID.String() == sessionB.UserID && call.deviceID.String() != testDeviceID {
+			t.Errorf("unexpected backfill call for B against a different device: %+v", call)
+		}
+	}
+}
+
+// TestAuthService_UnlinkDevice_StillLinkedDeviceKeepsRejectingOtherAccount
+// proves the 409 conflict check itself is untouched: a device that is
+// still linked (no logout/unlink happened) keeps rejecting a different
+// account's login, exactly as before this change.
+func TestAuthService_UnlinkDevice_StillLinkedDeviceKeepsRejectingOtherAccount(t *testing.T) {
+	store := newFakeAuthStore()
+	sms := &fakeSms{}
+	svc := newTestAuthService(t, store, sms, time.Now)
+
+	_ = svc.RequestOTP(context.Background(), "5321112233")
+	if _, err := svc.VerifyOTP(context.Background(), "5321112233", sms.sent[0].code, testDeviceID); err != nil {
+		t.Fatalf("A verify: %v", err)
+	}
+
+	// no unlink/logout happened — B's login attempt on the same device
+	// must still be rejected.
+	_ = svc.RequestOTP(context.Background(), "5339998877")
+	if _, err := svc.VerifyOTP(context.Background(), "5339998877", sms.sent[len(sms.sent)-1].code, testDeviceID); !errors.Is(err, service.ErrDeviceLinkedToOtherAccount) {
+		t.Errorf("expected ErrDeviceLinkedToOtherAccount for a still-linked device, got %v", err)
 	}
 }
 

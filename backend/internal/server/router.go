@@ -62,7 +62,7 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.Post("/v1/auth/otp/request", auth.RequestOTP)
 	r.With(handler.RequireDeviceToken(deviceTokens)).Post("/v1/auth/otp/verify", auth.VerifyOTP)
 	r.Post("/v1/auth/refresh", auth.Refresh)
-	r.With(handler.RequireBearer(accessTokens)).Post("/v1/auth/logout", auth.Logout)
+	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/auth/logout", auth.Logout)
 	r.With(handler.RequireDeviceToken(deviceTokens), handler.OptionalBearer(accessTokens)).Get("/v1/me", auth.Me)
 	r.With(handler.RequireBearer(accessTokens)).Patch("/v1/me", auth.UpdateDisplayName)
 

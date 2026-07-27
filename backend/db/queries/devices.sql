@@ -26,6 +26,21 @@ where id = sqlc.arg(id);
 -- issue #58: idempotent by construction — setting user_id to the same
 -- value on a retry (or on a device already linked to this exact account)
 -- is a no-op update. the service layer rejects linking a device already
--- linked to a *different* account before this query ever runs; a device is
--- linked to at most one account, ever (see docs/architecture/db.md).
+-- linked to a *different* account before this query ever runs. A device
+-- stays linked to at most one account at a time, but issue #80's
+-- UnlinkDeviceFromUser (below) can clear that link on logout so the same
+-- installation can later link to a different account.
 update devices set user_id = sqlc.arg(user_id) where id = sqlc.arg(id);
+
+-- name: UnlinkDeviceFromUser :exec
+-- issue #80 (product-owner review): clears a device's account link on
+-- logout, so the same installation can sign into a *different* account
+-- afterward without linkDevice's "already linked to a different account"
+-- check rejecting it forever. The `and user_id = sqlc.arg(user_id)` guard
+-- is the entire safety mechanism: this only ever clears a link that
+-- currently matches the caller's own account — a mismatched, stale, or
+-- already-unlinked device affects zero rows, never another account's
+-- link. Never touches follows/updates/any other ownership data; those
+-- stay attributed to whichever account actually authored them, forever.
+update devices set user_id = null
+where id = sqlc.arg(id) and user_id = sqlc.arg(user_id);
