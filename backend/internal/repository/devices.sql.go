@@ -100,9 +100,35 @@ type LinkDeviceToUserParams struct {
 // issue #58: idempotent by construction — setting user_id to the same
 // value on a retry (or on a device already linked to this exact account)
 // is a no-op update. the service layer rejects linking a device already
-// linked to a *different* account before this query ever runs; a device is
-// linked to at most one account, ever (see docs/architecture/db.md).
+// linked to a *different* account before this query ever runs. A device
+// stays linked to at most one account at a time, but issue #80's
+// UnlinkDeviceFromUser (below) can clear that link on logout so the same
+// installation can later link to a different account.
 func (q *Queries) LinkDeviceToUser(ctx context.Context, arg LinkDeviceToUserParams) error {
 	_, err := q.db.Exec(ctx, linkDeviceToUser, arg.UserID, arg.ID)
+	return err
+}
+
+const unlinkDeviceFromUser = `-- name: UnlinkDeviceFromUser :exec
+update devices set user_id = null
+where id = $1 and user_id = $2
+`
+
+type UnlinkDeviceFromUserParams struct {
+	ID     pgtype.UUID `json:"id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+// issue #80 (product-owner review): clears a device's account link on
+// logout, so the same installation can sign into a *different* account
+// afterward without linkDevice's "already linked to a different account"
+// check rejecting it forever. The `and user_id = sqlc.arg(user_id)` guard
+// is the entire safety mechanism: this only ever clears a link that
+// currently matches the caller's own account — a mismatched, stale, or
+// already-unlinked device affects zero rows, never another account's
+// link. Never touches follows/updates/any other ownership data; those
+// stay attributed to whichever account actually authored them, forever.
+func (q *Queries) UnlinkDeviceFromUser(ctx context.Context, arg UnlinkDeviceFromUserParams) error {
+	_, err := q.db.Exec(ctx, unlinkDeviceFromUser, arg.ID, arg.UserID)
 	return err
 }

@@ -111,6 +111,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      // issue #80 product-owner review: MapScreen is now a
+      // StatefulShellRoute branch with its own nested Navigator — without
+      // this, the sheet paints underneath the shell's persistent bottom
+      // nav/add-cat fab (app_shell.dart) instead of above the whole app.
+      useRootNavigator: true,
       builder: (sheetContext) => PointerInterceptor(
         child: CatPreviewSheet(
           cat: cat,
@@ -180,29 +185,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             child: PointerInterceptor(child: _NotificationsButton()),
           ),
         ],
-      ),
-      floatingActionButton: PointerInterceptor(
-        child: FloatingActionButton(
-          backgroundColor: AppColors.primary,
-          foregroundColor: AppColors.primaryInk,
-          onPressed: () => _handleAddCat(context, ref),
-          child: const Icon(Icons.add),
-        ),
-      ),
-    );
-  }
-
-  // Gate-at-intent (issue #70, mirroring FollowButton exactly): a guest's
-  // tap never shows the add-cat form before authentication succeeds — it
-  // shows AuthGate's prompt sheet first, and only pushes /add-cat once
-  // sign-in completes (resumed intent).
-  void _handleAddCat(BuildContext context, WidgetRef ref) {
-    unawaited(
-      AuthGate.require(
-        context,
-        ref,
-        contextText: 'Kedi eklemek için giriş yap',
-        onAuthenticated: () => context.push('/add-cat'),
       ),
     );
   }
@@ -357,11 +339,15 @@ class _TopBanner extends StatelessWidget {
 
 /// Entry point onto the notification inbox (issue #78) — a glass circle
 /// button over the map, matching cat_detail_screen's `_BackCircleButton`
-/// visual language. Gate-at-intent, exactly like the add-cat FAB just
-/// below it: a guest's tap shows AuthGate's prompt sheet first (there is
-/// nothing to show a guest — an inbox is inherently account-owned state,
-/// see docs/product/privacy.md) rather than pushing `/notifications` and
-/// failing there.
+/// visual language. Gate-at-intent, exactly like the shell's add-cat fab
+/// (app_shell.dart): a guest's tap shows AuthGate's prompt sheet first
+/// (there is nothing to show a guest — an inbox is inherently
+/// account-owned state, see docs/product/privacy.md) rather than pushing
+/// `/notifications` and failing there. The prototype has no notifications
+/// screen at all (issue #78 postdates it), so unlike the profile entry
+/// point this button has no prototype IA to match — it stays a corner
+/// button rather than moving into the bottom nav (issue #80 product-owner
+/// review, finding 1).
 class _NotificationsButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {

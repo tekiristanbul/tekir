@@ -52,6 +52,21 @@ type Querier interface {
 	// recently issued code is ever checked" behavior — a race can't smuggle in
 	// consumption of a superseded code.
 	ConsumeOtpCodeIfValid(ctx context.Context, arg ConsumeOtpCodeIfValidParams) (pgtype.UUID, error)
+	// issue #80: server-authoritative correction of the caller's own ordinary
+	// update within the fixed 10-minute window (docs/product/updates.md). The
+	// where clause is the entire authorization + concurrency + expiry check in
+	// one atomic statement: author_user_id must match the caller (never
+	// trusted from the request), kind must be 'ordinary' (needs-help has its
+	// own fixed 72h lifecycle, not a correctable resource here), deleted_at
+	// must still be null (a stale/duplicate retry against an already-deleted
+	// row never resurrects it), and created_at must still be after
+	// window_start (computed by the service against its own injected clock,
+	// never this query's now()). A request failing any one of those conditions
+	// affects zero rows, identically to failing any other — the service
+	// disambiguates which via GetUpdateForCorrectionCheck below only when that
+	// happens. author_user_id/author_device_id/created_at are never written
+	// here, so a correction can never rewrite authorship or backdate a row.
+	CorrectOrdinaryUpdate(ctx context.Context, arg CorrectOrdinaryUpdateParams) (CorrectOrdinaryUpdateRow, error)
 	// issue #70: created_by_user_id is required (resolved from the
 	// authenticated bearer session, never client-supplied); created_by_device_id
 	// is optional (X-Device-Token, installation/abuse-control association only).
@@ -133,7 +148,9 @@ type Querier interface {
 	// leave it null. author_user_id (issue #65) is likewise nullable and set
 	// only from the caller's authenticated bearer session — the ordinary-update
 	// write path always sets it now that the route requires bearer; nothing
-	// else does.
+	// else does. idempotency_key (issue #80) is nullable and only ever set on
+	// the ordinary-update write path (mirrors cats.idempotency_key/
+	// media.idempotency_key exactly) — needs-help and seed rows leave it null.
 	CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error)
 	CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatusParams) error
 	// creates a new account for a normalized phone number. the unique
@@ -148,6 +165,10 @@ type Querier interface {
 	// doesn't currently follow deletes zero rows and succeeds silently rather
 	// than erroring.
 	DeleteFollow(ctx context.Context, arg DeleteFollowParams) error
+	// same authorization/concurrency/expiry shape as CorrectOrdinaryUpdate
+	// above; soft-delete only (see migration 00020's design note) — never a
+	// real row removal.
+	DeleteOwnUpdate(ctx context.Context, arg DeleteOwnUpdateParams) (DeleteOwnUpdateRow, error)
 	// issue #71: called inside AuthService.linkDevice's transaction,
 	// immediately before BackfillFollowsUserID. Deletes this device's
 	// not-yet-backfilled follow rows that are pure duplicates of a follow the
@@ -166,6 +187,12 @@ type Querier interface {
 	// coalesce mirrors ListCatsInBounds — see its comment.
 	GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error)
 	GetCatByIdempotencyKey(ctx context.Context, arg GetCatByIdempotencyKeyParams) (GetCatByIdempotencyKeyRow, error)
+	// batch display lookup (name + resolved primary photo) for exactly the cat
+	// ids the profile's recent-contributions list is about to render — never
+	// the caller's full contribution history, which can be much larger. Mirrors
+	// ListCatsInBounds' coalesce(photo_url, media.url) resolution so a seeded
+	// and a created cat both surface the same primary_photo field.
+	GetCatSummariesByIDs(ctx context.Context, ids []pgtype.UUID) ([]GetCatSummariesByIDsRow, error)
 	// issue #58: read a device's current account link before deciding whether
 	// otp verification may link it (see LinkDeviceToUser).
 	GetDeviceByID(ctx context.Context, id pgtype.UUID) (GetDeviceByIDRow, error)
@@ -182,14 +209,30 @@ type Querier interface {
 	GetMediaByID(ctx context.Context, id pgtype.UUID) (Medium, error)
 	GetMediaByIdempotencyKey(ctx context.Context, arg GetMediaByIdempotencyKeyParams) (Medium, error)
 	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
+	// issue #80: resolves a retried POST /v1/cats/{cat_id}/updates (same
+	// Idempotency-Key, same account) to the update it already created,
+	// checked before any new write — mirrors GetCatByIdempotencyKey exactly.
+	// Scoped to kind = 'ordinary' to match the partial unique index; the
+	// statuses aggregation mirrors ListCatUpdates so the retry response is
+	// identical to the original create response.
+	GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateByIdempotencyKeyParams) (GetUpdateByIdempotencyKeyRow, error)
+	// called only when CorrectOrdinaryUpdate/DeleteOwnUpdate affects 0 rows, to
+	// disambiguate why: wrong cat_id/unknown id (404), someone else's update
+	// (403), a needs-help row (404 — not a correctable resource at all), an
+	// already-deleted row (treated as an idempotent-success retry by the
+	// service, not an error), or a window that has closed (410). See
+	// docs/architecture/api.md's error taxonomy for this endpoint.
+	GetUpdateForCorrectionCheck(ctx context.Context, arg GetUpdateForCorrectionCheckParams) (GetUpdateForCorrectionCheckRow, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	GetUserByPhone(ctx context.Context, phone string) (User, error)
 	IncrementOtpAttempts(ctx context.Context, id pgtype.UUID) error
 	// issue #58: idempotent by construction — setting user_id to the same
 	// value on a retry (or on a device already linked to this exact account)
 	// is a no-op update. the service layer rejects linking a device already
-	// linked to a *different* account before this query ever runs; a device is
-	// linked to at most one account, ever (see docs/architecture/db.md).
+	// linked to a *different* account before this query ever runs. A device
+	// stays linked to at most one account at a time, but issue #80's
+	// UnlinkDeviceFromUser (below) can clear that link on logout so the same
+	// installation can later link to a different account.
 	LinkDeviceToUser(ctx context.Context, arg LinkDeviceToUserParams) error
 	// the selectable vocabulary: what the future grouped multi-select picker
 	// (product-owner decision on issue #21/#23) renders as options, ordered
@@ -212,6 +255,10 @@ type Querier interface {
 	// render a needs-help entry distinctly from an ordinary one; active-vs-
 	// expired for a needs-help entry is decided by the service layer against an
 	// injected clock, never by this query's own now() or the client's own clock.
+	// deleted_at is null (issue #80): a soft-deleted update vanishes from every
+	// reader's view, author included — the service layer, not this query,
+	// decides whether the caller is the author for the purpose of surfacing a
+	// correction affordance (author_user_id is returned for exactly that).
 	ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) ([]ListCatUpdatesRow, error)
 	// area && envelope::geography uses cats_area_gix (gist on geography supports
 	// the && bounding-box operator); st_makeenvelope builds the requested viewport.
@@ -265,6 +312,28 @@ type Querier interface {
 	// ownership (user_id) determines who follows a cat, per [[community]]'s
 	// private-following contract; devices are purely the push-delivery target.
 	ListNeedsHelpRecipientDevices(ctx context.Context, arg ListNeedsHelpRecipientDevicesParams) ([]pgtype.UUID, error)
+	// a created cat counts toward cats_of_istanbul the same way a media/update
+	// contribution does (docs/product/badges.md's cats_of_istanbul condition).
+	ListUserCreatedCatsForBadges(ctx context.Context, createdByUserID pgtype.UUID) ([]ListUserCreatedCatsForBadgesRow, error)
+	// a needs-help report counts toward cats_of_istanbul's "contribute via
+	// updates, media, or cat creation" condition and the profile's total
+	// contribution/help counts, but never toward the status-based badges
+	// (first_sighting/feeder/water_helper/neighborhood_watcher), which only
+	// look at ordinary-update statuses. Needs-help updates are never
+	// soft-deleted (issue #80 excludes them from correction entirely), so no
+	// deleted_at filter is needed here. needs_help_category is carried along
+	// purely for the profile's recent-contributions display (the client
+	// composes its own label from category, exactly like the cat-detail
+	// timeline already does), not for badge derivation.
+	ListUserNeedsHelpUpdatesForBadges(ctx context.Context, authorUserID pgtype.UUID) ([]ListUserNeedsHelpUpdatesForBadgesRow, error)
+	// issue #80: one row per ordinary update the account authored, oldest
+	// first, with its full status set — feeds ProfileService.BadgeProgress's
+	// oldest-to-newest threshold walk (mirrors the approved prototype's
+	// badgeProgress in prototype/data.js). Soft-deleted updates (see migration
+	// 00020) are excluded: a corrected-away update never counts toward a
+	// threshold. needs_help rows are listed separately (see
+	// ListUserNeedsHelpUpdatesForBadges) since they carry no statuses.
+	ListUserOrdinaryUpdatesForBadges(ctx context.Context, authorUserID pgtype.UUID) ([]ListUserOrdinaryUpdatesForBadgesRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
 	// issue #78: called once per claimed row, after recipient resolution and
 	// (best-effort) delivery — including when delivery itself failed, since a
@@ -278,6 +347,12 @@ type Querier interface {
 	// marking an already-read notification read again just re-sets the same
 	// timestamp semantics (still "read"), never errors.
 	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) error
+	// issue #80: a correction may change which structured statuses an ordinary
+	// update carries. Delete-then-reinsert (mirroring CreateUpdateStatus's own
+	// insert loop) rather than a diff, since the set is small (at most 3
+	// values) and this only ever runs inside CorrectOwnUpdate's own transaction
+	// alongside the row update above.
+	ReplaceUpdateStatuses(ctx context.Context, updateID pgtype.UUID) error
 	// idempotent, unconditional revoke — used only by logout, where "already
 	// revoked/expired" is not an error (see SessionService.Revoke). Never used
 	// for rotation; see RevokeRefreshTokenIfActive for that.
@@ -291,6 +366,16 @@ type Querier interface {
 	// after the winner's and matches zero rows, since revoked_at is no longer
 	// null by then.
 	RevokeRefreshTokenIfActive(ctx context.Context, arg RevokeRefreshTokenIfActiveParams) (pgtype.UUID, error)
+	// issue #80 (product-owner review): clears a device's account link on
+	// logout, so the same installation can sign into a *different* account
+	// afterward without linkDevice's "already linked to a different account"
+	// check rejecting it forever. The `and user_id = sqlc.arg(user_id)` guard
+	// is the entire safety mechanism: this only ever clears a link that
+	// currently matches the caller's own account — a mismatched, stale, or
+	// already-unlinked device affects zero rows, never another account's
+	// link. Never touches follows/updates/any other ownership data; those
+	// stay attributed to whichever account actually authored them, forever.
+	UnlinkDeviceFromUser(ctx context.Context, arg UnlinkDeviceFromUserParams) error
 	// issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
 	// so a new ordinary update and the cat's last_update_at commit atomically.
 	// issue #38: monotonic — greatest() already ignores a null argument

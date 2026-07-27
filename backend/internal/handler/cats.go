@@ -121,10 +121,20 @@ type updateResponse struct {
 	Statuses               []string   `json:"statuses"`
 	Comment                *string    `json:"comment"`
 	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              *time.Time `json:"updated_at,omitempty"`
 	NeedsHelpCategory      *string    `json:"needs_help_category"`
 	NeedsHelpCategoryLabel *string    `json:"needs_help_category_label"`
 	NeedsHelpExpiresAt     *time.Time `json:"needs_help_expires_at"`
 	NeedsHelpActive        *bool      `json:"needs_help_active"`
+	// AuthorIsMe/CorrectionExpiresAt (issue #80): on GET
+	// /v1/cats/{cat_id}/updates (OptionalBearer), both stay their zero
+	// value (false/null) for a guest read. This same struct also backs
+	// POST .../updates and PATCH .../updates/{id}'s own responses — both
+	// always set AuthorIsMe true and a real CorrectionExpiresAt, since the
+	// caller who just created or corrected an update is, by construction,
+	// its author.
+	AuthorIsMe          bool       `json:"author_is_me"`
+	CorrectionExpiresAt *time.Time `json:"correction_expires_at"`
 }
 
 func toActiveAlertResponse(a *service.ActiveAlert) *activeAlertResponse {
@@ -331,7 +341,8 @@ func (h *CatsHandler) UpdateHistory(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	page, err := h.cats.ListCatUpdates(r.Context(), chi.URLParam(r, "cat_id"), r.URL.Query().Get("cursor"), limit)
+	caller := UserFromContext(r.Context())
+	page, err := h.cats.ListCatUpdates(r.Context(), chi.URLParam(r, "cat_id"), r.URL.Query().Get("cursor"), limit, caller.UserID)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return
@@ -356,10 +367,13 @@ func toUpdateResponse(u service.CatUpdate) updateResponse {
 		Statuses:               u.Statuses,
 		Comment:                u.Comment,
 		CreatedAt:              u.CreatedAt,
+		UpdatedAt:              u.UpdatedAt,
 		NeedsHelpCategory:      u.NeedsHelpCategory,
 		NeedsHelpCategoryLabel: u.NeedsHelpCategoryLabel,
 		NeedsHelpExpiresAt:     u.NeedsHelpExpiresAt,
 		NeedsHelpActive:        u.NeedsHelpActive,
+		AuthorIsMe:             u.AuthorIsMe,
+		CorrectionExpiresAt:    u.CorrectionExpiresAt,
 	}
 }
 
@@ -387,9 +401,19 @@ func (h *CatsHandler) CreateUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// issue #80 (product-owner review): an optional Idempotency-Key lets a
+	// retried request (a duplicate network retry, or a fast double-tap of
+	// the "Gördüm" shortcut before the first response returns) resolve to
+	// the original update instead of creating a second one — mirrors
+	// CatsHandler.Create's identical header handling.
+	var idempotencyKey *string
+	if v := strings.TrimSpace(r.Header.Get("Idempotency-Key")); v != "" {
+		idempotencyKey = &v
+	}
+
 	user := UserFromContext(r.Context())
 	device := DeviceFromContext(r.Context())
-	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, device.DeviceID, req.Statuses, req.Comment)
+	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, device.DeviceID, idempotencyKey, req.Statuses, req.Comment)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return
@@ -432,6 +456,52 @@ func (h *CatsHandler) CreateNeedsHelp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toUpdateResponse(update))
 }
 
+// correctUpdateRequest is the body of PATCH /v1/cats/{cat_id}/updates/{update_id}
+// (issue #80). DisallowUnknownFields rejects any client-supplied kind,
+// author, created_at, or deleted_at — none of those are ever alterable
+// through this path, mirroring createUpdateRequest's own guarantee.
+type correctUpdateRequest struct {
+	Statuses []string `json:"statuses"`
+	Comment  *string  `json:"comment"`
+}
+
+// CorrectUpdate answers PATCH /v1/cats/{cat_id}/updates/{update_id}: the
+// caller corrects their own ordinary update within the fixed 10-minute
+// window (docs/product/updates.md). Authorization (author match) and the
+// window check both happen server-side, against the server's own clock —
+// never trusted from the request.
+func (h *CatsHandler) CorrectUpdate(w http.ResponseWriter, r *http.Request) {
+	var req correctUpdateRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	user := UserFromContext(r.Context())
+	update, err := h.cats.CorrectOwnUpdate(r.Context(), chi.URLParam(r, "cat_id"), chi.URLParam(r, "update_id"), user.UserID, req.Statuses, req.Comment)
+	if err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toUpdateResponse(update))
+}
+
+// DeleteUpdate answers DELETE /v1/cats/{cat_id}/updates/{update_id}: the
+// caller soft-deletes their own ordinary update within the fixed 10-minute
+// window. A retry against an already-deleted row also answers 204 — see
+// service.CatsService.DeleteOwnUpdate's idempotent-retry note.
+func (h *CatsHandler) DeleteUpdate(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if err := h.cats.DeleteOwnUpdate(r.Context(), chi.URLParam(r, "cat_id"), chi.URLParam(r, "update_id"), user.UserID); err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func writeCatsServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrInvalidCatID):
@@ -458,6 +528,12 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "unsupported photo type"})
 	case errors.Is(err, service.ErrMalformedMedia):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed photo"})
+	case errors.Is(err, service.ErrUpdateNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "update not found"})
+	case errors.Is(err, service.ErrNotUpdateAuthor):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the update author"})
+	case errors.Is(err, service.ErrCorrectionWindowExpired):
+		writeJSON(w, http.StatusGone, map[string]string{"error": "correction window expired"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 	}

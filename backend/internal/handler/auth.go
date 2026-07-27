@@ -34,6 +34,14 @@ type DisplayNameSetter interface {
 	SetDisplayName(ctx context.Context, userID, displayName string) error
 }
 
+// DeviceUnlinker is satisfied by service.AuthService. Clears a device's
+// account link (issue #80 product-owner review: fixes logging into a
+// different account on the same installation) — never anything else
+// (follows/updates/badges/notifications ownership is untouched).
+type DeviceUnlinker interface {
+	UnlinkDevice(ctx context.Context, deviceID, userID string) error
+}
+
 // AuthHandler answers otp request/verify, refresh, logout, and the
 // new-account display-name step (issue #58).
 type AuthHandler struct {
@@ -42,15 +50,17 @@ type AuthHandler struct {
 	refresher         SessionRefresher
 	revoker           SessionRevoker
 	displayNameSetter DisplayNameSetter
+	deviceUnlinker    DeviceUnlinker
 }
 
-func NewAuthHandler(otpRequester OTPRequester, otpVerifier OTPVerifier, refresher SessionRefresher, revoker SessionRevoker, displayNameSetter DisplayNameSetter) *AuthHandler {
+func NewAuthHandler(otpRequester OTPRequester, otpVerifier OTPVerifier, refresher SessionRefresher, revoker SessionRevoker, displayNameSetter DisplayNameSetter, deviceUnlinker DeviceUnlinker) *AuthHandler {
 	return &AuthHandler{
 		otpRequester:      otpRequester,
 		otpVerifier:       otpVerifier,
 		refresher:         refresher,
 		revoker:           revoker,
 		displayNameSetter: displayNameSetter,
+		deviceUnlinker:    deviceUnlinker,
 	}
 }
 
@@ -181,10 +191,20 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, refreshResponse{AccessToken: session.AccessToken, RefreshToken: session.RefreshToken})
 }
 
-// Logout answers POST /v1/auth/logout (Bearer required): revokes the
-// presented refresh token, ending that session, without deleting the
-// installation's device identity. Idempotent — logging out twice with the
-// same (now-revoked) refresh token still answers 204.
+// Logout answers POST /v1/auth/logout (Bearer required; X-Device-Token
+// optional). It revokes the presented refresh token, ending that session.
+// When a valid X-Device-Token is also presented (OptionalDeviceToken — see
+// router.go), and that device is currently linked to the caller's own
+// account, the link is cleared (issue #80 product-owner review) so the
+// same installation can sign into a *different* account next — without
+// this, AuthService.linkDevice would permanently reject that with 409,
+// since nothing else ever clears devices.user_id. This never moves or
+// touches the account's own follows/updates/badges/notifications; it only
+// clears which account this one device is currently claimed by. A missing,
+// invalid, or already-unlinked device token unlinks nothing and is not an
+// error — unlinking is best-effort and never blocks the logout response
+// itself. Idempotent — logging out twice (same refresh token, same or no
+// device token) still answers 204.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	var req refreshBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -199,6 +219,15 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if err := h.revoker.Revoke(r.Context(), req.RefreshToken); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
+	}
+
+	if device := DeviceFromContext(r.Context()); device.DeviceID != "" {
+		if user := UserFromContext(r.Context()); user.UserID != "" {
+			// Best-effort: this device may not currently be linked to this
+			// account at all (UnlinkDeviceFromUser's own where clause is a
+			// no-op in that case) — never fails the logout response either way.
+			_ = h.deviceUnlinker.UnlinkDevice(r.Context(), device.DeviceID, user.UserID)
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)

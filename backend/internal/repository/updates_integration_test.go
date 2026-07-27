@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -888,5 +889,464 @@ func TestStore_GetCatByID_NoNeedsHelpUpdateIsNull(t *testing.T) {
 	}
 	if row.NeedsHelpCategory.Valid || row.NeedsHelpCreatedAt.Valid || row.NeedsHelpExpiresAt.Valid {
 		t.Errorf("expected no needs-help fields for a cat with no needs-help update, got %+v", row)
+	}
+}
+
+// createTestOwnedUpdate creates an ordinary update authored by userID at
+// createdAt, for issue #80's correction-window tests — createTestUpdate
+// above leaves author_user_id null, which the correction queries require.
+func createTestOwnedUpdate(t *testing.T, ctx context.Context, store *repository.Store, catID, userID pgtype.UUID, createdAt time.Time, statuses []string, comment string) pgtype.UUID {
+	t.Helper()
+	var commentText pgtype.Text
+	if comment != "" {
+		commentText = pgtype.Text{String: comment, Valid: true}
+	}
+	id := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+		ID:           id,
+		CatID:        catID,
+		Kind:         "ordinary",
+		Comment:      commentText,
+		CreatedAt:    pgtype.Timestamptz{Time: createdAt, Valid: true},
+		AuthorUserID: userID,
+	}); err != nil {
+		t.Fatalf("create owned update: %v", err)
+	}
+	for _, status := range statuses {
+		if err := store.CreateUpdateStatus(ctx, repository.CreateUpdateStatusParams{UpdateID: id, Status: status}); err != nil {
+			t.Fatalf("create update status %s: %v", status, err)
+		}
+	}
+	return id
+}
+
+// TestStore_CorrectOwnUpdate_HappyPath proves a correction inside the
+// window updates comment/updated_at and replaces statuses, all atomically.
+func TestStore_CorrectOwnUpdate_HappyPath(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "correction happy path")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	updateID := createTestOwnedUpdate(t, ctx, store, catID, userID, createdAt, []string{"seen"}, "ilk hali")
+
+	updatedAt := createdAt.Add(2 * time.Minute)
+	windowStart := createdAt.Add(-1 * time.Minute) // request arrives well inside the window
+	row, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		Comment:      pgtype.Text{String: "düzeltildi", Valid: true},
+		UpdatedAt:    pgtype.Timestamptz{Time: updatedAt, Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: windowStart, Valid: true},
+		Statuses:     []string{"fed", "water_provided"},
+	})
+	if err != nil {
+		t.Fatalf("correct own update: %v", err)
+	}
+	if row.ID != updateID {
+		t.Errorf("expected corrected row id %v, got %v", updateID, row.ID)
+	}
+
+	rows, err := store.ListCatUpdates(ctx, repository.ListCatUpdatesParams{CatID: catID, RowLimit: 20})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(rows))
+	}
+	if rows[0].Comment.String != "düzeltildi" {
+		t.Errorf("expected corrected comment, got %q", rows[0].Comment.String)
+	}
+	if len(rows[0].Statuses) != 2 || rows[0].Statuses[0] != "fed" || rows[0].Statuses[1] != "water_provided" {
+		t.Errorf("expected replaced statuses [fed water_provided], got %v", rows[0].Statuses)
+	}
+}
+
+// TestStore_CorrectOwnUpdate_WrongAuthorAffectsNoRows proves another
+// account's correction attempt matches zero rows — the caller
+// (service.CatsService) is responsible for calling
+// GetUpdateForCorrectionCheck to learn this was an authorship mismatch
+// rather than, say, an expired window.
+func TestStore_CorrectOwnUpdate_WrongAuthorAffectsNoRows(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "wrong author")
+	owner := createTestUser(t, ctx, store)
+	stranger := createTestUser(t, ctx, store)
+	createdAt := time.Now()
+	updateID := createTestOwnedUpdate(t, ctx, store, catID, owner, createdAt, []string{"seen"}, "")
+
+	_, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: stranger,
+		Comment:      pgtype.Text{},
+		UpdatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: createdAt.Add(-time.Minute), Valid: true},
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected pgx.ErrNoRows for a non-author correction attempt, got %v", err)
+	}
+
+	check, err := store.GetUpdateForCorrectionCheck(ctx, repository.GetUpdateForCorrectionCheckParams{ID: updateID, CatID: catID})
+	if err != nil {
+		t.Fatalf("correction check: %v", err)
+	}
+	if check.AuthorUserID != owner {
+		t.Errorf("expected disambiguation check to reveal the real owner %v, got %v", owner, check.AuthorUserID)
+	}
+}
+
+// TestStore_CorrectOwnUpdate_ExpiredWindowAffectsNoRows proves a correction
+// attempt after the fixed 10-minute window closed matches zero rows —
+// window_start (author's created_at + 10m in the past, computed by the
+// service against its own injected clock) failing the created_at > $6 check.
+func TestStore_CorrectOwnUpdate_ExpiredWindowAffectsNoRows(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "expired window")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	updateID := createTestOwnedUpdate(t, ctx, store, catID, userID, createdAt, []string{"seen"}, "")
+
+	// simulate "now" 11 minutes after creation: window_start is now-10m,
+	// i.e. one minute after createdAt — created_at is no longer > window_start.
+	now := createdAt.Add(11 * time.Minute)
+	windowStart := now.Add(-10 * time.Minute)
+
+	_, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		Comment:      pgtype.Text{String: "too late", Valid: true},
+		UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: windowStart, Valid: true},
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected pgx.ErrNoRows for an expired-window correction attempt, got %v", err)
+	}
+}
+
+// TestStore_CorrectOwnUpdate_ExactBoundary_StillWithinWindow proves the
+// boundary is exclusive-of-window_start-itself in the update's favor: a
+// created_at strictly after window_start still succeeds, one nanosecond
+// before the cutoff.
+func TestStore_CorrectOwnUpdate_ExactBoundary_StillWithinWindow(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "exact boundary")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	updateID := createTestOwnedUpdate(t, ctx, store, catID, userID, createdAt, []string{"seen"}, "")
+
+	// now is exactly 10 minutes after creation: window_start == created_at,
+	// so created_at > window_start is false — the boundary instant itself
+	// is already expired, matching "for exactly 10 minutes after posting".
+	now := createdAt.Add(10 * time.Minute)
+	windowStart := now.Add(-10 * time.Minute)
+
+	_, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		Comment:      pgtype.Text{String: "at the boundary", Valid: true},
+		UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: windowStart, Valid: true},
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected the exact 10-minute boundary to be expired, got err=%v", err)
+	}
+
+	// one nanosecond earlier must still succeed.
+	nowJustBefore := createdAt.Add(10*time.Minute - time.Nanosecond)
+	windowStartJustBefore := nowJustBefore.Add(-10 * time.Minute)
+	if _, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		Comment:      pgtype.Text{String: "just before the boundary", Valid: true},
+		UpdatedAt:    pgtype.Timestamptz{Time: nowJustBefore, Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: windowStartJustBefore, Valid: true},
+	}); err != nil {
+		t.Fatalf("expected success one nanosecond before the boundary, got %v", err)
+	}
+}
+
+// TestStore_CorrectOwnUpdate_NeedsHelpKindAffectsNoRows proves a needs-help
+// update is never a correctable resource through this path, regardless of
+// authorship or window (issue #80's D6 scope decision).
+func TestStore_CorrectOwnUpdate_NeedsHelpKindAffectsNoRows(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "needs-help not correctable")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Now()
+	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+		ID:                 updateID,
+		CatID:              catID,
+		Kind:               "needs_help",
+		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
+		NeedsHelpCategory:  pgtype.Text{String: "trapped", Valid: true},
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
+		AuthorUserID:       userID,
+	}); err != nil {
+		t.Fatalf("seed needs-help update: %v", err)
+	}
+
+	_, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		Comment:      pgtype.Text{String: "attempted", Valid: true},
+		UpdatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: createdAt.Add(-time.Minute), Valid: true},
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected a needs-help update to be uncorrectable, got %v", err)
+	}
+}
+
+// TestStore_DeleteOwnUpdate_HappyPath_RemovesFromTimeline proves a
+// successful in-window delete makes the update vanish from
+// ListCatUpdates entirely (soft-delete, but invisible to every reader,
+// author included) while the underlying row survives (see the raw-pool
+// assertion), preserving the audit trail migration 00020 documents.
+func TestStore_DeleteOwnUpdate_HappyPath_RemovesFromTimeline(t *testing.T) {
+	store := newTestStore(t)
+	pool := rawPool(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "delete happy path")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Now()
+	updateID := createTestOwnedUpdate(t, ctx, store, catID, userID, createdAt, []string{"seen"}, "")
+
+	row, err := store.DeleteOwnUpdate(ctx, repository.DeleteOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		DeletedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: createdAt.Add(-time.Minute), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("delete own update: %v", err)
+	}
+	if row.ID != updateID {
+		t.Errorf("expected deleted row id %v, got %v", updateID, row.ID)
+	}
+
+	rows, err := store.ListCatUpdates(ctx, repository.ListCatUpdatesParams{CatID: catID, RowLimit: 20})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected the soft-deleted update to vanish from the timeline, got %d rows", len(rows))
+	}
+
+	// the row itself survives (audit trail), merely tombstoned.
+	var stillExists bool
+	if err := pool.QueryRow(ctx, "select exists(select 1 from updates where id = $1)", updateID).Scan(&stillExists); err != nil {
+		t.Fatalf("check row survival: %v", err)
+	}
+	if !stillExists {
+		t.Error("expected the update row to survive a soft delete, but it was gone")
+	}
+}
+
+// TestStore_DeleteOwnUpdate_RetryAfterDeleteAffectsNoRows proves a repeat
+// delete attempt against an already-deleted row affects zero rows — the
+// service layer treats this specific zero-rows case as an idempotent
+// success (not an error), distinguishing it from every other
+// zero-rows cause via GetUpdateForCorrectionCheck's deleted_at field.
+func TestStore_DeleteOwnUpdate_RetryAfterDeleteAffectsNoRows(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "retry after delete")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Now()
+	updateID := createTestOwnedUpdate(t, ctx, store, catID, userID, createdAt, []string{"seen"}, "")
+
+	windowStart := createdAt.Add(-time.Minute)
+	if _, err := store.DeleteOwnUpdate(ctx, repository.DeleteOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		DeletedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: windowStart, Valid: true},
+	}); err != nil {
+		t.Fatalf("first delete: %v", err)
+	}
+
+	_, err := store.DeleteOwnUpdate(ctx, repository.DeleteOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		DeletedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: windowStart, Valid: true},
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected pgx.ErrNoRows on retry, got %v", err)
+	}
+
+	check, err := store.GetUpdateForCorrectionCheck(ctx, repository.GetUpdateForCorrectionCheckParams{ID: updateID, CatID: catID})
+	if err != nil {
+		t.Fatalf("correction check: %v", err)
+	}
+	if !check.DeletedAt.Valid {
+		t.Error("expected the disambiguation check to reveal the row is already deleted")
+	}
+}
+
+// TestStore_ListCatUpdates_ExcludesSoftDeleted is a direct regression guard
+// on the ListCatUpdates query change itself: a soft-deleted row must never
+// resurface even alongside other, undeleted updates.
+func TestStore_ListCatUpdates_ExcludesSoftDeleted(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "mixed deleted and live")
+	userID := createTestUser(t, ctx, store)
+	base := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC)
+	deletedID := createTestOwnedUpdate(t, ctx, store, catID, userID, base, []string{"seen"}, "will be deleted")
+	createTestOwnedUpdate(t, ctx, store, catID, userID, base.Add(time.Minute), []string{"fed"}, "stays visible")
+
+	if _, err := store.DeleteOwnUpdate(ctx, repository.DeleteOwnUpdateParams{
+		ID:           deletedID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		DeletedAt:    pgtype.Timestamptz{Time: base.Add(2 * time.Minute), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: base.Add(-time.Minute), Valid: true},
+	}); err != nil {
+		t.Fatalf("delete first update: %v", err)
+	}
+
+	rows, err := store.ListCatUpdates(ctx, repository.ListCatUpdatesParams{CatID: catID, RowLimit: 20})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly 1 visible update, got %d", len(rows))
+	}
+	if rows[0].Comment.String != "stays visible" {
+		t.Errorf("expected the non-deleted update to remain, got comment %q", rows[0].Comment.String)
+	}
+}
+
+// TestStore_CreateOrdinaryUpdate_DuplicateIdempotencyKeyRejected proves
+// migration 00021's partial unique index (author_user_id, idempotency_key)
+// where idempotency_key is not null and kind = 'ordinary' actually rejects a
+// second insert carrying the same key for the same account — the real
+// database-level backstop CatsService.CreateOrdinaryUpdate's race-recovery
+// (fetchIdempotentOrdinaryUpdate after isUniqueViolation) depends on, mirrors
+// TestStore_CreateOrdinaryUpdate_DuplicateEnqueueRollsBack's shape above.
+func TestStore_CreateOrdinaryUpdate_DuplicateIdempotencyKeyRejected(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "idempotency key target")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
+	key := pgtype.Text{String: "seen-tap-key", Valid: true}
+
+	first := repository.CreateOrdinaryUpdateParams{
+		ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:          catID,
+		AuthorUserID:   userID,
+		CreatedAt:      pgtype.Timestamptz{Time: createdAt, Valid: true},
+		Statuses:       []string{"seen"},
+		IdempotencyKey: key,
+	}
+	firstRow, err := store.CreateOrdinaryUpdate(ctx, first)
+	if err != nil {
+		t.Fatalf("first create ordinary update: %v", err)
+	}
+
+	// a retry with the same key (new update id, as a fresh POST would send)
+	// must hit the partial unique index, not silently succeed as a second row.
+	second := first
+	second.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	second.CreatedAt = pgtype.Timestamptz{Time: createdAt.Add(time.Minute), Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, second); !isUniqueViolation(err) {
+		t.Fatalf("expected a unique-constraint violation on duplicate idempotency key, got %v", err)
+	}
+
+	existing, err := store.GetUpdateByIdempotencyKey(ctx, repository.GetUpdateByIdempotencyKeyParams{
+		AuthorUserID:   userID,
+		IdempotencyKey: key,
+	})
+	if err != nil {
+		t.Fatalf("get update by idempotency key: %v", err)
+	}
+	if existing.ID != firstRow.ID {
+		t.Errorf("expected the lookup to resolve to the first insert %v, got %v", firstRow.ID, existing.ID)
+	}
+
+	// a different key for the same account is a genuinely new update.
+	third := first
+	third.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	third.CreatedAt = pgtype.Timestamptz{Time: createdAt.Add(2 * time.Minute), Valid: true}
+	third.IdempotencyKey = pgtype.Text{String: "seen-tap-key-2", Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, third); err != nil {
+		t.Errorf("expected a different idempotency key to create a second update, got error: %v", err)
+	}
+}
+
+// TestStore_CreateOrdinaryUpdate_ConcurrentSameIdempotencyKeyOnlyOneWins
+// mirrors TestStore_CreateFollow_ConcurrentDuplicate's shape: two goroutines
+// racing to insert the same (author_user_id, idempotency_key) pair must
+// leave exactly one row committed, with the loser observing a unique
+// violation it can recover from via GetUpdateByIdempotencyKey.
+func TestStore_CreateOrdinaryUpdate_ConcurrentSameIdempotencyKeyOnlyOneWins(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "concurrent idempotency key target")
+	userID := createTestUser(t, ctx, store)
+	key := pgtype.Text{String: "concurrent-seen-key", Valid: true}
+	createdAt := time.Date(2026, 3, 3, 9, 30, 0, 0, time.UTC)
+
+	const attempts = 5
+	var wg sync.WaitGroup
+	errs := make([]error, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+				ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CatID:          catID,
+				AuthorUserID:   userID,
+				CreatedAt:      pgtype.Timestamptz{Time: createdAt, Valid: true},
+				Statuses:       []string{"seen"},
+				IdempotencyKey: key,
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	var successes, violations int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case isUniqueViolation(err):
+			violations++
+		default:
+			t.Errorf("unexpected error from concurrent create: %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Errorf("expected exactly 1 successful insert, got %d successes and %d violations", successes, violations)
+	}
+	if successes+violations != attempts {
+		t.Errorf("expected every attempt to either succeed or hit the unique index, got %d successes and %d violations of %d attempts", successes, violations, attempts)
 	}
 }

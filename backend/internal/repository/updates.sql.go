@@ -29,8 +29,63 @@ func (q *Queries) BackfillUpdatesAuthorUserID(ctx context.Context, arg BackfillU
 	return err
 }
 
+const correctOrdinaryUpdate = `-- name: CorrectOrdinaryUpdate :one
+update updates
+set comment = $1, updated_at = $2
+where id = $3
+  and cat_id = $4
+  and author_user_id = $5
+  and kind = 'ordinary'
+  and deleted_at is null
+  and created_at > $6::timestamptz
+returning id, created_at, updated_at
+`
+
+type CorrectOrdinaryUpdateParams struct {
+	Comment      pgtype.Text        `json:"comment"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ID           pgtype.UUID        `json:"id"`
+	CatID        pgtype.UUID        `json:"cat_id"`
+	AuthorUserID pgtype.UUID        `json:"author_user_id"`
+	WindowStart  pgtype.Timestamptz `json:"window_start"`
+}
+
+type CorrectOrdinaryUpdateRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+// issue #80: server-authoritative correction of the caller's own ordinary
+// update within the fixed 10-minute window (docs/product/updates.md). The
+// where clause is the entire authorization + concurrency + expiry check in
+// one atomic statement: author_user_id must match the caller (never
+// trusted from the request), kind must be 'ordinary' (needs-help has its
+// own fixed 72h lifecycle, not a correctable resource here), deleted_at
+// must still be null (a stale/duplicate retry against an already-deleted
+// row never resurrects it), and created_at must still be after
+// window_start (computed by the service against its own injected clock,
+// never this query's now()). A request failing any one of those conditions
+// affects zero rows, identically to failing any other — the service
+// disambiguates which via GetUpdateForCorrectionCheck below only when that
+// happens. author_user_id/author_device_id/created_at are never written
+// here, so a correction can never rewrite authorship or backdate a row.
+func (q *Queries) CorrectOrdinaryUpdate(ctx context.Context, arg CorrectOrdinaryUpdateParams) (CorrectOrdinaryUpdateRow, error) {
+	row := q.db.QueryRow(ctx, correctOrdinaryUpdate,
+		arg.Comment,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.CatID,
+		arg.AuthorUserID,
+		arg.WindowStart,
+	)
+	var i CorrectOrdinaryUpdateRow
+	err := row.Scan(&i.ID, &i.CreatedAt, &i.UpdatedAt)
+	return i, err
+}
+
 const createUpdate = `-- name: CreateUpdate :one
-insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id, author_user_id)
+insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id, author_user_id, idempotency_key)
 values (
   $1,
   $2,
@@ -40,7 +95,8 @@ values (
   $6,
   $7,
   $8,
-  $9
+  $9,
+  $10
 )
 on conflict (id) do update set
   kind = excluded.kind,
@@ -49,7 +105,8 @@ on conflict (id) do update set
   needs_help_category = excluded.needs_help_category,
   needs_help_expires_at = excluded.needs_help_expires_at,
   author_device_id = excluded.author_device_id,
-  author_user_id = excluded.author_user_id
+  author_user_id = excluded.author_user_id,
+  idempotency_key = excluded.idempotency_key
 returning id, seq
 `
 
@@ -63,6 +120,7 @@ type CreateUpdateParams struct {
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	AuthorDeviceID     pgtype.UUID        `json:"author_device_id"`
 	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	IdempotencyKey     pgtype.Text        `json:"idempotency_key"`
 }
 
 type CreateUpdateRow struct {
@@ -87,7 +145,9 @@ type CreateUpdateRow struct {
 // leave it null. author_user_id (issue #65) is likewise nullable and set
 // only from the caller's authenticated bearer session — the ordinary-update
 // write path always sets it now that the route requires bearer; nothing
-// else does.
+// else does. idempotency_key (issue #80) is nullable and only ever set on
+// the ordinary-update write path (mirrors cats.idempotency_key/
+// media.idempotency_key exactly) — needs-help and seed rows leave it null.
 func (q *Queries) CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error) {
 	row := q.db.QueryRow(ctx, createUpdate,
 		arg.ID,
@@ -99,6 +159,7 @@ func (q *Queries) CreateUpdate(ctx context.Context, arg CreateUpdateParams) (Cre
 		arg.NeedsHelpExpiresAt,
 		arg.AuthorDeviceID,
 		arg.AuthorUserID,
+		arg.IdempotencyKey,
 	)
 	var i CreateUpdateRow
 	err := row.Scan(&i.ID, &i.Seq)
@@ -121,6 +182,134 @@ func (q *Queries) CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatus
 	return err
 }
 
+const deleteOwnUpdate = `-- name: DeleteOwnUpdate :one
+update updates
+set deleted_at = $1
+where id = $2
+  and cat_id = $3
+  and author_user_id = $4
+  and kind = 'ordinary'
+  and deleted_at is null
+  and created_at > $5::timestamptz
+returning id, deleted_at
+`
+
+type DeleteOwnUpdateParams struct {
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+	ID           pgtype.UUID        `json:"id"`
+	CatID        pgtype.UUID        `json:"cat_id"`
+	AuthorUserID pgtype.UUID        `json:"author_user_id"`
+	WindowStart  pgtype.Timestamptz `json:"window_start"`
+}
+
+type DeleteOwnUpdateRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// same authorization/concurrency/expiry shape as CorrectOrdinaryUpdate
+// above; soft-delete only (see migration 00020's design note) — never a
+// real row removal.
+func (q *Queries) DeleteOwnUpdate(ctx context.Context, arg DeleteOwnUpdateParams) (DeleteOwnUpdateRow, error) {
+	row := q.db.QueryRow(ctx, deleteOwnUpdate,
+		arg.DeletedAt,
+		arg.ID,
+		arg.CatID,
+		arg.AuthorUserID,
+		arg.WindowStart,
+	)
+	var i DeleteOwnUpdateRow
+	err := row.Scan(&i.ID, &i.DeletedAt)
+	return i, err
+}
+
+const getUpdateByIdempotencyKey = `-- name: GetUpdateByIdempotencyKey :one
+select
+  u.id,
+  u.cat_id,
+  u.comment,
+  u.created_at,
+  coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
+from updates u
+left join update_statuses s on s.update_id = u.id
+where u.author_user_id = $1
+  and u.idempotency_key = $2
+  and u.kind = 'ordinary'
+group by u.id
+`
+
+type GetUpdateByIdempotencyKeyParams struct {
+	AuthorUserID   pgtype.UUID `json:"author_user_id"`
+	IdempotencyKey pgtype.Text `json:"idempotency_key"`
+}
+
+type GetUpdateByIdempotencyKeyRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	CatID     pgtype.UUID        `json:"cat_id"`
+	Comment   pgtype.Text        `json:"comment"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Statuses  []string           `json:"statuses"`
+}
+
+// issue #80: resolves a retried POST /v1/cats/{cat_id}/updates (same
+// Idempotency-Key, same account) to the update it already created,
+// checked before any new write — mirrors GetCatByIdempotencyKey exactly.
+// Scoped to kind = 'ordinary' to match the partial unique index; the
+// statuses aggregation mirrors ListCatUpdates so the retry response is
+// identical to the original create response.
+func (q *Queries) GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateByIdempotencyKeyParams) (GetUpdateByIdempotencyKeyRow, error) {
+	row := q.db.QueryRow(ctx, getUpdateByIdempotencyKey, arg.AuthorUserID, arg.IdempotencyKey)
+	var i GetUpdateByIdempotencyKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.CatID,
+		&i.Comment,
+		&i.CreatedAt,
+		&i.Statuses,
+	)
+	return i, err
+}
+
+const getUpdateForCorrectionCheck = `-- name: GetUpdateForCorrectionCheck :one
+select id, cat_id, author_user_id, kind, created_at, deleted_at
+from updates
+where id = $1 and cat_id = $2
+`
+
+type GetUpdateForCorrectionCheckParams struct {
+	ID    pgtype.UUID `json:"id"`
+	CatID pgtype.UUID `json:"cat_id"`
+}
+
+type GetUpdateForCorrectionCheckRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	CatID        pgtype.UUID        `json:"cat_id"`
+	AuthorUserID pgtype.UUID        `json:"author_user_id"`
+	Kind         string             `json:"kind"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// called only when CorrectOrdinaryUpdate/DeleteOwnUpdate affects 0 rows, to
+// disambiguate why: wrong cat_id/unknown id (404), someone else's update
+// (403), a needs-help row (404 — not a correctable resource at all), an
+// already-deleted row (treated as an idempotent-success retry by the
+// service, not an error), or a window that has closed (410). See
+// docs/architecture/api.md's error taxonomy for this endpoint.
+func (q *Queries) GetUpdateForCorrectionCheck(ctx context.Context, arg GetUpdateForCorrectionCheckParams) (GetUpdateForCorrectionCheckRow, error) {
+	row := q.db.QueryRow(ctx, getUpdateForCorrectionCheck, arg.ID, arg.CatID)
+	var i GetUpdateForCorrectionCheckRow
+	err := row.Scan(
+		&i.ID,
+		&i.CatID,
+		&i.AuthorUserID,
+		&i.Kind,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const listCatUpdates = `-- name: ListCatUpdates :many
 select
   u.id,
@@ -128,12 +317,14 @@ select
   u.comment,
   u.created_at,
   u.seq,
+  u.author_user_id,
   u.needs_help_category,
   u.needs_help_expires_at,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
 where u.cat_id = $1
+  and u.deleted_at is null
   and (
     $2::timestamptz is null
     or u.created_at < $2::timestamptz
@@ -157,6 +348,7 @@ type ListCatUpdatesRow struct {
 	Comment            pgtype.Text        `json:"comment"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	Seq                pgtype.Int8        `json:"seq"`
+	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	Statuses           []string           `json:"statuses"`
@@ -170,6 +362,10 @@ type ListCatUpdatesRow struct {
 // render a needs-help entry distinctly from an ordinary one; active-vs-
 // expired for a needs-help entry is decided by the service layer against an
 // injected clock, never by this query's own now() or the client's own clock.
+// deleted_at is null (issue #80): a soft-deleted update vanishes from every
+// reader's view, author included — the service layer, not this query,
+// decides whether the caller is the author for the purpose of surfacing a
+// correction affordance (author_user_id is returned for exactly that).
 func (q *Queries) ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) ([]ListCatUpdatesRow, error) {
 	rows, err := q.db.Query(ctx, listCatUpdates,
 		arg.CatID,
@@ -190,6 +386,7 @@ func (q *Queries) ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) 
 			&i.Comment,
 			&i.CreatedAt,
 			&i.Seq,
+			&i.AuthorUserID,
 			&i.NeedsHelpCategory,
 			&i.NeedsHelpExpiresAt,
 			&i.Statuses,
@@ -202,4 +399,18 @@ func (q *Queries) ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const replaceUpdateStatuses = `-- name: ReplaceUpdateStatuses :exec
+delete from update_statuses where update_id = $1
+`
+
+// issue #80: a correction may change which structured statuses an ordinary
+// update carries. Delete-then-reinsert (mirroring CreateUpdateStatus's own
+// insert loop) rather than a diff, since the set is small (at most 3
+// values) and this only ever runs inside CorrectOwnUpdate's own transaction
+// alongside the row update above.
+func (q *Queries) ReplaceUpdateStatuses(ctx context.Context, updateID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, replaceUpdateStatuses, updateID)
+	return err
 }

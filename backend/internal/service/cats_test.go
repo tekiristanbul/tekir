@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/tekiristanbul/tekir/backend/internal/repository"
@@ -42,6 +43,9 @@ type fakeCatsLister struct {
 	idempotencyRow repository.GetCatByIdempotencyKeyRow
 	idempotencyErr error
 
+	updateIdempotencyRow repository.GetUpdateByIdempotencyKeyRow
+	updateIdempotencyErr error
+
 	nearbyDuplicateRows []repository.ListNearbyCatsForDuplicateCheckRow
 	nearbyDuplicateErr  error
 
@@ -50,6 +54,17 @@ type fakeCatsLister struct {
 	// capturedCreateCat, if non-nil, records the arg the last
 	// CreateCatWithMedia call received, mirroring captured above.
 	capturedCreateCat *repository.CreateCatWithMediaParams
+
+	correctRow repository.CorrectOrdinaryUpdateRow
+	correctErr error
+	// capturedCorrect mirrors captured above, for CorrectOwnUpdate.
+	capturedCorrect *repository.CorrectOwnUpdateParams
+
+	deleteRow repository.DeleteOwnUpdateRow
+	deleteErr error
+
+	correctionCheckRow repository.GetUpdateForCorrectionCheckRow
+	correctionCheckErr error
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
@@ -86,6 +101,10 @@ func (f fakeCatsLister) GetCatByIdempotencyKey(ctx context.Context, arg reposito
 	return f.idempotencyRow, f.idempotencyErr
 }
 
+func (f fakeCatsLister) GetUpdateByIdempotencyKey(ctx context.Context, arg repository.GetUpdateByIdempotencyKeyParams) (repository.GetUpdateByIdempotencyKeyRow, error) {
+	return f.updateIdempotencyRow, f.updateIdempotencyErr
+}
+
 func (f fakeCatsLister) ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error) {
 	return f.nearbyDuplicateRows, f.nearbyDuplicateErr
 }
@@ -95,6 +114,21 @@ func (f fakeCatsLister) CreateCatWithMedia(ctx context.Context, arg repository.C
 		*f.capturedCreateCat = arg
 	}
 	return f.createCatWithMediaRow, f.createCatWithMediaErr
+}
+
+func (f fakeCatsLister) CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOrdinaryUpdateRow, error) {
+	if f.capturedCorrect != nil {
+		*f.capturedCorrect = arg
+	}
+	return f.correctRow, f.correctErr
+}
+
+func (f fakeCatsLister) DeleteOwnUpdate(ctx context.Context, arg repository.DeleteOwnUpdateParams) (repository.DeleteOwnUpdateRow, error) {
+	return f.deleteRow, f.deleteErr
+}
+
+func (f fakeCatsLister) GetUpdateForCorrectionCheck(ctx context.Context, arg repository.GetUpdateForCorrectionCheckParams) (repository.GetUpdateForCorrectionCheckRow, error) {
+	return f.correctionCheckRow, f.correctionCheckErr
 }
 
 func TestCatsService_ListNearby(t *testing.T) {
@@ -232,7 +266,7 @@ func TestCatsService_GetCatDetail_InvalidID(t *testing.T) {
 func TestCatsService_ListCatUpdates_UnknownCat(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: false})
 
-	_, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0)
+	_, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0, "")
 	if !errors.Is(err, ErrCatNotFound) {
 		t.Fatalf("expected ErrCatNotFound, got %v", err)
 	}
@@ -241,7 +275,7 @@ func TestCatsService_ListCatUpdates_UnknownCat(t *testing.T) {
 func TestCatsService_ListCatUpdates_EmptyHistory(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
 
-	page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0)
+	page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -285,7 +319,7 @@ func TestCatsService_ListCatUpdates_PaginatesAndEncodesCursor(t *testing.T) {
 		},
 	})
 
-	page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 2)
+	page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 2, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -314,7 +348,7 @@ func TestCatsService_ListCatUpdates_InvalidLimit(t *testing.T) {
 
 	cases := []int{-1, maxUpdatesLimit + 1}
 	for _, limit := range cases {
-		if _, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", limit); !errors.Is(err, ErrInvalidLimit) {
+		if _, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", limit, ""); !errors.Is(err, ErrInvalidLimit) {
 			t.Errorf("limit %d: expected ErrInvalidLimit, got %v", limit, err)
 		}
 	}
@@ -323,7 +357,7 @@ func TestCatsService_ListCatUpdates_InvalidLimit(t *testing.T) {
 func TestCatsService_ListCatUpdates_InvalidCursor(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
 
-	if _, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "not-base64!!", 0); !errors.Is(err, ErrInvalidCursor) {
+	if _, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "not-base64!!", 0, ""); !errors.Is(err, ErrInvalidCursor) {
 		t.Fatalf("expected ErrInvalidCursor, got %v", err)
 	}
 }
@@ -331,7 +365,7 @@ func TestCatsService_ListCatUpdates_InvalidCursor(t *testing.T) {
 func TestCatsService_ListCatUpdates_InvalidCatID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	if _, err := svc.ListCatUpdates(context.Background(), "not-a-uuid", "", 0); !errors.Is(err, ErrInvalidCatID) {
+	if _, err := svc.ListCatUpdates(context.Background(), "not-a-uuid", "", 0, ""); !errors.Is(err, ErrInvalidCatID) {
 		t.Fatalf("expected ErrInvalidCatID, got %v", err)
 	}
 }
@@ -469,7 +503,7 @@ func TestCatsService_ListCatUpdates_NeedsHelpEntry(t *testing.T) {
 				},
 			}, WithClock(func() time.Time { return fixedNow }))
 
-			page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0)
+			page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0, "")
 			if err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
@@ -504,7 +538,7 @@ func TestCatsService_ListCatUpdates_OrdinaryEntryHasNoNeedsHelpFields(t *testing
 		},
 	})
 
-	page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0)
+	page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -530,7 +564,7 @@ func TestCatsService_CreateOrdinaryUpdate_Success(t *testing.T) {
 	}, WithClock(func() time.Time { return fixedNow }))
 
 	comment := "mama verildi, su tazelendi"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), userID.String(), deviceID.String(), []string{"water_provided", "fed"}, &comment)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), userID.String(), deviceID.String(), nil, []string{"water_provided", "fed"}, &comment)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -550,6 +584,16 @@ func TestCatsService_CreateOrdinaryUpdate_Success(t *testing.T) {
 	// statuses come back sorted, regardless of submission order.
 	if len(update.Statuses) != 2 || update.Statuses[0] != "fed" || update.Statuses[1] != "water_provided" {
 		t.Errorf("expected sorted statuses [fed water_provided], got %v", update.Statuses)
+	}
+	// issue #80: a freshly created update is always the caller's own and
+	// always inside its own correction window at creation time — the
+	// client must see this immediately, not only after a reload.
+	if !update.AuthorIsMe {
+		t.Error("expected AuthorIsMe true on a freshly created update")
+	}
+	wantExpiresAt := fixedNow.Add(updateCorrectionWindow)
+	if update.CorrectionExpiresAt == nil || !update.CorrectionExpiresAt.Equal(wantExpiresAt) {
+		t.Errorf("expected correction_expires_at %v, got %v", wantExpiresAt, update.CorrectionExpiresAt)
 	}
 
 	if uuid.UUID(captured.CatID.Bytes).String() != catID.String() {
@@ -573,7 +617,7 @@ func TestCatsService_CreateOrdinaryUpdate_NoComment(t *testing.T) {
 	var captured repository.CreateOrdinaryUpdateParams
 	svc := NewCatsService(fakeCatsLister{exists: true, captured: &captured})
 
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -590,7 +634,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithoutDeviceToken_StillSucceeds(t *te
 	svc := NewCatsService(fakeCatsLister{exists: true, captured: &captured})
 
 	userID := uuid.New()
-	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), userID.String(), "", []string{"seen"}, nil); err != nil {
+	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), userID.String(), "", nil, []string{"seen"}, nil); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if captured.AuthorDeviceID.Valid {
@@ -603,7 +647,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithoutDeviceToken_StillSucceeds(t *te
 
 func TestCatsService_CreateOrdinaryUpdate_InvalidUserID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), "not-a-uuid", "", []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), "not-a-uuid", "", nil, []string{"seen"}, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid user id, got nil")
 	}
@@ -611,7 +655,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidUserID(t *testing.T) {
 
 func TestCatsService_CreateOrdinaryUpdate_InvalidDeviceID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "not-a-uuid", []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "not-a-uuid", nil, []string{"seen"}, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid device id, got nil")
 	}
@@ -633,7 +677,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidStatuses(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), c.statuses, nil); !errors.Is(err, ErrInvalidStatuses) {
+			if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, c.statuses, nil); !errors.Is(err, ErrInvalidStatuses) {
 				t.Fatalf("expected ErrInvalidStatuses, got %v", err)
 			}
 		})
@@ -643,7 +687,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidStatuses(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_InvalidCatID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), "not-a-uuid", uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), "not-a-uuid", uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
 	if !errors.Is(err, ErrInvalidCatID) {
 		t.Fatalf("expected ErrInvalidCatID, got %v", err)
 	}
@@ -652,7 +696,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidCatID(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_UnknownCat(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: false})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
 	if !errors.Is(err, ErrCatNotFound) {
 		t.Fatalf("expected ErrCatNotFound, got %v", err)
 	}
@@ -661,9 +705,110 @@ func TestCatsService_CreateOrdinaryUpdate_UnknownCat(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_RepositoryFailure(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true, createErr: errors.New("connection refused")})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_IdempotentRetryReturnsExistingWithoutWrite(t *testing.T) {
+	existingID := uuid.New()
+	existingComment := "already recorded"
+	var captured repository.CreateOrdinaryUpdateParams
+	svc := NewCatsService(fakeCatsLister{
+		exists: true,
+		updateIdempotencyRow: repository.GetUpdateByIdempotencyKeyRow{
+			ID:        pgtype.UUID{Bytes: existingID, Valid: true},
+			Statuses:  []string{"seen"},
+			Comment:   pgtype.Text{String: existingComment, Valid: true},
+			CreatedAt: pgtype.Timestamptz{Time: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC), Valid: true},
+		},
+		captured: &captured,
+	})
+
+	key := "seen-tap-key"
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if update.ID != existingID.String() {
+		t.Errorf("expected the existing update's id %s, got %s", existingID.String(), update.ID)
+	}
+	if update.Comment == nil || *update.Comment != existingComment {
+		t.Errorf("expected the existing update's comment %q, got %v", existingComment, update.Comment)
+	}
+	if captured.ID.Valid {
+		t.Error("expected CreateOrdinaryUpdate to never be called on an idempotent retry")
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_NoExistingKeyProceedsToCreate(t *testing.T) {
+	newID := uuid.New()
+	var captured repository.CreateOrdinaryUpdateParams
+	svc := NewCatsService(fakeCatsLister{
+		exists:               true,
+		updateIdempotencyErr: pgx.ErrNoRows,
+		createRow:            repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: newID, Valid: true}},
+		captured:             &captured,
+	})
+
+	key := "first-attempt-key"
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if update.ID != newID.String() {
+		t.Errorf("expected the freshly created update's id %s, got %s", newID.String(), update.ID)
+	}
+	if !captured.ID.Valid {
+		t.Error("expected CreateOrdinaryUpdate to be called when no existing key match was found")
+	}
+	if captured.IdempotencyKey.String != key {
+		t.Errorf("expected the idempotency key %q to be threaded through, got %q", key, captured.IdempotencyKey.String)
+	}
+}
+
+// statefulUpdateLister lets a test vary GetUpdateByIdempotencyKey's answer
+// across calls (first miss, then hit after a simulated concurrent winner),
+// mirroring statefulCatsLister above for CreateCatWithMedia's own race.
+type statefulUpdateLister struct {
+	fakeCatsLister
+	onGetIdempotency func() (repository.GetUpdateByIdempotencyKeyRow, error)
+}
+
+func (s statefulUpdateLister) GetUpdateByIdempotencyKey(_ context.Context, _ repository.GetUpdateByIdempotencyKeyParams) (repository.GetUpdateByIdempotencyKeyRow, error) {
+	return s.onGetIdempotency()
+}
+
+func TestCatsService_CreateOrdinaryUpdate_RaceOnIdempotencyKeyRecoversExisting(t *testing.T) {
+	existingID := uuid.New()
+	firstCall := true
+	lister := statefulUpdateLister{
+		fakeCatsLister: fakeCatsLister{
+			exists:    true,
+			createErr: &pgconn.PgError{Code: "23505"},
+		},
+		onGetIdempotency: func() (repository.GetUpdateByIdempotencyKeyRow, error) {
+			if firstCall {
+				firstCall = false
+				return repository.GetUpdateByIdempotencyKeyRow{}, pgx.ErrNoRows
+			}
+			return repository.GetUpdateByIdempotencyKeyRow{
+				ID:        pgtype.UUID{Bytes: existingID, Valid: true},
+				Statuses:  []string{"seen"},
+				CreatedAt: pgtype.Timestamptz{Time: time.Date(2026, 3, 1, 9, 5, 0, 0, time.UTC), Valid: true},
+			}, nil
+		},
+	}
+	svc := NewCatsService(lister)
+
+	key := "race-seen-key"
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if update.ID != existingID.String() {
+		t.Errorf("expected the concurrently-created update to be returned, got %s", update.ID)
 	}
 }
 
@@ -1036,5 +1181,206 @@ func TestCatsService_ListNearbyDuplicates_InvalidArea(t *testing.T) {
 
 	if _, err := svc.ListNearbyDuplicates(context.Background(), parisLat, parisLng); !errors.Is(err, ErrInvalidArea) {
 		t.Fatalf("expected ErrInvalidArea, got %v", err)
+	}
+}
+
+func TestCatsService_CorrectOwnUpdate_Success(t *testing.T) {
+	catID := uuid.New()
+	updateID := uuid.New()
+	userID := uuid.New()
+	createdAt := time.Date(2026, 1, 5, 8, 0, 0, 0, time.UTC)
+	fixedNow := createdAt.Add(3 * time.Minute)
+
+	var captured repository.CorrectOwnUpdateParams
+	svc := NewCatsService(fakeCatsLister{
+		correctRow: repository.CorrectOrdinaryUpdateRow{
+			ID:        pgtype.UUID{Bytes: updateID, Valid: true},
+			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+			UpdatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+		},
+		capturedCorrect: &captured,
+	}, WithClock(func() time.Time { return fixedNow }))
+
+	comment := "düzeltildi"
+	update, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"water_provided", "fed"}, &comment)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if update.ID != updateID.String() {
+		t.Errorf("expected id %s, got %s", updateID.String(), update.ID)
+	}
+	if !update.AuthorIsMe {
+		t.Error("expected AuthorIsMe true on a successful own-correction")
+	}
+	if update.CorrectionExpiresAt == nil || !update.CorrectionExpiresAt.Equal(createdAt.Add(updateCorrectionWindow)) {
+		t.Errorf("expected correction_expires_at %v, got %v", createdAt.Add(updateCorrectionWindow), update.CorrectionExpiresAt)
+	}
+	if update.UpdatedAt == nil || !update.UpdatedAt.Equal(fixedNow) {
+		t.Errorf("expected updated_at %v, got %v", fixedNow, update.UpdatedAt)
+	}
+	// statuses come back sorted, mirroring CreateOrdinaryUpdate.
+	if len(update.Statuses) != 2 || update.Statuses[0] != "fed" || update.Statuses[1] != "water_provided" {
+		t.Errorf("expected sorted statuses [fed water_provided], got %v", update.Statuses)
+	}
+
+	if uuid.UUID(captured.AuthorUserID.Bytes).String() != userID.String() {
+		t.Errorf("unexpected repository author user id: %v", captured.AuthorUserID)
+	}
+	wantWindowStart := fixedNow.Add(-updateCorrectionWindow)
+	if !captured.WindowStart.Time.Equal(wantWindowStart) {
+		t.Errorf("expected window_start %v (now - 10m), got %v", wantWindowStart, captured.WindowStart.Time)
+	}
+}
+
+func TestCatsService_CorrectOwnUpdate_InvalidStatusesNeverReachesStore(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{})
+	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"not_a_real_status"}, nil)
+	if !errors.Is(err, ErrInvalidStatuses) {
+		t.Fatalf("expected ErrInvalidStatuses, got %v", err)
+	}
+}
+
+func TestCatsService_CorrectOwnUpdate_WrongAuthor(t *testing.T) {
+	catID := uuid.New()
+	updateID := uuid.New()
+	realAuthor := uuid.New()
+	stranger := uuid.New()
+	createdAt := time.Now()
+
+	svc := NewCatsService(fakeCatsLister{
+		correctErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			ID:           pgtype.UUID{Bytes: updateID, Valid: true},
+			CatID:        pgtype.UUID{Bytes: catID, Valid: true},
+			AuthorUserID: pgtype.UUID{Bytes: realAuthor, Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: createdAt, Valid: true},
+		},
+	}, WithClock(func() time.Time { return createdAt.Add(time.Minute) }))
+
+	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), stranger.String(), []string{"seen"}, nil)
+	if !errors.Is(err, ErrNotUpdateAuthor) {
+		t.Fatalf("expected ErrNotUpdateAuthor, got %v", err)
+	}
+}
+
+func TestCatsService_CorrectOwnUpdate_WindowExpired(t *testing.T) {
+	catID := uuid.New()
+	updateID := uuid.New()
+	userID := uuid.New()
+	createdAt := time.Date(2026, 1, 5, 8, 0, 0, 0, time.UTC)
+	fixedNow := createdAt.Add(11 * time.Minute)
+
+	svc := NewCatsService(fakeCatsLister{
+		correctErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			ID:           pgtype.UUID{Bytes: updateID, Valid: true},
+			CatID:        pgtype.UUID{Bytes: catID, Valid: true},
+			AuthorUserID: pgtype.UUID{Bytes: userID, Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: createdAt, Valid: true},
+		},
+	}, WithClock(func() time.Time { return fixedNow }))
+
+	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"seen"}, nil)
+	if !errors.Is(err, ErrCorrectionWindowExpired) {
+		t.Fatalf("expected ErrCorrectionWindowExpired, got %v", err)
+	}
+}
+
+func TestCatsService_CorrectOwnUpdate_NeedsHelpKindIsNotFound(t *testing.T) {
+	catID := uuid.New()
+	updateID := uuid.New()
+	userID := uuid.New()
+	createdAt := time.Now()
+
+	svc := NewCatsService(fakeCatsLister{
+		correctErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			ID:           pgtype.UUID{Bytes: updateID, Valid: true},
+			CatID:        pgtype.UUID{Bytes: catID, Valid: true},
+			AuthorUserID: pgtype.UUID{Bytes: userID, Valid: true},
+			Kind:         "needs_help",
+			CreatedAt:    pgtype.Timestamptz{Time: createdAt, Valid: true},
+		},
+	}, WithClock(func() time.Time { return createdAt.Add(time.Minute) }))
+
+	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"seen"}, nil)
+	if !errors.Is(err, ErrUpdateNotFound) {
+		t.Fatalf("expected ErrUpdateNotFound for a needs-help update, got %v", err)
+	}
+}
+
+func TestCatsService_CorrectOwnUpdate_UnknownUpdateIsNotFound(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{
+		correctErr:         pgx.ErrNoRows,
+		correctionCheckErr: pgx.ErrNoRows,
+	})
+
+	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	if !errors.Is(err, ErrUpdateNotFound) {
+		t.Fatalf("expected ErrUpdateNotFound for an unknown update id, got %v", err)
+	}
+}
+
+func TestCatsService_DeleteOwnUpdate_Success(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{
+		deleteRow: repository.DeleteOwnUpdateRow{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}},
+	})
+	if err := svc.DeleteOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String()); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestCatsService_DeleteOwnUpdate_RetryAfterDeleteIsIdempotent(t *testing.T) {
+	userID := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		deleteErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: userID, Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			DeletedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+	})
+
+	if err := svc.DeleteOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), userID.String()); err != nil {
+		t.Fatalf("expected a retry against an already-deleted update to succeed as a no-op, got %v", err)
+	}
+}
+
+func TestCatsService_DeleteOwnUpdate_WrongAuthor(t *testing.T) {
+	realAuthor := uuid.New()
+	stranger := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		deleteErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: realAuthor, Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+	})
+
+	err := svc.DeleteOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), stranger.String())
+	if !errors.Is(err, ErrNotUpdateAuthor) {
+		t.Fatalf("expected ErrNotUpdateAuthor, got %v", err)
+	}
+}
+
+func TestCatsService_DeleteOwnUpdate_WindowExpired(t *testing.T) {
+	userID := uuid.New()
+	createdAt := time.Date(2026, 1, 5, 8, 0, 0, 0, time.UTC)
+	svc := NewCatsService(fakeCatsLister{
+		deleteErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: userID, Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: createdAt, Valid: true},
+		},
+	}, WithClock(func() time.Time { return createdAt.Add(11 * time.Minute) }))
+
+	err := svc.DeleteOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), userID.String())
+	if !errors.Is(err, ErrCorrectionWindowExpired) {
+		t.Fatalf("expected ErrCorrectionWindowExpired, got %v", err)
 	}
 }

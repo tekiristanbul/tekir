@@ -14,6 +14,7 @@ import '../data/cat_detail.dart';
 import 'cat_detail_notifier.dart';
 import 'cat_update_composer_notifier.dart';
 import 'cat_update_sheet.dart';
+import 'update_correction_sheet.dart';
 
 const _heroHeight = 280.0;
 
@@ -142,6 +143,7 @@ class _CatDetailBody extends ConsumerWidget {
               else ...[
                 for (var i = 0; i < state.updates.length; i++)
                   _TimelineItem(
+                    catId: detail.id,
                     update: state.updates[i],
                     isLast: i == state.updates.length - 1 && !state.hasNextPage,
                   ),
@@ -423,6 +425,27 @@ class _UpdateActionsRow extends ConsumerWidget {
     final busy = ref.watch(
       catUpdateComposerProvider(catId).select((s) => s.isSubmitting),
     );
+    // issue #80 product-owner review, finding 4: derived straight from the
+    // already-loaded timeline (state.updates), never a client-only
+    // "just submitted" flag — the caller's own most recent 'seen' entry,
+    // if it's still inside the 10-minute correction window, is exactly the
+    // signal that a repeat "Gördüm" tap would be redundant. Another
+    // account's update on this cat never sets this (authorIsMe is
+    // server-derived per entry), and it re-enables the instant the window
+    // closes, on the next rebuild — no extra timer needed since
+    // isCorrectionOpen() is re-evaluated against DateTime.now() on every
+    // watch.
+    final alreadySeenRecently = ref.watch(
+      catDetailProvider(catId).select(
+        (s) => s.updates.any(
+          (u) =>
+              u.authorIsMe &&
+              u.kind == 'ordinary' &&
+              u.statuses.contains('seen') &&
+              u.isCorrectionOpen(),
+        ),
+      ),
+    );
 
     return Row(
       children: [
@@ -430,16 +453,31 @@ class _UpdateActionsRow extends ConsumerWidget {
           child: SizedBox(
             height: kTapMin,
             child: ElevatedButton.icon(
-              onPressed: busy ? null : () => _gatedSubmitSeen(context, ref),
+              onPressed: (busy || alreadySeenRecently)
+                  ? null
+                  : () => _gatedSubmitSeen(context, ref),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.primaryInk,
+                backgroundColor: alreadySeenRecently
+                    ? AppColors.primarySoft
+                    : AppColors.primary,
+                foregroundColor: alreadySeenRecently
+                    ? AppColors.primaryStrong
+                    : AppColors.primaryInk,
+                disabledBackgroundColor: alreadySeenRecently
+                    ? AppColors.primarySoft
+                    : null,
+                disabledForegroundColor: alreadySeenRecently
+                    ? AppColors.primaryStrong
+                    : null,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
                 textStyle: const TextStyle(fontWeight: FontWeight.w600),
               ),
-              icon: const Icon(Icons.visibility_outlined, size: 18),
+              icon: Icon(
+                alreadySeenRecently ? Icons.check : Icons.visibility_outlined,
+                size: 18,
+              ),
               label: const Text('Gördüm'),
             ),
           ),
@@ -655,8 +693,13 @@ class _NeedsHelpTag extends StatelessWidget {
 /// italic) muted body text — per issue #21's requirement that the two
 /// never blur together.
 class _TimelineItem extends StatelessWidget {
-  const _TimelineItem({required this.update, required this.isLast});
+  const _TimelineItem({
+    required this.catId,
+    required this.update,
+    required this.isLast,
+  });
 
+  final String catId;
   final CatUpdateEntry update;
   final bool isLast;
 
@@ -719,6 +762,16 @@ class _TimelineItem extends StatelessWidget {
                           color: AppColors.faint,
                         ),
                       ),
+                      // issue #80: only the author sees this, and only
+                      // while their own ordinary update is still within
+                      // its 10-minute correction window — a soft-deleted
+                      // update never reaches this list at all, for any
+                      // reader, so no separate "not deleted" check is
+                      // needed here.
+                      if (update.authorIsMe &&
+                          !update.isNeedsHelp &&
+                          update.isCorrectionOpen())
+                        _CorrectionMenuButton(catId: catId, update: update),
                     ],
                   ),
                   if (update.comment != null) ...[
@@ -737,6 +790,37 @@ class _TimelineItem extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The correction-window "⋮" affordance (issue #80) — only ever shown to an
+/// update's own author, and only while it's still open (see the call site
+/// in _TimelineItem above). No dedicated read-only state: once the window
+/// closes, this button simply stops rendering rather than rendering
+/// disabled, since there is nothing left it could still do.
+class _CorrectionMenuButton extends StatelessWidget {
+  const _CorrectionMenuButton({required this.catId, required this.update});
+
+  final String catId;
+  final CatUpdateEntry update;
+
+  @override
+  Widget build(BuildContext context) {
+    // kTapMin-square tap target (this app's minimum touch target
+    // everywhere else), even though the visible glyph stays small to fit
+    // the timeline row's compact header.
+    return SizedBox(
+      width: kTapMin,
+      height: kTapMin,
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        iconSize: 16,
+        icon: const Icon(Icons.more_vert, color: AppColors.faint),
+        tooltip: 'Güncellemeyi düzelt',
+        onPressed: () =>
+            openUpdateCorrectionSheet(context, catId: catId, entry: update),
       ),
     );
   }

@@ -62,6 +62,10 @@ type CreateOrdinaryUpdateParams struct {
 	Comment        pgtype.Text
 	CreatedAt      pgtype.Timestamptz
 	Statuses       []string
+	// IdempotencyKey (issue #80) is nullable — set only when the caller
+	// presented an Idempotency-Key header, mirroring cats/media's own
+	// idempotency-key field exactly.
+	IdempotencyKey pgtype.Text
 }
 
 // CreateOrdinaryUpdate inserts an ordinary (kind = 'ordinary') update, its
@@ -131,6 +135,7 @@ func (s *Store) CreateOrdinaryUpdate(ctx context.Context, arg CreateOrdinaryUpda
 			CreatedAt:      arg.CreatedAt,
 			AuthorDeviceID: arg.AuthorDeviceID,
 			AuthorUserID:   arg.AuthorUserID,
+			IdempotencyKey: arg.IdempotencyKey,
 		})
 		if err != nil {
 			return err
@@ -183,6 +188,65 @@ type CreateNeedsHelpUpdateParams struct {
 // a needs-help one fans out to the cat's followers (see
 // docs/product/notifications.md). No update_statuses loop: needs-help
 // reports don't have statuses.
+// CorrectOwnUpdateParams groups the atomic write behind
+// PATCH /v1/cats/{cat_id}/updates/{update_id} (issue #80): the update row's
+// comment/updated_at and its full update_statuses replacement commit
+// together or not at all — a partial write could otherwise leave a
+// statuses set inconsistent with what the caller actually submitted.
+type CorrectOwnUpdateParams struct {
+	ID           pgtype.UUID
+	CatID        pgtype.UUID
+	AuthorUserID pgtype.UUID
+	Comment      pgtype.Text
+	UpdatedAt    pgtype.Timestamptz
+	WindowStart  pgtype.Timestamptz
+	Statuses     []string
+}
+
+// CorrectOwnUpdate applies an in-window correction to the caller's own
+// ordinary update. The conditional CorrectOrdinaryUpdate update is the
+// entire authorization/concurrency/expiry check (see updates.sql); pgx's
+// ErrNoRows from a :one query with no matching row is the signal to the
+// caller (service.CatsService.CorrectOwnUpdate) that it affected zero rows
+// and must disambiguate why via GetUpdateForCorrectionCheck. Statuses are
+// replaced (delete-then-reinsert, mirroring CreateOrdinaryUpdate's own
+// insert loop) only once the conditional update itself succeeds, inside
+// the same transaction.
+func (s *Store) CorrectOwnUpdate(ctx context.Context, arg CorrectOwnUpdateParams) (CorrectOrdinaryUpdateRow, error) {
+	var row CorrectOrdinaryUpdateRow
+	err := s.withTx(ctx, func(q *Queries) error {
+		var err error
+		row, err = q.CorrectOrdinaryUpdate(ctx, CorrectOrdinaryUpdateParams{
+			Comment:      arg.Comment,
+			UpdatedAt:    arg.UpdatedAt,
+			ID:           arg.ID,
+			CatID:        arg.CatID,
+			AuthorUserID: arg.AuthorUserID,
+			WindowStart:  arg.WindowStart,
+		})
+		if err != nil {
+			return err
+		}
+		if err := q.ReplaceUpdateStatuses(ctx, arg.ID); err != nil {
+			return err
+		}
+		for _, status := range arg.Statuses {
+			if err := q.CreateUpdateStatus(ctx, CreateUpdateStatusParams{UpdateID: arg.ID, Status: status}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return row, err
+}
+
+// DeleteOwnUpdate (soft-deleting the caller's own ordinary update within
+// the correction window) needs no Store-level wrapper: it's a single
+// statement (see the generated Queries.DeleteOwnUpdate), already promoted
+// through Store's embedded *Queries — no statuses replacement is needed
+// either, since a deleted update's statuses are simply never read again
+// (ListCatUpdates filters on updates.deleted_at, not update_statuses).
+
 func (s *Store) CreateNeedsHelpUpdate(ctx context.Context, arg CreateNeedsHelpUpdateParams) (CreateUpdateRow, error) {
 	var row CreateUpdateRow
 	err := s.withTx(ctx, func(q *Queries) error {

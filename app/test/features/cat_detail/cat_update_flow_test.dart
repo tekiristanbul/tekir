@@ -33,13 +33,19 @@ final _detail = CatDetail(
   lastUpdateAt: DateTime.utc(2026, 1, 2),
 );
 
-CatUpdateEntry _entry(String id, {List<String> statuses = const ['seen']}) =>
-    CatUpdateEntry(
-      id: id,
-      statuses: statuses,
-      comment: null,
-      createdAt: DateTime.utc(2026, 1, 3),
-    );
+CatUpdateEntry _entry(
+  String id, {
+  List<String> statuses = const ['seen'],
+  bool authorIsMe = false,
+  DateTime? correctionExpiresAt,
+}) => CatUpdateEntry(
+  id: id,
+  statuses: statuses,
+  comment: null,
+  createdAt: DateTime.utc(2026, 1, 3),
+  authorIsMe: authorIsMe,
+  correctionExpiresAt: correctionExpiresAt,
+);
 
 // ── fakes ────────────────────────────────────────────────────────────────
 
@@ -77,6 +83,7 @@ class _FakeCatDetailApi implements CatDetailApi {
     String catId, {
     required List<String> statuses,
     String? comment,
+    String idempotencyKey = '',
   }) async {
     createUpdateCalls++;
     lastStatuses = statuses;
@@ -85,6 +92,18 @@ class _FakeCatDetailApi implements CatDetailApi {
     if (nextError != null) throw nextError!;
     return nextResult!;
   }
+
+  @override
+  Future<CatUpdateEntry> correctUpdate(
+    String catId,
+    String updateId, {
+    required List<String> statuses,
+    String? comment,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> deleteUpdate(String catId, String updateId) =>
+      throw UnimplementedError();
 }
 
 // Same technique as cat_detail_screen_test.dart's fixed notifier: a build()
@@ -121,7 +140,7 @@ class _FakeSessionIdentityService implements SessionIdentityService {
   Future<void> save(SessionIdentity identity) async => _cached = identity;
 
   @override
-  Future<void> logout() async => _cached = null;
+  Future<void> logout({String? deviceToken}) async => _cached = null;
 }
 
 class _FakeAuthApi implements AuthApi {
@@ -264,6 +283,156 @@ void main() {
       expect(find.text('görüldü'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'a successful Gördüm submit immediately shows selected/disabled — the '
+    'server-returned entry is inside the correction window',
+    (tester) async {
+      final api = _FakeCatDetailApi()
+        ..nextResult = _entry(
+          'upd-1',
+          authorIsMe: true,
+          correctionExpiresAt: DateTime.now().add(const Duration(minutes: 10)),
+        );
+      await _pump(tester, api: api);
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
+      await tester.pumpAndSettle();
+
+      final button = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Gördüm'),
+      );
+      expect(button.onPressed, isNull);
+      expect(find.byIcon(Icons.check), findsOneWidget);
+
+      // a second tap does nothing further — still exactly one request.
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Gördüm'),
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+      expect(api.createUpdateCalls, 1);
+    },
+  );
+
+  group('Gördüm derived selected/disabled state (issue #80)', () {
+    testWidgets(
+      'the account\'s own recent seen entry, still inside the correction '
+      'window, shows Gördüm as selected and disabled',
+      (tester) async {
+        final api = _FakeCatDetailApi();
+        await _pump(
+          tester,
+          api: api,
+          detailState: CatDetailState(
+            detail: _detail,
+            hasLoadedOnce: true,
+            updates: [
+              _entry(
+                'upd-1',
+                authorIsMe: true,
+                correctionExpiresAt: DateTime.now().add(
+                  const Duration(minutes: 5),
+                ),
+              ),
+            ],
+          ),
+        );
+
+        final button = tester.widget<ElevatedButton>(
+          find.widgetWithText(ElevatedButton, 'Gördüm'),
+        );
+        expect(button.onPressed, isNull);
+        expect(find.byIcon(Icons.check), findsOneWidget);
+        expect(api.createUpdateCalls, 0);
+      },
+    );
+
+    testWidgets(
+      'another account\'s recent seen entry never selects/disables Gördüm',
+      (tester) async {
+        await _pump(
+          tester,
+          api: _FakeCatDetailApi(),
+          detailState: CatDetailState(
+            detail: _detail,
+            hasLoadedOnce: true,
+            updates: [
+              _entry(
+                'upd-1',
+                authorIsMe: false,
+                correctionExpiresAt: DateTime.now().add(
+                  const Duration(minutes: 5),
+                ),
+              ),
+            ],
+          ),
+        );
+
+        final button = tester.widget<ElevatedButton>(
+          find.widgetWithText(ElevatedButton, 'Gördüm'),
+        );
+        expect(button.onPressed, isNotNull);
+        expect(find.byIcon(Icons.visibility_outlined), findsOneWidget);
+      },
+    );
+
+    testWidgets('once the correction window closes, Gördüm re-enables', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        api: _FakeCatDetailApi(),
+        detailState: CatDetailState(
+          detail: _detail,
+          hasLoadedOnce: true,
+          updates: [
+            _entry(
+              'upd-1',
+              authorIsMe: true,
+              correctionExpiresAt: DateTime.now().subtract(
+                const Duration(minutes: 1),
+              ),
+            ),
+          ],
+        ),
+      );
+
+      final button = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Gördüm'),
+      );
+      expect(button.onPressed, isNotNull);
+      expect(find.byIcon(Icons.visibility_outlined), findsOneWidget);
+    });
+
+    testWidgets('the account\'s own recent entry without "seen" never selects/'
+        'disables Gördüm', (tester) async {
+      await _pump(
+        tester,
+        api: _FakeCatDetailApi(),
+        detailState: CatDetailState(
+          detail: _detail,
+          hasLoadedOnce: true,
+          updates: [
+            _entry(
+              'upd-1',
+              statuses: const ['fed'],
+              authorIsMe: true,
+              correctionExpiresAt: DateTime.now().add(
+                const Duration(minutes: 5),
+              ),
+            ),
+          ],
+        ),
+      );
+
+      final button = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Gördüm'),
+      );
+      expect(button.onPressed, isNotNull);
+      expect(find.byIcon(Icons.visibility_outlined), findsOneWidget);
+    });
+  });
 
   testWidgets(
     'Güncelleme ekle opens a sheet with every approved status and an optional comment field',

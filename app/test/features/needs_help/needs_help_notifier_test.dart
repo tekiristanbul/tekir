@@ -64,7 +64,20 @@ class _FakeCatDetailApi implements CatDetailApi {
     String catId, {
     required List<String> statuses,
     String? comment,
+    String idempotencyKey = '',
   }) async => _entry('unused');
+
+  @override
+  Future<CatUpdateEntry> correctUpdate(
+    String catId,
+    String updateId, {
+    required List<String> statuses,
+    String? comment,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> deleteUpdate(String catId, String updateId) =>
+      throw UnimplementedError();
 }
 
 class _FakeNeedsHelpApi implements NeedsHelpApi {
@@ -106,7 +119,7 @@ class _FakeSessionIdentityService implements SessionIdentityService {
   Future<void> save(SessionIdentity identity) async => _cached = identity;
 
   @override
-  Future<void> logout() async => _cached = null;
+  Future<void> logout({String? deviceToken}) async => _cached = null;
 }
 
 const _authenticatedSession = SessionIdentity(

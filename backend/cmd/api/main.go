@@ -75,7 +75,7 @@ func run() error {
 
 	sessionsSvc := service.NewSessionService(store, []byte(cfg.JWTSigningKey), cfg.AccessTokenTTL, cfg.RefreshTokenTTL, service.WithSessionTxRunner(store))
 	authSvc := service.NewAuthService(store, sms, sessionsSvc, cfg.OTPCodeTTL, cfg.OTPMaxAttempts, cfg.OTPResendCooldown, service.WithAuthTxRunner(store))
-	authHandler := handler.NewAuthHandler(authSvc, authSvc, sessionsSvc, sessionsSvc, authSvc)
+	authHandler := handler.NewAuthHandler(authSvc, authSvc, sessionsSvc, sessionsSvc, authSvc, authSvc)
 
 	// the api process only ever reads/acks notifications on an account's
 	// behalf; draining notification_outbox into them is cmd/notifier's
@@ -83,7 +83,10 @@ func run() error {
 	notificationsInboxSvc := service.NewNotificationInboxService(store)
 	notificationsHandler := handler.NewNotificationsHandler(notificationsInboxSvc)
 
-	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, notificationsHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
+	profileSvc := service.NewProfileService(store)
+	profileHandler := handler.NewProfileHandler(profileSvc)
+
+	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, notificationsHandler, profileHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

@@ -74,6 +74,7 @@ void main() {
       await api.createUpdate(
         'cat-1',
         statuses: const ['seen', 'water_provided'],
+        idempotencyKey: 'idem-1',
         comment: 'kase boştu, doldurduk',
       );
 
@@ -88,7 +89,11 @@ void main() {
       final adapter = _FakeAdapter(statusCode: 201, bodyJson: _createdResponse);
       final api = _apiWith(adapter);
 
-      await api.createUpdate('cat-1', statuses: const ['seen']);
+      await api.createUpdate(
+        'cat-1',
+        statuses: const ['seen'],
+        idempotencyKey: 'idem-1',
+      );
 
       final sentBody = jsonDecode(adapter.lastRequestBody!) as Map;
       expect(sentBody.containsKey('comment'), isTrue);
@@ -99,9 +104,27 @@ void main() {
       final adapter = _FakeAdapter(statusCode: 201, bodyJson: _createdResponse);
       final api = _apiWith(adapter, deviceToken: 'tok-abc');
 
-      await api.createUpdate('cat-1', statuses: const ['seen']);
+      await api.createUpdate(
+        'cat-1',
+        statuses: const ['seen'],
+        idempotencyKey: 'idem-1',
+      );
 
       expect(adapter.lastOptions?.headers['X-Device-Token'], 'tok-abc');
+    });
+
+    test('sends Idempotency-Key as its own header (issue #80 product-owner '
+        'review, finding 4)', () async {
+      final adapter = _FakeAdapter(statusCode: 201, bodyJson: _createdResponse);
+      final api = _apiWith(adapter);
+
+      await api.createUpdate(
+        'cat-1',
+        statuses: const ['seen'],
+        idempotencyKey: 'seen-tap-key',
+      );
+
+      expect(adapter.lastOptions?.headers['Idempotency-Key'], 'seen-tap-key');
     });
 
     test('parses a 201 response into a CatUpdateEntry', () async {
@@ -111,6 +134,7 @@ void main() {
       final entry = await api.createUpdate(
         'cat-1',
         statuses: const ['seen', 'water_provided'],
+        idempotencyKey: 'idem-1',
         comment: 'kase boştu, doldurduk',
       );
 
@@ -126,7 +150,11 @@ void main() {
       );
 
       await expectLater(
-        api.createUpdate('cat-1', statuses: const ['seen']),
+        api.createUpdate(
+          'cat-1',
+          statuses: const ['seen'],
+          idempotencyKey: 'idem-1',
+        ),
         throwsA(isA<UpdateValidationException>()),
       );
     });
@@ -140,7 +168,11 @@ void main() {
       );
 
       await expectLater(
-        api.createUpdate('cat-1', statuses: const ['seen']),
+        api.createUpdate(
+          'cat-1',
+          statuses: const ['seen'],
+          idempotencyKey: 'idem-1',
+        ),
         throwsA(isA<UpdateUnauthorizedException>()),
       );
     });
@@ -151,7 +183,11 @@ void main() {
       );
 
       await expectLater(
-        api.createUpdate('cat-1', statuses: const ['seen']),
+        api.createUpdate(
+          'cat-1',
+          statuses: const ['seen'],
+          idempotencyKey: 'idem-1',
+        ),
         throwsA(isA<CatNotFoundException>()),
       );
     });
@@ -162,7 +198,11 @@ void main() {
       );
 
       await expectLater(
-        api.createUpdate('cat-1', statuses: const ['seen']),
+        api.createUpdate(
+          'cat-1',
+          statuses: const ['seen'],
+          idempotencyKey: 'idem-1',
+        ),
         throwsA(isA<UpdateServerException>()),
       );
     });
@@ -175,7 +215,11 @@ void main() {
         final api = CatDetailApi(ApiClient(dio: dio));
 
         await expectLater(
-          api.createUpdate('cat-1', statuses: const ['seen']),
+          api.createUpdate(
+            'cat-1',
+            statuses: const ['seen'],
+            idempotencyKey: 'idem-1',
+          ),
           throwsA(isA<UpdateNetworkException>()),
         );
       },
@@ -189,7 +233,11 @@ void main() {
         final api = CatDetailApi(ApiClient(dio: dio));
 
         await expectLater(
-          api.createUpdate('cat-1', statuses: const ['seen']),
+          api.createUpdate(
+            'cat-1',
+            statuses: const ['seen'],
+            idempotencyKey: 'idem-1',
+          ),
           throwsA(isA<UpdateServerException>()),
         );
       },

@@ -120,6 +120,9 @@ type Update struct {
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	AuthorDeviceID     pgtype.UUID        `json:"author_device_id"`
 	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+	IdempotencyKey     pgtype.Text        `json:"idempotency_key"`
 }
 
 type UpdateStatus struct {

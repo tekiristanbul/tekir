@@ -73,11 +73,23 @@ type fakeCatsLister struct {
 	idempotencyRow repository.GetCatByIdempotencyKeyRow
 	idempotencyErr error
 
+	updateIdempotencyRow repository.GetUpdateByIdempotencyKeyRow
+	updateIdempotencyErr error
+
 	nearbyDuplicateRows []repository.ListNearbyCatsForDuplicateCheckRow
 	nearbyDuplicateErr  error
 
 	createCatWithMediaRow repository.CreateCatWithMediaRow
 	createCatWithMediaErr error
+
+	correctRow repository.CorrectOrdinaryUpdateRow
+	correctErr error
+
+	deleteRow repository.DeleteOwnUpdateRow
+	deleteErr error
+
+	correctionCheckRow repository.GetUpdateForCorrectionCheckRow
+	correctionCheckErr error
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
@@ -114,12 +126,28 @@ func (f fakeCatsLister) GetCatByIdempotencyKey(ctx context.Context, arg reposito
 	return f.idempotencyRow, f.idempotencyErr
 }
 
+func (f fakeCatsLister) GetUpdateByIdempotencyKey(ctx context.Context, arg repository.GetUpdateByIdempotencyKeyParams) (repository.GetUpdateByIdempotencyKeyRow, error) {
+	return f.updateIdempotencyRow, f.updateIdempotencyErr
+}
+
 func (f fakeCatsLister) ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error) {
 	return f.nearbyDuplicateRows, f.nearbyDuplicateErr
 }
 
 func (f fakeCatsLister) CreateCatWithMedia(ctx context.Context, arg repository.CreateCatWithMediaParams) (repository.CreateCatWithMediaRow, error) {
 	return f.createCatWithMediaRow, f.createCatWithMediaErr
+}
+
+func (f fakeCatsLister) CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOrdinaryUpdateRow, error) {
+	return f.correctRow, f.correctErr
+}
+
+func (f fakeCatsLister) DeleteOwnUpdate(ctx context.Context, arg repository.DeleteOwnUpdateParams) (repository.DeleteOwnUpdateRow, error) {
+	return f.deleteRow, f.deleteErr
+}
+
+func (f fakeCatsLister) GetUpdateForCorrectionCheck(ctx context.Context, arg repository.GetUpdateForCorrectionCheckParams) (repository.GetUpdateForCorrectionCheckRow, error) {
+	return f.correctionCheckRow, f.correctionCheckErr
 }
 
 // fakeDeviceResolver stands in for service.DevicesService in tests that
@@ -168,9 +196,11 @@ func routerFor(h *CatsHandler) http.Handler {
 func routerForWithResolver(h *CatsHandler, resolver DeviceTokenResolver, validator AccessTokenValidator) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/v1/cats/{cat_id}", h.Detail)
-	r.Get("/v1/cats/{cat_id}/updates", h.UpdateHistory)
+	r.With(OptionalBearer(validator)).Get("/v1/cats/{cat_id}/updates", h.UpdateHistory)
 	r.With(RequireBearer(validator), OptionalDeviceToken(resolver)).Post("/v1/cats/{cat_id}/updates", h.CreateUpdate)
 	r.With(RequireBearer(validator), OptionalDeviceToken(resolver)).Post("/v1/cats/{cat_id}/needs-help", h.CreateNeedsHelp)
+	r.With(RequireBearer(validator)).Patch("/v1/cats/{cat_id}/updates/{update_id}", h.CorrectUpdate)
+	r.With(RequireBearer(validator)).Delete("/v1/cats/{cat_id}/updates/{update_id}", h.DeleteUpdate)
 	return r
 }
 
@@ -695,6 +725,61 @@ func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
 	}
 }
 
+func TestCatsHandler_CreateUpdate_IdempotencyKeyHeaderPassedThrough(t *testing.T) {
+	catID := uuid.New()
+	returnedID := uuid.New()
+	var captured repository.CreateOrdinaryUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists:               true,
+		createRow:            repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		captured:             &captured,
+		updateIdempotencyErr: pgx.ErrNoRows,
+	}), testMaxUploadBytes)
+
+	r := routerForWithResolver(h,
+		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.New().String()}},
+		fakeAccessValidator{userID: uuid.New().String()},
+	)
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(catID.String(), `{"statuses":["seen"]}`)
+	req.Header.Set("Idempotency-Key", "seen-tap-key")
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !captured.IdempotencyKey.Valid || captured.IdempotencyKey.String != "seen-tap-key" {
+		t.Errorf("expected the Idempotency-Key header to be passed through, got %v", captured.IdempotencyKey)
+	}
+}
+
+func TestCatsHandler_CreateUpdate_BlankIdempotencyKeyHeaderIgnored(t *testing.T) {
+	catID := uuid.New()
+	returnedID := uuid.New()
+	var captured repository.CreateOrdinaryUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists:    true,
+		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		captured:  &captured,
+	}), testMaxUploadBytes)
+
+	r := routerForWithResolver(h,
+		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.New().String()}},
+		fakeAccessValidator{userID: uuid.New().String()},
+	)
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(catID.String(), `{"statuses":["seen"]}`)
+	req.Header.Set("Idempotency-Key", "   ")
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if captured.IdempotencyKey.Valid {
+		t.Errorf("expected a blank Idempotency-Key header to be ignored, got %v", captured.IdempotencyKey)
+	}
+}
+
 func TestCatsHandler_CreateUpdate_WithCommentAndMultipleStatuses(t *testing.T) {
 	returnedID := uuid.New()
 	var captured repository.CreateOrdinaryUpdateParams
@@ -1065,6 +1150,281 @@ func TestCatsHandler_CreateNeedsHelp_RequiresBearer(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ── CorrectUpdate/DeleteUpdate (PATCH/DELETE /v1/cats/{cat_id}/updates/{update_id}, issue #80) ─────
+
+func newCorrectUpdateRequest(catID, updateID, body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPatch, "/v1/cats/"+catID+"/updates/"+updateID, strings.NewReader(body))
+	return withBearerToken(req)
+}
+
+func newDeleteUpdateRequest(catID, updateID string) *http.Request {
+	req := httptest.NewRequest(http.MethodDelete, "/v1/cats/"+catID+"/updates/"+updateID, nil)
+	return withBearerToken(req)
+}
+
+func TestCatsHandler_CorrectUpdate_Success(t *testing.T) {
+	catID := uuid.New()
+	updateID := uuid.New()
+	createdAt := time.Date(2026, 1, 5, 8, 0, 0, 0, time.UTC)
+	fixedNow := createdAt.Add(2 * time.Minute)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		correctRow: repository.CorrectOrdinaryUpdateRow{
+			ID:        pgtype.UUID{Bytes: updateID, Valid: true},
+			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+			UpdatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+		},
+	}, service.WithClock(func() time.Time { return fixedNow })), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newCorrectUpdateRequest(catID.String(), updateID.String(), `{"statuses":["seen"],"comment":"düzeltildi"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body updateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.ID != updateID.String() {
+		t.Errorf("unexpected id: %q", body.ID)
+	}
+	if !body.AuthorIsMe {
+		t.Error("expected author_is_me true on a successful own-correction response")
+	}
+}
+
+func TestCatsHandler_CorrectUpdate_WrongAuthor_Returns403(t *testing.T) {
+	catID := uuid.New()
+	updateID := uuid.New()
+	realAuthor := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		correctErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: realAuthor, Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newCorrectUpdateRequest(catID.String(), updateID.String(), `{"statuses":["seen"]}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CorrectUpdate_WindowExpired_Returns410(t *testing.T) {
+	catID := uuid.New()
+	updateID := uuid.New()
+	createdAt := time.Date(2026, 1, 5, 8, 0, 0, 0, time.UTC)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		correctErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: uuid.MustParse(defaultTestUserID), Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: createdAt, Valid: true},
+		},
+	}, service.WithClock(func() time.Time { return createdAt.Add(11 * time.Minute) })), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newCorrectUpdateRequest(catID.String(), updateID.String(), `{"statuses":["seen"]}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CorrectUpdate_NeedsHelpKind_Returns404(t *testing.T) {
+	catID := uuid.New()
+	updateID := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		correctErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: uuid.MustParse(defaultTestUserID), Valid: true},
+			Kind:         "needs_help",
+			CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newCorrectUpdateRequest(catID.String(), updateID.String(), `{"statuses":["seen"]}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CorrectUpdate_RequiresBearer(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/cats/"+uuid.New().String()+"/updates/"+uuid.New().String(), strings.NewReader(`{"statuses":["seen"]}`))
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CorrectUpdate_MalformedJSON(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newCorrectUpdateRequest(uuid.New().String(), uuid.New().String(), `{`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_DeleteUpdate_Success_Returns204(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		deleteRow: repository.DeleteOwnUpdateRow{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newDeleteUpdateRequest(uuid.New().String(), uuid.New().String())
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCatsHandler_DeleteUpdate_RetryAfterDelete_StillReturns204 proves a
+// retried delete against an already-deleted update answers 204, not an
+// error — the idempotent-retry convention this repo already uses for
+// POST /v1/auth/logout and POST /v1/me/notifications/{id}/read.
+func TestCatsHandler_DeleteUpdate_RetryAfterDelete_StillReturns204(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		deleteErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: uuid.MustParse(defaultTestUserID), Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			DeletedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newDeleteUpdateRequest(uuid.New().String(), uuid.New().String())
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on a retried delete, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_DeleteUpdate_WrongAuthor_Returns403(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		deleteErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newDeleteUpdateRequest(uuid.New().String(), uuid.New().String())
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_DeleteUpdate_RequiresBearer(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/v1/cats/"+uuid.New().String()+"/updates/"+uuid.New().String(), nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCatsHandler_UpdateHistory_AuthorIsMe proves GET .../updates surfaces
+// author_is_me/correction_expires_at for the caller's own recent ordinary
+// update, computed server-side by comparing author_user_id against the
+// optional bearer caller — never left to the client to guess.
+func TestCatsHandler_UpdateHistory_AuthorIsMe(t *testing.T) {
+	catID := uuid.New()
+	myUserID := uuid.MustParse(defaultTestUserID)
+	updateID := uuid.New()
+	createdAt := time.Date(2026, 1, 5, 8, 0, 0, 0, time.UTC)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists: true,
+		updateRows: []repository.ListCatUpdatesRow{
+			{
+				ID:           pgtype.UUID{Bytes: updateID, Valid: true},
+				Kind:         "ordinary",
+				CreatedAt:    pgtype.Timestamptz{Time: createdAt, Valid: true},
+				AuthorUserID: pgtype.UUID{Bytes: myUserID, Valid: true},
+				Statuses:     []string{"seen"},
+			},
+		},
+	}, service.WithClock(func() time.Time { return createdAt.Add(time.Minute) })), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := withBearerToken(httptest.NewRequest(http.MethodGet, "/v1/cats/"+catID.String()+"/updates", nil))
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body updateHistoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) != 1 || !body.Items[0].AuthorIsMe {
+		t.Fatalf("expected author_is_me true, got %+v", body.Items)
+	}
+	want := createdAt.Add(10 * time.Minute)
+	if body.Items[0].CorrectionExpiresAt == nil || !body.Items[0].CorrectionExpiresAt.Equal(want) {
+		t.Errorf("expected correction_expires_at %v, got %v", want, body.Items[0].CorrectionExpiresAt)
+	}
+}
+
+// TestCatsHandler_UpdateHistory_GuestNeverSeesAuthorIsMe proves a guest
+// read (no Authorization header at all) never surfaces author_is_me true
+// for anyone, regardless of who authored the update.
+func TestCatsHandler_UpdateHistory_GuestNeverSeesAuthorIsMe(t *testing.T) {
+	catID := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists: true,
+		updateRows: []repository.ListCatUpdatesRow{
+			{
+				ID:           pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				Kind:         "ordinary",
+				CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				AuthorUserID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				Statuses:     []string{"seen"},
+			},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+catID.String()+"/updates", nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (guest-readable), got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body updateHistoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) != 1 || body.Items[0].AuthorIsMe || body.Items[0].CorrectionExpiresAt != nil {
+		t.Fatalf("expected author_is_me false and no correction_expires_at for a guest read, got %+v", body.Items)
 	}
 }
 

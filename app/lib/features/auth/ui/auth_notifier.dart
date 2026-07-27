@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/identity/device_identity.dart';
 import '../../../core/identity/session_identity.dart';
+import '../../../core/validation/display_name.dart';
+import '../../profile/ui/profile_notifier.dart';
 import '../data/auth_api.dart';
 
 /// The three prototype steps (prototype/app.js's login screen): phone
@@ -22,6 +24,7 @@ enum AuthError {
   deviceConflict,
   staleDeviceCredential,
   nameRequired,
+  nameTooLong,
   network,
   server,
 }
@@ -44,6 +47,7 @@ String authErrorMessageTr(AuthError error) {
     AuthError.deviceConflict => 'Bu cihaz başka bir hesaba bağlı',
     AuthError.staleDeviceCredential => 'Cihaz kimliği yenilendi, tekrar dene',
     AuthError.nameRequired => 'Bir isim gir',
+    AuthError.nameTooLong => 'İsim en fazla 60 karakter olabilir',
     AuthError.network => 'Bağlantı sorunu, tekrar dene',
     AuthError.server => 'Sunucuya ulaşılamadı, birazdan tekrar dene',
   };
@@ -245,10 +249,20 @@ class AuthNotifier extends Notifier<AuthState> {
       state = state.copyWith(error: AuthError.nameRequired);
       return false;
     }
+    if (trimmed.length > maxDisplayNameLength) {
+      state = state.copyWith(error: AuthError.nameTooLong);
+      return false;
+    }
 
     state = state.copyWith(isSubmitting: true, clearError: true);
     try {
       await ref.read(authApiProvider).setDisplayName(trimmed);
+      // issue #80 product-owner review: profile is a persistent shell tab
+      // (app_shell.dart) that may have already loaded — with a null
+      // display name — in the gap between otp/verify succeeding and this
+      // step's own save completing. Reflect it immediately rather than
+      // leaving a stale "İsimsiz kullanıcı" until the next full reload.
+      ref.read(profileProvider.notifier).applyDisplayName(trimmed);
       state = const AuthState();
       return true;
     } on InvalidDisplayNameException {

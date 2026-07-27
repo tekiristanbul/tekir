@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/identity/device_identity.dart';
@@ -72,6 +74,13 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   @override
   CatUpdateComposerState build() => const CatUpdateComposerState();
 
+  // issue #80 product-owner review, finding 4: one key per logical submit
+  // attempt (mirrors AddCatNotifier's own _idempotencyKey exactly) — kept
+  // stable across a failed attempt's retry (whichever button re-triggers
+  // _submit), regenerated only after a successful submit, so a rapid
+  // repeat tap or a retried request can never create a second update row.
+  String _idempotencyKey = _generateIdempotencyKey();
+
   void toggleStatus(String status) {
     if (state.isSubmitting) return;
     final next = {...state.selectedStatuses};
@@ -132,9 +141,15 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
       await ref.read(deviceIdentityServiceProvider).init();
       final entry = await ref
           .read(catDetailApiProvider)
-          .createUpdate(catId, statuses: statuses, comment: comment);
+          .createUpdate(
+            catId,
+            statuses: statuses,
+            comment: comment,
+            idempotencyKey: _idempotencyKey,
+          );
       ref.read(catDetailProvider(catId).notifier).prependUpdate(entry);
       state = const CatUpdateComposerState();
+      _idempotencyKey = _generateIdempotencyKey();
       return true;
     } on UpdateValidationException {
       state = state.copyWith(
@@ -183,3 +198,12 @@ final catUpdateComposerProvider =
       CatUpdateComposerState,
       String
     >(CatUpdateComposerNotifier.new);
+
+/// A high-entropy, non-guessable key — no new dependency for something this
+/// small (the backend only needs uniqueness per attempt, not a specific
+/// format), mirrors add_cat_state.dart's identical helper exactly.
+String _generateIdempotencyKey() {
+  final random = Random.secure();
+  final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+  return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+}

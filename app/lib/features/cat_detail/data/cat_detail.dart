@@ -75,6 +75,8 @@ class CatUpdateEntry {
     this.needsHelpCategoryLabel,
     this.needsHelpExpiresAt,
     this.needsHelpActive,
+    this.authorIsMe = false,
+    this.correctionExpiresAt,
   });
 
   final String id;
@@ -88,10 +90,34 @@ class CatUpdateEntry {
   final DateTime? needsHelpExpiresAt;
   final bool? needsHelpActive;
 
+  /// Server-derived (issue #80): true only when this entry was returned to
+  /// its own author's authenticated read of `GET .../updates` — always
+  /// false for a guest read or someone else's update. Never left for the
+  /// client to compute by comparing ids itself.
+  final bool authorIsMe;
+
+  /// Non-null only when [authorIsMe] and [kind] is "ordinary" (issue #80):
+  /// `created_at` + the fixed 10-minute correction window
+  /// (docs/product/updates.md). Used only to decide whether to show the
+  /// correction affordance/countdown — the server remains the sole
+  /// authority on whether an actual correction attempt succeeds.
+  final DateTime? correctionExpiresAt;
+
   bool get isNeedsHelp => kind == 'needs_help';
+
+  /// Whether this entry is still eligible for the caller's own
+  /// correction/delete action — its own copy of PATCH/DELETE's window
+  /// check for ui purposes only; the server re-checks this independently
+  /// against its own clock on every request.
+  bool isCorrectionOpen({DateTime? now}) {
+    final expiresAt = correctionExpiresAt;
+    if (!authorIsMe || expiresAt == null) return false;
+    return expiresAt.isAfter(now ?? DateTime.now());
+  }
 
   factory CatUpdateEntry.fromJson(Map<String, dynamic> json) {
     final rawExpiresAt = json['needs_help_expires_at'] as String?;
+    final rawCorrectionExpiresAt = json['correction_expires_at'] as String?;
     return CatUpdateEntry(
       id: json['id'] as String,
       kind: json['kind'] as String? ?? 'ordinary',
@@ -106,6 +132,10 @@ class CatUpdateEntry {
           ? DateTime.parse(rawExpiresAt)
           : null,
       needsHelpActive: json['needs_help_active'] as bool?,
+      authorIsMe: json['author_is_me'] as bool? ?? false,
+      correctionExpiresAt: rawCorrectionExpiresAt != null
+          ? DateTime.parse(rawCorrectionExpiresAt)
+          : null,
     );
   }
 }

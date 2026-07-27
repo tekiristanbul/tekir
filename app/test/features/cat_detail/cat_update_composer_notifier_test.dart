@@ -84,6 +84,8 @@ class _FakeCatDetailApi implements CatDetailApi {
   int createUpdateCalls = 0;
   List<String>? lastStatuses;
   String? lastComment;
+  String? lastIdempotencyKey;
+  final idempotencyKeysSeen = <String>[];
 
   // When set, createUpdate awaits this before resolving/throwing — lets a
   // test hold a submission "in flight" to assert duplicate-submit
@@ -105,14 +107,29 @@ class _FakeCatDetailApi implements CatDetailApi {
     String catId, {
     required List<String> statuses,
     String? comment,
+    String idempotencyKey = '',
   }) async {
     createUpdateCalls++;
     lastStatuses = statuses;
     lastComment = comment;
+    lastIdempotencyKey = idempotencyKey;
+    idempotencyKeysSeen.add(idempotencyKey);
     if (gate != null) await gate!.future;
     if (nextError != null) throw nextError!;
     return nextResult!;
   }
+
+  @override
+  Future<CatUpdateEntry> correctUpdate(
+    String catId,
+    String updateId, {
+    required List<String> statuses,
+    String? comment,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> deleteUpdate(String catId, String updateId) =>
+      throw UnimplementedError();
 }
 
 // Returns a malformed (missing device_id/device_token) body on the first
@@ -187,7 +204,7 @@ class _FakeSessionIdentityService implements SessionIdentityService {
   Future<void> save(SessionIdentity identity) async => _cached = identity;
 
   @override
-  Future<void> logout() async => _cached = null;
+  Future<void> logout({String? deviceToken}) async => _cached = null;
 }
 
 const _authenticatedSession = SessionIdentity(
@@ -300,6 +317,47 @@ void main() {
     await notifier.submit();
 
     expect(api.lastComment, isNull);
+  });
+
+  group('idempotency key (issue #80 product-owner review, finding 4)', () {
+    test(
+      'each successful submit uses a fresh key from the one before it',
+      () async {
+        final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+        final container = _containerWith(api);
+        addTearDown(container.dispose);
+        final notifier = container.read(
+          catUpdateComposerProvider(_catId).notifier,
+        );
+
+        await notifier.submitSeen();
+        api.nextResult = _entry('upd-2');
+        await notifier.submitSeen();
+
+        expect(api.idempotencyKeysSeen, hasLength(2));
+        expect(api.idempotencyKeysSeen[0], isNot(api.idempotencyKeysSeen[1]));
+        expect(api.idempotencyKeysSeen[0], isNotEmpty);
+      },
+    );
+
+    test('a failed submit keeps the same key so a retry of the same attempt '
+        'reuses it, never creating a second row for one logical tap', () async {
+      final api = _FakeCatDetailApi()
+        ..nextError = const UpdateNetworkException();
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+
+      await notifier.submitSeen();
+      api.nextError = null;
+      api.nextResult = _entry('upd-1');
+      await notifier.submitSeen();
+
+      expect(api.idempotencyKeysSeen, hasLength(2));
+      expect(api.idempotencyKeysSeen[0], api.idempotencyKeysSeen[1]);
+    });
   });
 
   test(

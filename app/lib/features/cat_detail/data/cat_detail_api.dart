@@ -45,6 +45,28 @@ class UpdateServerException implements Exception {
   const UpdateServerException();
 }
 
+/// Thrown when PATCH/DELETE `.../updates/{update_id}` answers 403 — the
+/// update exists under this cat but isn't the caller's own (issue #80).
+/// Not collapsed into [CatNotFoundException]: the full update history is
+/// already public, so "exists but isn't yours" leaks nothing a guest
+/// couldn't already see on the public timeline.
+class UpdateCorrectionForbiddenException implements Exception {
+  const UpdateCorrectionForbiddenException();
+}
+
+/// Thrown when PATCH/DELETE `.../updates/{update_id}` answers 404 — the
+/// update id doesn't exist under this cat, or it's a needs-help update
+/// (never a correctable resource here).
+class UpdateCorrectionNotFoundException implements Exception {
+  const UpdateCorrectionNotFoundException();
+}
+
+/// Thrown when PATCH/DELETE `.../updates/{update_id}` answers 410 — the
+/// fixed 10-minute correction window (docs/product/updates.md) has closed.
+class UpdateCorrectionExpiredException implements Exception {
+  const UpdateCorrectionExpiredException();
+}
+
 class CatDetailApi {
   CatDetailApi(this._apiClient);
 
@@ -83,15 +105,23 @@ class CatDetailApi {
   /// sure a session exists first (see [AuthGate]) — this method does not
   /// trigger sign-in itself, so an unauthenticated call surfaces as a plain
   /// [UpdateUnauthorizedException] rather than a silent retry.
+  ///
+  /// idempotencyKey (issue #80 product-owner review, finding 4) must be the
+  /// same value across retries of the same attempt — mirrors
+  /// [AddCatApi.createCat]'s exact contract — so a rapid repeat "Gördüm" tap
+  /// or a retried request can never create a second update row; the backend
+  /// resolves a retried key to the original update instead of erroring.
   Future<CatUpdateEntry> createUpdate(
     String catId, {
     required List<String> statuses,
     String? comment,
+    required String idempotencyKey,
   }) async {
     try {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '/v1/cats/$catId/updates',
         data: {'statuses': statuses, 'comment': comment},
+        options: Options(headers: {'Idempotency-Key': idempotencyKey}),
       );
       final body = response.data;
       if (body == null) throw const UpdateServerException();
@@ -110,6 +140,60 @@ class CatDetailApi {
         return const UpdateUnauthorizedException();
       case 404:
         return const CatNotFoundException();
+    }
+    if (status != null) return const UpdateServerException();
+    return const UpdateNetworkException();
+  }
+
+  /// Corrects the caller's own ordinary update within its fixed 10-minute
+  /// window (issue #80): statuses and/or comment. The caller is
+  /// responsible for making sure a session exists first (see [AuthGate]) —
+  /// this method does not trigger sign-in itself. kind, author identity,
+  /// and created_at are never alterable through this path.
+  Future<CatUpdateEntry> correctUpdate(
+    String catId,
+    String updateId, {
+    required List<String> statuses,
+    String? comment,
+  }) async {
+    try {
+      final response = await _apiClient.dio.patch<Map<String, dynamic>>(
+        '/v1/cats/$catId/updates/$updateId',
+        data: {'statuses': statuses, 'comment': comment},
+      );
+      final body = response.data;
+      if (body == null) throw const UpdateServerException();
+      return CatUpdateEntry.fromJson(body);
+    } on DioException catch (e) {
+      throw _mapCorrectionError(e);
+    }
+  }
+
+  /// Soft-deletes the caller's own ordinary update within its fixed
+  /// 10-minute window (issue #80). A retry against an already-deleted row
+  /// also succeeds (204) server-side — see the backend's idempotent-retry
+  /// note — so this never throws for that case.
+  Future<void> deleteUpdate(String catId, String updateId) async {
+    try {
+      await _apiClient.dio.delete<void>('/v1/cats/$catId/updates/$updateId');
+    } on DioException catch (e) {
+      throw _mapCorrectionError(e);
+    }
+  }
+
+  Exception _mapCorrectionError(DioException e) {
+    final status = e.response?.statusCode;
+    switch (status) {
+      case 400:
+        return const UpdateValidationException();
+      case 401:
+        return const UpdateUnauthorizedException();
+      case 403:
+        return const UpdateCorrectionForbiddenException();
+      case 404:
+        return const UpdateCorrectionNotFoundException();
+      case 410:
+        return const UpdateCorrectionExpiredException();
     }
     if (status != null) return const UpdateServerException();
     return const UpdateNetworkException();

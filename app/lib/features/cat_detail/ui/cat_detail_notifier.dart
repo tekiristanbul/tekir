@@ -177,6 +177,28 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
       ),
     );
   }
+
+  /// Replaces a successfully corrected entry in place (issue #80), keeping
+  /// its timeline position — a correction never changes created_at/author,
+  /// only statuses/comment/updated_at, so re-sorting is never needed.
+  /// No-op if the entry has since scrolled out of the loaded page (a
+  /// vanishingly unlikely race, given the 10-minute correction window).
+  void replaceUpdate(CatUpdateEntry entry) {
+    final index = state.updates.indexWhere((u) => u.id == entry.id);
+    if (index == -1) return;
+    final updated = [...state.updates];
+    updated[index] = entry;
+    state = state.copyWith(updates: updated);
+  }
+
+  /// Removes a successfully deleted entry from the timeline (issue #80) —
+  /// the server has already soft-deleted it, so every reader's view
+  /// (including the author's own) simply never shows it again.
+  void removeUpdate(String updateId) {
+    state = state.copyWith(
+      updates: state.updates.where((u) => u.id != updateId).toList(),
+    );
+  }
 }
 
 final catDetailProvider =

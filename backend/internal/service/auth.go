@@ -76,6 +76,7 @@ type AuthStore interface {
 
 	GetDeviceByID(ctx context.Context, id pgtype.UUID) (repository.GetDeviceByIDRow, error)
 	LinkDeviceToUser(ctx context.Context, arg repository.LinkDeviceToUserParams) error
+	UnlinkDeviceFromUser(ctx context.Context, arg repository.UnlinkDeviceFromUserParams) error
 	DeleteRedundantDeviceFollows(ctx context.Context, arg repository.DeleteRedundantDeviceFollowsParams) error
 	BackfillFollowsUserID(ctx context.Context, arg repository.BackfillFollowsUserIDParams) error
 	BackfillUpdatesAuthorUserID(ctx context.Context, arg repository.BackfillUpdatesAuthorUserIDParams) error
@@ -344,6 +345,32 @@ func (s *AuthService) SetDisplayName(ctx context.Context, userID, displayName st
 	return s.db.UpdateUserDisplayName(ctx, repository.UpdateUserDisplayNameParams{
 		ID:          pgtype.UUID{Bytes: uid, Valid: true},
 		DisplayName: pgtype.Text{String: name, Valid: true},
+	})
+}
+
+// UnlinkDevice clears deviceID's account link, but only when it currently
+// matches userID (issue #80, product-owner review) — the entire safety
+// mechanism lives in UnlinkDeviceFromUser's own conditional update, so a
+// mismatched, stale, or already-unlinked device affects zero rows rather
+// than erroring. Called from AuthHandler.Logout so the same installation
+// can sign into a different account afterward; deliberately separate from
+// linkDevice's own conflict check above, which still rejects linking a
+// still-linked device to a different account exactly as before — this
+// method only ever clears a link that matches the caller's own account,
+// never reassigns one. Never touches follows/updates/badges/notifications
+// or any other ownership data.
+func (s *AuthService) UnlinkDevice(ctx context.Context, deviceID, userID string) error {
+	did, err := uuid.Parse(deviceID)
+	if err != nil {
+		return err
+	}
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	return s.db.UnlinkDeviceFromUser(ctx, repository.UnlinkDeviceFromUserParams{
+		ID:     pgtype.UUID{Bytes: did, Valid: true},
+		UserID: pgtype.UUID{Bytes: uid, Valid: true},
 	})
 }
 
