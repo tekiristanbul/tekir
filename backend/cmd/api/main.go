@@ -83,7 +83,10 @@ func run() error {
 	notificationsInboxSvc := service.NewNotificationInboxService(store)
 	notificationsHandler := handler.NewNotificationsHandler(notificationsInboxSvc)
 
-	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, notificationsHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
+	profileSvc := service.NewProfileService(store)
+	profileHandler := handler.NewProfileHandler(profileSvc)
+
+	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, notificationsHandler, profileHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

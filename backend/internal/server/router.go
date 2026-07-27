@@ -13,7 +13,7 @@ import (
 	"github.com/tekiristanbul/tekir/backend/internal/handler"
 )
 
-func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, auth *handler.AuthHandler, media *handler.MediaHandler, mediaServe *handler.MediaServeHandler, notifications *handler.NotificationsHandler, deviceTokens handler.DeviceTokenResolver, accessTokens handler.AccessTokenValidator, corsOrigins []string) http.Handler {
+func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, auth *handler.AuthHandler, media *handler.MediaHandler, mediaServe *handler.MediaServeHandler, notifications *handler.NotificationsHandler, profile *handler.ProfileHandler, deviceTokens handler.DeviceTokenResolver, accessTokens handler.AccessTokenValidator, corsOrigins []string) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -38,9 +38,11 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.Get("/v1/cats", cats.Nearby)
 	r.Get("/v1/cats/nearby", cats.NearbyDuplicates)
 	r.Get("/v1/cats/{cat_id}", cats.Detail)
-	r.Get("/v1/cats/{cat_id}/updates", cats.UpdateHistory)
+	r.With(handler.OptionalBearer(accessTokens)).Get("/v1/cats/{cat_id}/updates", cats.UpdateHistory)
 	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/cats", cats.Create)
 	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/cats/{cat_id}/updates", cats.CreateUpdate)
+	r.With(handler.RequireBearer(accessTokens)).Patch("/v1/cats/{cat_id}/updates/{update_id}", cats.CorrectUpdate)
+	r.With(handler.RequireBearer(accessTokens)).Delete("/v1/cats/{cat_id}/updates/{update_id}", cats.DeleteUpdate)
 	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/cats/{cat_id}/needs-help", cats.CreateNeedsHelp)
 	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/cats/{cat_id}/follow", follows.Follow)
 	r.With(handler.RequireBearer(accessTokens)).Delete("/v1/cats/{cat_id}/follow", follows.Unfollow)
@@ -48,6 +50,9 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 
 	r.With(handler.RequireBearer(accessTokens)).Get("/v1/me/notifications", notifications.List)
 	r.With(handler.RequireBearer(accessTokens)).Post("/v1/me/notifications/{id}/read", notifications.MarkRead)
+
+	r.With(handler.RequireBearer(accessTokens)).Get("/v1/me/profile", profile.Profile)
+	r.With(handler.RequireBearer(accessTokens)).Get("/v1/me/badges", profile.Badges)
 
 	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/media", media.Upload)
 	r.Get("/v1/media/objects/{key}", mediaServe.ServeObject)

@@ -38,7 +38,7 @@ where id = $3
   and kind = 'ordinary'
   and deleted_at is null
   and created_at > $6::timestamptz
-returning id, updated_at
+returning id, created_at, updated_at
 `
 
 type CorrectOrdinaryUpdateParams struct {
@@ -52,6 +52,7 @@ type CorrectOrdinaryUpdateParams struct {
 
 type CorrectOrdinaryUpdateRow struct {
 	ID        pgtype.UUID        `json:"id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
@@ -79,7 +80,7 @@ func (q *Queries) CorrectOrdinaryUpdate(ctx context.Context, arg CorrectOrdinary
 		arg.WindowStart,
 	)
 	var i CorrectOrdinaryUpdateRow
-	err := row.Scan(&i.ID, &i.UpdatedAt)
+	err := row.Scan(&i.ID, &i.CreatedAt, &i.UpdatedAt)
 	return i, err
 }
 

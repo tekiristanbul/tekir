@@ -310,7 +310,10 @@ type Querier interface {
 	// (first_sighting/feeder/water_helper/neighborhood_watcher), which only
 	// look at ordinary-update statuses. Needs-help updates are never
 	// soft-deleted (issue #80 excludes them from correction entirely), so no
-	// deleted_at filter is needed here.
+	// deleted_at filter is needed here. needs_help_category is carried along
+	// purely for the profile's recent-contributions display (the client
+	// composes its own label from category, exactly like the cat-detail
+	// timeline already does), not for badge derivation.
 	ListUserNeedsHelpUpdatesForBadges(ctx context.Context, authorUserID pgtype.UUID) ([]ListUserNeedsHelpUpdatesForBadgesRow, error)
 	// issue #80: one row per ordinary update the account authored, oldest
 	// first, with its full status set — feeds ProfileService.BadgeProgress's

@@ -26,8 +26,11 @@ order by u.created_at asc, u.seq asc;
 -- (first_sighting/feeder/water_helper/neighborhood_watcher), which only
 -- look at ordinary-update statuses. Needs-help updates are never
 -- soft-deleted (issue #80 excludes them from correction entirely), so no
--- deleted_at filter is needed here.
-select cat_id, created_at, seq
+-- deleted_at filter is needed here. needs_help_category is carried along
+-- purely for the profile's recent-contributions display (the client
+-- composes its own label from category, exactly like the cat-detail
+-- timeline already does), not for badge derivation.
+select cat_id, created_at, seq, needs_help_category
 from updates
 where author_user_id = sqlc.arg(author_user_id) and kind = 'needs_help'
 order by created_at asc, seq asc;

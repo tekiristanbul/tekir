@@ -66,6 +66,31 @@ var ErrMissingPhoto = errors.New("missing photo")
 // on first use.
 var ErrMediaPipelineNotConfigured = errors.New("cats service media pipeline not configured")
 
+// ErrUpdateNotFound means no update exists for the given (cat_id, update_id)
+// pair, or the update exists but is kind = 'needs_help' — issue #80's
+// correction/delete endpoints don't recognize a needs-help report as a
+// correctable resource at all (it has its own fixed 72h lifecycle), so it
+// is treated identically to "doesn't exist" rather than inventing a new
+// status code for that scope exclusion.
+var ErrUpdateNotFound = errors.New("update not found")
+
+// ErrNotUpdateAuthor means the update exists under this cat but the caller
+// isn't its author (issue #80). Not collapsed into ErrUpdateNotFound: the
+// full update history is already public (docs/product/privacy.md), so
+// confirming "this exists, but isn't yours" leaks nothing a guest couldn't
+// already see on the public timeline.
+var ErrNotUpdateAuthor = errors.New("not the update author")
+
+// ErrCorrectionWindowExpired means the caller is the update's author but
+// the fixed 10-minute correction window (docs/product/updates.md) has
+// closed — mirrors the otp/verify 410 convention (docs/architecture/api.md).
+var ErrCorrectionWindowExpired = errors.New("correction window expired")
+
+// updateCorrectionWindow is the fixed mvp grace period during which an
+// ordinary update's author may correct or delete it (docs/product/updates.md,
+// issue #80) — never configurable per-request or per-account.
+const updateCorrectionWindow = 10 * time.Minute
+
 const (
 	defaultUpdatesLimit = 20
 	maxUpdatesLimit     = 50
@@ -241,11 +266,25 @@ type CatUpdate struct {
 	Statuses  []string
 	Comment   *string
 	CreatedAt time.Time
+	UpdatedAt *time.Time
 
 	NeedsHelpCategory      *string
 	NeedsHelpCategoryLabel *string
 	NeedsHelpExpiresAt     *time.Time
 	NeedsHelpActive        *bool
+
+	// AuthorIsMe (issue #80) is true only when ListCatUpdates was called
+	// with the caller's own authenticated user id and it matches this
+	// entry's author — always false for a guest read (no caller id at
+	// all). Server-derived so a client never has to compare ids itself.
+	AuthorIsMe bool
+	// CorrectionExpiresAt is non-nil only when AuthorIsMe && Kind ==
+	// "ordinary" — created_at + the fixed 10-minute correction window
+	// (docs/product/updates.md). A client uses this only to decide
+	// whether to show the correction affordance/countdown; the server
+	// remains the sole authority on whether a correction attempt actually
+	// succeeds (see CorrectOwnUpdate/DeleteOwnUpdate below).
+	CorrectionExpiresAt *time.Time
 }
 
 // UpdatesPage is one newest-first page of a cat's update history.
@@ -271,6 +310,9 @@ type CatsStore interface {
 	ListCatUpdates(ctx context.Context, arg repository.ListCatUpdatesParams) ([]repository.ListCatUpdatesRow, error)
 	CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error)
 	CreateNeedsHelpUpdate(ctx context.Context, arg repository.CreateNeedsHelpUpdateParams) (repository.CreateUpdateRow, error)
+	CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOrdinaryUpdateRow, error)
+	DeleteOwnUpdate(ctx context.Context, arg repository.DeleteOwnUpdateParams) (repository.DeleteOwnUpdateRow, error)
+	GetUpdateForCorrectionCheck(ctx context.Context, arg repository.GetUpdateForCorrectionCheckParams) (repository.GetUpdateForCorrectionCheckRow, error)
 	GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error)
 	ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error)
 	CreateCatWithMedia(ctx context.Context, arg repository.CreateCatWithMediaParams) (repository.CreateCatWithMediaRow, error)
@@ -459,11 +501,29 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 // the first page. limit <= 0 falls back to defaultUpdatesLimit; anything
 // outside (0, maxUpdatesLimit] is rejected rather than silently clamped, so
 // a caller relying on a specific page size finds out instead of getting a
-// different one back.
-func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, limit int) (UpdatesPage, error) {
+// different one back. callerUserID (issue #80) is the optional bearer
+// caller's own account id — "" for a guest read or an absent/invalid
+// bearer (GET /v1/cats/{cat_id}/updates uses OptionalBearer, never
+// RequireBearer, so this endpoint stays guest-readable) — used only to
+// derive AuthorIsMe/CorrectionExpiresAt per item, never to filter which
+// updates are returned.
+func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, limit int, callerUserID string) (UpdatesPage, error) {
 	catID, err := parseCatID(id)
 	if err != nil {
 		return UpdatesPage{}, err
+	}
+
+	// a malformed callerUserID (shouldn't happen — RequireBearer/
+	// OptionalBearer only ever place a well-formed uuid or nothing at all
+	// in context) simply never matches any author, rather than erroring
+	// a guest-readable endpoint over a caller-side identity concern.
+	var callerUUID uuid.UUID
+	var haveCaller bool
+	if callerUserID != "" {
+		if parsed, err := uuid.Parse(callerUserID); err == nil {
+			callerUUID = parsed
+			haveCaller = true
+		}
 	}
 
 	if limit == 0 {
@@ -524,6 +584,13 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 			item.NeedsHelpCategoryLabel = &label
 			item.NeedsHelpExpiresAt = &expiresAt
 			item.NeedsHelpActive = &active
+		}
+		if haveCaller && r.AuthorUserID.Valid && uuid.UUID(r.AuthorUserID.Bytes) == callerUUID {
+			item.AuthorIsMe = true
+			if r.Kind == "ordinary" {
+				expiresAt := r.CreatedAt.Time.Add(updateCorrectionWindow)
+				item.CorrectionExpiresAt = &expiresAt
+			}
 		}
 		items = append(items, item)
 	}
@@ -682,6 +749,162 @@ func (s *CatsService) CreateNeedsHelpUpdate(ctx context.Context, id, userID, dev
 		NeedsHelpExpiresAt:     &expiresAt,
 		NeedsHelpActive:        &active,
 	}, nil
+}
+
+// parseUpdateID mirrors parseCatID's shape for the update_id path segment
+// (issue #80's correction endpoints).
+func parseUpdateID(raw string) (pgtype.UUID, error) {
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return pgtype.UUID{}, ErrUpdateNotFound
+	}
+	return pgtype.UUID{Bytes: id, Valid: true}, nil
+}
+
+// resolveCorrectionFailure runs only after CorrectOrdinaryUpdate/
+// DeleteOwnUpdate affected zero rows, to turn that single ambiguous
+// outcome into the right sentinel error — or, for an already-deleted row,
+// into a signal the caller (handler) should treat as an idempotent
+// success rather than an error at all (mirroring this repo's existing
+// idempotent-retry convention for POST /v1/auth/logout and
+// POST /v1/me/notifications/{id}/read). alreadyDeleted is true exactly
+// when the caller should treat the zero-rows outcome as success.
+func (s *CatsService) resolveCorrectionFailure(ctx context.Context, catID, updateID pgtype.UUID, authorUserID uuid.UUID, windowStart time.Time) (alreadyDeleted bool, err error) {
+	check, err := s.db.GetUpdateForCorrectionCheck(ctx, repository.GetUpdateForCorrectionCheckParams{ID: updateID, CatID: catID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrUpdateNotFound
+		}
+		return false, err
+	}
+	if check.Kind != "ordinary" {
+		return false, ErrUpdateNotFound
+	}
+	if !check.AuthorUserID.Valid || uuid.UUID(check.AuthorUserID.Bytes) != authorUserID {
+		return false, ErrNotUpdateAuthor
+	}
+	if check.DeletedAt.Valid {
+		return true, nil
+	}
+	if !check.CreatedAt.Time.After(windowStart) {
+		return false, ErrCorrectionWindowExpired
+	}
+	// every condition the conditional update itself checks held true here,
+	// yet it still affected zero rows — shouldn't happen outside a genuine
+	// race (e.g. concurrently deleted between the two statements); surface
+	// as "not found" rather than panicking on an assumption that can't hold.
+	return false, ErrUpdateNotFound
+}
+
+// CorrectOwnUpdate applies an in-window correction to the caller's own
+// ordinary update (issue #80): statuses and/or comment. kind, author
+// identity, and created_at are never alterable through this path — only
+// comment/statuses change, and updated_at is server-derived exactly like
+// CreateOrdinaryUpdate's created_at. windowStart is computed against s.clock,
+// never the caller's own notion of time, matching every other time-relative
+// decision in this service.
+func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, userID string, statuses []string, comment *string) (CatUpdate, error) {
+	catUUID, err := parseCatID(catID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+	updateUUID, err := parseUpdateID(updateID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+	if err := validateStatuses(statuses); err != nil {
+		return CatUpdate{}, err
+	}
+	// userID is always a well-formed uuid from RequireBearer's context —
+	// never client-supplied input to re-validate against a sentinel error.
+	authorUserID, err := uuid.Parse(userID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
+	now := s.clock()
+	windowStart := now.Add(-updateCorrectionWindow)
+	sorted := append([]string(nil), statuses...)
+	sort.Strings(sorted)
+
+	row, err := s.db.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
+		ID:           updateUUID,
+		CatID:        catUUID,
+		AuthorUserID: pgtype.UUID{Bytes: authorUserID, Valid: true},
+		Comment:      nullableText(comment),
+		UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: windowStart, Valid: true},
+		Statuses:     sorted,
+	})
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return CatUpdate{}, err
+		}
+		if _, resolveErr := s.resolveCorrectionFailure(ctx, catUUID, updateUUID, authorUserID, windowStart); resolveErr != nil {
+			return CatUpdate{}, resolveErr
+		}
+		// an already-deleted row: a correction (unlike delete) has nothing
+		// idempotent to return, since there's no longer a live update to
+		// describe — this shouldn't be reachable from a client following
+		// CorrectionExpiresAt (a deleted update is never listed with one),
+		// but treat it the same as any other now-uncorrectable state.
+		return CatUpdate{}, ErrUpdateNotFound
+	}
+
+	updatedAt := row.UpdatedAt.Time
+	createdAt := row.CreatedAt.Time
+	expiresAt := createdAt.Add(updateCorrectionWindow)
+	return CatUpdate{
+		ID:                  uuid.UUID(row.ID.Bytes).String(),
+		Kind:                "ordinary",
+		Statuses:            sorted,
+		Comment:             comment,
+		CreatedAt:           createdAt,
+		UpdatedAt:           &updatedAt,
+		AuthorIsMe:          true,
+		CorrectionExpiresAt: &expiresAt,
+	}, nil
+}
+
+// DeleteOwnUpdate soft-deletes the caller's own ordinary update within the
+// correction window (issue #80). A retry against an already-deleted row
+// succeeds as a no-op (nil error) rather than erroring, mirroring this
+// repo's existing idempotent-delete convention (POST /v1/auth/logout,
+// POST /v1/me/notifications/{id}/read).
+func (s *CatsService) DeleteOwnUpdate(ctx context.Context, catID, updateID, userID string) error {
+	catUUID, err := parseCatID(catID)
+	if err != nil {
+		return err
+	}
+	updateUUID, err := parseUpdateID(updateID)
+	if err != nil {
+		return err
+	}
+	authorUserID, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+
+	now := s.clock()
+	windowStart := now.Add(-updateCorrectionWindow)
+	_, err = s.db.DeleteOwnUpdate(ctx, repository.DeleteOwnUpdateParams{
+		ID:           updateUUID,
+		CatID:        catUUID,
+		AuthorUserID: pgtype.UUID{Bytes: authorUserID, Valid: true},
+		DeletedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: windowStart, Valid: true},
+	})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	alreadyDeleted, resolveErr := s.resolveCorrectionFailure(ctx, catUUID, updateUUID, authorUserID, windowStart)
+	if alreadyDeleted {
+		return nil
+	}
+	return resolveErr
 }
 
 // ListNearbyDuplicates answers GET /v1/cats/nearby: the active cats within

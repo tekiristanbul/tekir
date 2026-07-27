@@ -110,7 +110,7 @@ where id = sqlc.arg(id)
   and kind = 'ordinary'
   and deleted_at is null
   and created_at > sqlc.arg(window_start)::timestamptz
-returning id, updated_at;
+returning id, created_at, updated_at;
 
 -- name: DeleteOwnUpdate :one
 -- same authorization/concurrency/expiry shape as CorrectOrdinaryUpdate

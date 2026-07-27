@@ -84,16 +84,17 @@ func (q *Queries) ListUserCreatedCatsForBadges(ctx context.Context, createdByUse
 }
 
 const listUserNeedsHelpUpdatesForBadges = `-- name: ListUserNeedsHelpUpdatesForBadges :many
-select cat_id, created_at, seq
+select cat_id, created_at, seq, needs_help_category
 from updates
 where author_user_id = $1 and kind = 'needs_help'
 order by created_at asc, seq asc
 `
 
 type ListUserNeedsHelpUpdatesForBadgesRow struct {
-	CatID     pgtype.UUID        `json:"cat_id"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	Seq       pgtype.Int8        `json:"seq"`
+	CatID             pgtype.UUID        `json:"cat_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	Seq               pgtype.Int8        `json:"seq"`
+	NeedsHelpCategory pgtype.Text        `json:"needs_help_category"`
 }
 
 // a needs-help report counts toward cats_of_istanbul's "contribute via
@@ -102,7 +103,10 @@ type ListUserNeedsHelpUpdatesForBadgesRow struct {
 // (first_sighting/feeder/water_helper/neighborhood_watcher), which only
 // look at ordinary-update statuses. Needs-help updates are never
 // soft-deleted (issue #80 excludes them from correction entirely), so no
-// deleted_at filter is needed here.
+// deleted_at filter is needed here. needs_help_category is carried along
+// purely for the profile's recent-contributions display (the client
+// composes its own label from category, exactly like the cat-detail
+// timeline already does), not for badge derivation.
 func (q *Queries) ListUserNeedsHelpUpdatesForBadges(ctx context.Context, authorUserID pgtype.UUID) ([]ListUserNeedsHelpUpdatesForBadgesRow, error) {
 	rows, err := q.db.Query(ctx, listUserNeedsHelpUpdatesForBadges, authorUserID)
 	if err != nil {
@@ -112,7 +116,12 @@ func (q *Queries) ListUserNeedsHelpUpdatesForBadges(ctx context.Context, authorU
 	var items []ListUserNeedsHelpUpdatesForBadgesRow
 	for rows.Next() {
 		var i ListUserNeedsHelpUpdatesForBadgesRow
-		if err := rows.Scan(&i.CatID, &i.CreatedAt, &i.Seq); err != nil {
+		if err := rows.Scan(
+			&i.CatID,
+			&i.CreatedAt,
+			&i.Seq,
+			&i.NeedsHelpCategory,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
