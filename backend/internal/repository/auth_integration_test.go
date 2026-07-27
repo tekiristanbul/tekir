@@ -441,6 +441,62 @@ func TestStore_BackfillFollowsUserID_ConcurrentIdempotent(t *testing.T) {
 	}
 }
 
+// TestAuthService_VerifyOTP_ExistingAccountFollowPlusLegacyDeviceFollow_NoConflict
+// is issue #71's core regression: the account being linked into already
+// directly follows a cat, and the device being linked separately has its
+// own legacy (pre-account, device-owned) follow for that exact same cat.
+// Backfilling the device's follow onto the account must not violate
+// follows_user_cat_uq — the duplicate is dropped, and linking (and the
+// otp verification it's part of) must succeed.
+func TestAuthService_VerifyOTP_ExistingAccountFollowPlusLegacyDeviceFollow_NoConflict(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "conflict-test-cat")
+
+	phone := "556" + testDigits(t)
+	userID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateUser(ctx, repository.CreateUserParams{
+		ID:              userID,
+		Phone:           "+90" + phone,
+		PhoneVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		t.Fatalf("seed existing account: %v", err)
+	}
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{UserID: userID, CatID: catID}); err != nil {
+		t.Fatalf("seed account-owned follow: %v", err)
+	}
+
+	// A different, not-yet-linked device already has its own legacy
+	// device-owned follow for the exact same cat.
+	deviceID := createTestDevice(t, ctx, store)
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{DeviceID: deviceID, CatID: catID}); err != nil {
+		t.Fatalf("seed legacy device follow: %v", err)
+	}
+
+	sms := newRecordingSms()
+	now := time.Now()
+	svc := newAuthService(store, sms, func() time.Time { return now })
+	if err := svc.RequestOTP(ctx, phone); err != nil {
+		t.Fatalf("request otp: %v", err)
+	}
+	session, err := svc.VerifyOTP(ctx, phone, sms.codeFor("+90"+phone), uuid.UUID(deviceID.Bytes).String())
+	if err != nil {
+		t.Fatalf("verify otp (a conflicting legacy follow must not fail linking): %v", err)
+	}
+	if session.UserID != uuid.UUID(userID.Bytes).String() {
+		t.Fatalf("expected verify otp to resolve to the pre-existing account, got a different user")
+	}
+
+	rows, err := store.ListFollowedCats(ctx, userID)
+	if err != nil {
+		t.Fatalf("list followed cats: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != catID {
+		t.Fatalf("expected exactly one follow row for (user, cat), got %+v", rows)
+	}
+}
+
 // TestAuthService_VerifyOTP_DeviceLinkedToOtherAccount_NeverBackfills is the
 // explicit regression for "must not silently transfer ownership" against a
 // real database: a device rejected for belonging to a different account
