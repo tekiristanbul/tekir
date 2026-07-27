@@ -66,7 +66,7 @@ class DiscoverApi {
           'lat': lat,
           'lng': lng,
           'filter': filter.wireValue,
-          'cursor': ?cursor,
+          if (cursor != null) 'cursor': cursor,
         },
       );
       final body = response.data ?? const <String, dynamic>{};
