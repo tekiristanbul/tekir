@@ -34,11 +34,15 @@ lib/
     needs_help/
     notifications/
     account/
+    profile/
+    badges/
     auth/
     follow/
 ```
 
-- of this tree, `map/`, `cat_detail/`, `auth/`, `follow/`, `account/`, `add_cat/` (issue #70), `needs_help/` (issue #78), and `notifications/` (issue #78) exist; `add_update/` and `discover/` are still planned, not yet built — ordinary-update composition currently lives inside `cat_detail/ui/` (`CatUpdateSheet`) rather than its own feature slice.
+- of this tree, `map/`, `cat_detail/`, `auth/`, `follow/`, `account/`, `add_cat/` (issue #70), `needs_help/` (issue #78), `notifications/` (issue #78), `profile/` (issue #80), and `badges/` (issue #80) exist; `add_update/` and `discover/` are still planned, not yet built — ordinary-update composition currently lives inside `cat_detail/ui/` (`CatUpdateSheet`) rather than its own feature slice.
+- `account/` remains the settings/logout/guest-gate shell (issue #58's foundation, unchanged in shape by issue #80); `profile/` is the richer, separate authenticated identity surface (display name, contribution totals, badges strip, recent contributions) the approved prototype's own profile screen maps to — its own settings button links into `account/`, mirroring how the prototype keeps "Profil" and "Ayarlar" as two distinct screens rather than one. Unlike the prototype (whose profile tab lives on a persistent bottom nav bar this app has never built), `profile/` and `notifications/` are both reached the same way: a gated icon button on the map screen (`AuthGate.require`, same pattern for both) — this app's flat, map-first architecture has no persistent tab bar.
+- the update-correction sheet (issue #80, `cat_detail/ui/update_correction_sheet.dart`) has no prototype screen to port — the approved prototype's own correction-window logic (`canDeleteUpdate`/`deleteWindowLeft`) was data-layer only, never wired to any rendered screen. Its shell/copy/state conventions are instead drawn from this app's own existing sheets (`CatUpdateSheet`'s status-pill grid, `NeedsHelpSheet`'s inline-error-banner and toast conventions).
 - each feature has a small `data/` and `ui/` boundary; no separate domain layer is required for mvp.
 - the approved interactive mvp prototype and `docs/design/implementation-contract.md` are the source of truth for final visual tokens and component behavior.
 - `app_theme.dart` implements those approved tokens; visual choices are not left as an architecture open question.

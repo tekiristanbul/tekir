@@ -19,7 +19,6 @@ define what makes the product's information reliable without making contribution
 ## open questions
 
 - how a "trusted contributor" is defined is not decided.
-- the exact update correction/removal grace period is not decided.
 
 ## out of scope
 

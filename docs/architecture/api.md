@@ -72,23 +72,31 @@ issue #42 removed permanent cat traits from the mvp surface. behavioral observat
 an update is either an ordinary structured-status update or a needs-help update. both are authenticated contributions.
 
 ```
-GET  /v1/cats/{cat_id}/updates?cursor=&limit=   → { items: [{ id, kind, statuses[], comment|null, created_at,
+GET    /v1/cats/{cat_id}/updates?cursor=&limit=   (optional Bearer)   → { items: [{ id, kind, statuses[], comment|null, created_at,
                                                               needs_help_category|null, needs_help_category_label|null,
-                                                              needs_help_expires_at|null, needs_help_active|null }],
+                                                              needs_help_expires_at|null, needs_help_active|null,
+                                                              author_is_me, correction_expires_at|null }],
                                                      next_cursor|null }
-POST /v1/cats/{cat_id}/updates     (Bearer required)  { statuses[], comment? }  → 201 { id, kind, statuses[], comment|null, created_at }
-POST /v1/cats/{cat_id}/needs-help  (Bearer required)  { category, comment? }    → 201 { id, kind, comment|null, created_at,
+POST   /v1/cats/{cat_id}/updates     (Bearer required)  { statuses[], comment? }  → 201 { id, kind, statuses[], comment|null, created_at,
+                                                                                           author_is_me, correction_expires_at }
+POST   /v1/cats/{cat_id}/needs-help  (Bearer required)  { category, comment? }    → 201 { id, kind, comment|null, created_at,
                                                                                         needs_help_category, needs_help_category_label,
                                                                                         needs_help_expires_at, needs_help_active }  (implemented — issue #78)
+PATCH  /v1/cats/{cat_id}/updates/{update_id}  (Bearer required)  { statuses[], comment? }  → 200 { id, kind, statuses[], comment|null,
+                                                                                                    created_at, updated_at, author_is_me,
+                                                                                                    correction_expires_at }   (implemented — issue #80)
+DELETE /v1/cats/{cat_id}/updates/{update_id}  (Bearer required)                             → 204   (implemented — issue #80)
 POST /v1/media                      (Bearer required; X-Device-Token optional; Idempotency-Key optional)  multipart file → 201 { media_id, url }  (implemented — issue #70)
 GET  /v1/media/objects/{key}                                                    → the object's raw bytes  (implemented — issue #70)
 ```
 
-`GET /v1/cats/{cat_id}/updates` is implemented (issue #21, extended in #23), newest first and keyset-paginated on `(created_at, seq)`.
+`GET /v1/cats/{cat_id}/updates` is implemented (issue #21, extended in #23), newest first and keyset-paginated on `(created_at, seq)`. `OptionalBearer` (issue #80) resolves the caller's own account when a valid bearer is presented, without requiring one — a guest read is unaffected. `author_is_me` is `true` only when the caller's own account id matches the entry's author; `correction_expires_at` is non-null only when `author_is_me && kind == 'ordinary'` (`created_at + 10m`, docs/product/updates.md's fixed window) and is present purely so the client can show the correction affordance/countdown without guessing ownership — the server remains the sole authority on whether an actual correction succeeds. A soft-deleted update (see below) is excluded from this list entirely, for every reader including its own author.
 
-`POST /v1/cats/{cat_id}/updates` resolves the authenticated account from `Authorization: Bearer` (implemented — issue #65, superseding #36's earlier device-token-only contract); `X-Device-Token` may still be supplied and is recorded alongside the account for installation/abuse-control association, but is never sufficient authorization on its own. `statuses` remains a non-empty set from `seen`, `fed`, and `water_provided`; comment-only requests remain invalid. the server derives author (account and, optionally, device) and timestamps and writes the update, statuses, `last_update_at`, and notification outbox entry transactionally.
+`POST /v1/cats/{cat_id}/updates` resolves the authenticated account from `Authorization: Bearer` (implemented — issue #65, superseding #36's earlier device-token-only contract); `X-Device-Token` may still be supplied and is recorded alongside the account for installation/abuse-control association, but is never sufficient authorization on its own. `statuses` remains a non-empty set from `seen`, `fed`, and `water_provided`; comment-only requests remain invalid. the server derives author (account and, optionally, device) and timestamps and writes the update, statuses, `last_update_at`, and notification outbox entry transactionally. `author_is_me` is always `true` and `correction_expires_at` always `created_at + 10m` on this response (issue #80) — the caller always authored what they just created, and it's always freshly inside its own correction window — so the client can show the correction affordance immediately, without waiting for a reload.
 
 `POST /v1/cats/{cat_id}/needs-help` (implemented — issue #78) also requires bearer authentication; `X-Device-Token` is optional installation/abuse-control association only, identical to the ordinary-update contract above. `category` must be one of the fixed 5-value vocabulary; `expires_at` is server-computed as `created_at + 72h` (never client-supplied). The write and its `notification_outbox` enqueue commit transactionally, exactly like an ordinary update — see [[db]]/[[backend]] for how that outbox row is later drained.
+
+`PATCH`/`DELETE /v1/cats/{cat_id}/updates/{update_id}` (implemented — issue #80) let the author correct or soft-delete their own ordinary update within the fixed 10-minute window (docs/product/updates.md). Authorization (author match), the window check, and concurrency safety are all enforced in a single conditional sql update statement (see [[db]]) rather than separate read-then-write checks, so a stale or duplicate retry can't race past expiry or overwrite newer state. `kind`, author identity, and `created_at` are never alterable through either path — `PATCH` only ever changes `statuses`/`comment` (`updated_at` is server-derived); `DELETE` only ever sets `deleted_at`, never removing the row (see [[db]]). A needs-help update is never a correctable resource through this path at all (its own fixed 72h lifecycle has no manual resolve) — attempting either verb against one answers `404`, identically to an update id that doesn't exist under this `cat_id`. Error taxonomy: `400` malformed body/invalid statuses, `401` missing/invalid bearer, `403` the update exists under this cat but isn't the caller's own (not collapsed into `404` — the full history is already public per [[privacy]], so confirming "exists, but isn't yours" leaks nothing a guest couldn't already see), `404` unknown update/needs-help kind, `410` the window has closed (mirrors the existing otp/verify `410` convention). A retry against an already-deleted row answers success (`204`), not an error — the same idempotent-retry convention this api already uses for `POST /v1/auth/logout` and `POST /v1/me/notifications/{id}/read`.
 
 `POST /v1/media` (issue #70) is standalone media upload — independent of cat creation (a cat's own required initial photo is instead embedded directly in `POST /v1/cats`, above). Validation, ownership resolution, and `Idempotency-Key` handling are identical to `POST /v1/cats`'s photo (same shared pipeline, see [[backend]]). Not yet wired to any other write path — `updates.media_id` exists in [[db]] but no update-creation endpoint accepts one yet; this endpoint exists so that future path has somewhere to upload to.
 
@@ -109,6 +117,22 @@ following is private, account-owned state (matching [[community]]) and does not 
 `GET /v1/me/notifications` resolves the caller's own devices server-side (never another account's, even a former owner of a now-reassigned device) and returns only what was actually delivered to one of them — see [[db]]'s `notifications` table. `POST .../read` is owner-scoped the same way and idempotent (marking an already-read notification read again is a no-op, never an error).
 
 push delivery remains at-most-once for mvp through the notification outbox and notifications uniqueness constraint. issue #78 introduces the provider-neutral `NotificationSender` interface this depends on (see [[backend]]) — only a deterministic fake/dev-test implementation is wired for mvp; a real push vendor is out of scope and the worker fails to start rather than silently falling back to fake if misconfigured.
+
+### profile / badges
+
+```
+GET /v1/me/profile   (Bearer required)   → 200 { display_name|null,
+                                                  contribution_totals { updates, helps, cats_added, distinct_cats },
+                                                  badges: [{ id, name, icon, condition, descr, value, target, earned, earned_at|null }],
+                                                  recent_contributions: [{ type, cat_id, cat_name, cat_primary_photo|null,
+                                                                            statuses[]?, needs_help_category|null, needs_help_category_label|null,
+                                                                            created_at }] }   (implemented — issue #80)
+GET /v1/me/badges    (Bearer required)   → 200 { items: [{ id, name, icon, condition, descr, value, target, earned, earned_at|null }] }   (implemented — issue #80)
+```
+
+both are own-account-only this mvp slice — there is no `GET /v1/users/{id}/profile` or any other route exposing another account's profile; issue #80's acceptance criteria describes viewing one's own surface, not a public profile-viewing feature. `display_name` is nullable (an account that never completed the new-account display-name step). `badges` is always all 5 fixed mvp badges (docs/product/badges.md), earned or not, in the same fixed order — never a filtered or reordered list; `earned_at` is non-null only when `earned`. `recent_contributions` is a fixed-size (8), newest-first list capped server-side — `statuses`/`needs_help_category`/`needs_help_category_label` mirror `GET .../updates`'s own shape exactly, so the client composes display copy for a recent contribution the same way it already does for the cat-detail timeline, rather than the server pre-composing a label string. everything here is derived server-side from the account's own `updates`/`cats` rows at request time (see [[db]]) — never a client-supplied counter, badge id, or timestamp.
+
+curated profile avatars (mentioned in docs/product/community.md/privacy.md) are explicitly deferred past this slice: no avatar field exists in this response and no avatar-selection endpoint exists — there is no defined curated set (asset list, count, or picker) anywhere in the product/design references to build against yet. a future slice adds this once that set is defined.
 
 ### modeling notes
 
