@@ -91,6 +91,18 @@ class Profile {
   final List<BadgeStatus> badges;
   final List<RecentContribution> recentContributions;
 
+  /// Only ever used to reflect a just-saved display name immediately
+  /// (issue #80 product-owner review, finding 2), so a full re-fetch isn't
+  /// needed for the edit sheet's own success path.
+  Profile copyWith({String? displayName}) {
+    return Profile(
+      displayName: displayName ?? this.displayName,
+      totals: totals,
+      badges: badges,
+      recentContributions: recentContributions,
+    );
+  }
+
   factory Profile.fromJson(Map<String, dynamic> json) {
     return Profile(
       displayName: json['display_name'] as String?,

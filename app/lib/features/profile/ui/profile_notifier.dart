@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../auth/data/auth_api.dart';
 import '../data/profile.dart';
 import '../data/profile_api.dart';
 
@@ -45,6 +46,22 @@ class ProfileNotifier extends Notifier<ProfileState> {
       state = ProfileState(profile: profile, hasLoadedOnce: true);
     } catch (e) {
       state = state.copyWith(isLoading: false, hasLoadedOnce: true, error: e);
+    }
+  }
+
+  /// Saves a new display name through the existing `PATCH /v1/me` contract
+  /// (issue #80 product-owner review, finding 2) and reflects it in
+  /// [state] immediately on success — no full re-fetch needed. Rethrows the
+  /// mapped [AuthApi] exception on failure so the edit sheet can surface
+  /// its own inline error, mirroring [FollowsNotifier.toggle]'s convention
+  /// of only updating local state once the call actually succeeds.
+  Future<void> updateDisplayName(String displayName) async {
+    await ref.read(authApiProvider).setDisplayName(displayName);
+    final current = state.profile;
+    if (current != null) {
+      state = state.copyWith(
+        profile: current.copyWith(displayName: displayName),
+      );
     }
   }
 }

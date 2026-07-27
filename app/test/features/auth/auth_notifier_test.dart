@@ -452,6 +452,34 @@ void main() {
       expect(api.lastDisplayName, isNull);
     });
 
+    test(
+      'a name over 60 chars is rejected locally, no api call made',
+      () async {
+        final api = _FakeAuthApi();
+        final container = _containerWith(api);
+        final notifier = container.read(authProvider.notifier);
+        notifier.setName('a' * 61);
+
+        final done = await notifier.submitName();
+
+        expect(done, isFalse);
+        expect(container.read(authProvider).error, AuthError.nameTooLong);
+        expect(api.lastDisplayName, isNull);
+      },
+    );
+
+    test('a name at exactly 60 chars is accepted', () async {
+      final api = _FakeAuthApi();
+      final container = _containerWith(api);
+      final notifier = container.read(authProvider.notifier);
+      notifier.setName('a' * 60);
+
+      final done = await notifier.submitName();
+
+      expect(done, isTrue);
+      expect(api.lastDisplayName, 'a' * 60);
+    });
+
     test('a valid name finishes the flow, trimmed', () async {
       final api = _FakeAuthApi();
       final container = _containerWith(api);

@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:app/core/identity/session_identity.dart';
 import 'package:app/core/theme/app_theme.dart';
+import 'package:app/features/auth/data/auth_api.dart';
 import 'package:app/features/badges/data/badge.dart';
 import 'package:app/features/profile/data/profile.dart';
 import 'package:app/features/profile/data/profile_api.dart';
@@ -53,6 +54,26 @@ class _FakeProfileApi implements ProfileApi {
   }
 }
 
+class _FakeAuthApi implements AuthApi {
+  String? nextDisplayName;
+  Object? nextSetNameError;
+
+  @override
+  Future<void> requestOtp(String phone) async {}
+
+  @override
+  Future<AuthSession> verifyOtp({
+    required String phone,
+    required String code,
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<void> setDisplayName(String displayName) async {
+    if (nextSetNameError != null) throw nextSetNameError!;
+    nextDisplayName = displayName;
+  }
+}
+
 BadgeStatus _unearnedBadge(String id) => BadgeStatus(
   id: id,
   name: 'Badge $id',
@@ -69,6 +90,7 @@ Future<void> _pump(
   WidgetTester tester, {
   required SessionIdentity? session,
   _FakeProfileApi? profileApi,
+  _FakeAuthApi? authApi,
 }) async {
   final router = GoRouter(
     routes: [
@@ -103,6 +125,7 @@ Future<void> _pump(
         ),
         if (profileApi != null)
           profileApiProvider.overrideWithValue(profileApi),
+        if (authApi != null) authApiProvider.overrideWithValue(authApi),
       ],
       child: MaterialApp.router(theme: AppTheme.light, routerConfig: router),
     ),
@@ -302,5 +325,104 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('account screen'), findsOneWidget);
+  });
+
+  group('edit display name', () {
+    Profile profileWith(String? name) => Profile(
+      displayName: name,
+      totals: const ContributionTotals(
+        updates: 0,
+        helps: 0,
+        catsAdded: 0,
+        distinctCats: 0,
+      ),
+      badges: [_unearnedBadge('first_sighting')],
+      recentContributions: const [],
+    );
+
+    testWidgets('tapping the name opens the edit sheet, prefilled', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        session: _session,
+        profileApi: _FakeProfileApi(nextProfile: profileWith('Ada')),
+        authApi: _FakeAuthApi(),
+      );
+
+      await tester.tap(find.text('Ada'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Görünen adını düzenle'), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'Ada'), findsOneWidget);
+    });
+
+    testWidgets('submitting a valid new name updates the profile immediately', (
+      tester,
+    ) async {
+      final authApi = _FakeAuthApi();
+      await _pump(
+        tester,
+        session: _session,
+        profileApi: _FakeProfileApi(nextProfile: profileWith('Ada')),
+        authApi: authApi,
+      );
+
+      await tester.tap(find.text('Ada'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Yeni İsim');
+      await tester.tap(find.text('Kaydet'));
+      await tester.pumpAndSettle();
+
+      expect(authApi.nextDisplayName, 'Yeni İsim');
+      expect(find.text('Görünen adını düzenle'), findsNothing);
+      expect(find.text('Yeni İsim'), findsOneWidget);
+    });
+
+    testWidgets('an empty name is rejected locally, no api call made', (
+      tester,
+    ) async {
+      final authApi = _FakeAuthApi();
+      await _pump(
+        tester,
+        session: _session,
+        profileApi: _FakeProfileApi(nextProfile: profileWith('Ada')),
+        authApi: authApi,
+      );
+
+      await tester.tap(find.text('Ada'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), '   ');
+      await tester.tap(find.text('Kaydet'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Bir isim gir'), findsOneWidget);
+      expect(authApi.nextDisplayName, isNull);
+      expect(find.text('Görünen adını düzenle'), findsOneWidget);
+    });
+
+    testWidgets('a name over 60 chars is rejected locally, no api call made', (
+      tester,
+    ) async {
+      final authApi = _FakeAuthApi();
+      await _pump(
+        tester,
+        session: _session,
+        profileApi: _FakeProfileApi(nextProfile: profileWith('Ada')),
+        authApi: authApi,
+      );
+
+      await tester.tap(find.text('Ada'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'a' * 61);
+      await tester.tap(find.text('Kaydet'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('İsim en fazla 60 karakter olabilir'), findsOneWidget);
+      expect(authApi.nextDisplayName, isNull);
+    });
   });
 }

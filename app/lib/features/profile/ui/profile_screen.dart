@@ -8,6 +8,7 @@ import '../../../core/utils/relative_time.dart';
 import '../../badges/data/badge.dart';
 import '../../badges/ui/badge_icons.dart';
 import '../data/profile.dart';
+import 'edit_display_name_sheet.dart';
 import 'profile_notifier.dart';
 
 const _statusLabelsTr = {
@@ -39,6 +40,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ref.read(profileProvider.notifier).load();
       }
     });
+  }
+
+  Future<void> _openEditDisplayName(String? currentName) async {
+    await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      // ProfileScreen is a StatefulShellRoute branch root (app_router.dart)
+      // with its own nested Navigator — without this, the sheet paints
+      // underneath the shell's persistent add-cat fab (app_shell.dart),
+      // mirroring map_screen.dart's identical CatPreviewSheet fix.
+      useRootNavigator: true,
+      builder: (_) => EditDisplayNameSheet(currentName: currentName),
+    );
   }
 
   @override
@@ -79,9 +93,29 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     }
     return ListView(
       children: [
-        Text(
-          profile.displayName ?? 'İsimsiz kullanıcı',
-          style: Theme.of(context).textTheme.titleLarge,
+        InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          onTap: () => _openEditDisplayName(profile.displayName),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.s1),
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    profile.displayName ?? 'İsimsiz kullanıcı',
+                    style: Theme.of(context).textTheme.titleLarge,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.s2),
+                const Icon(
+                  Icons.edit_outlined,
+                  size: 18,
+                  color: AppColors.faint,
+                ),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: AppSpacing.s5),
         _StatRow(totals: profile.totals),

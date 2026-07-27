@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/identity/device_identity.dart';
 import '../../../core/identity/session_identity.dart';
+import '../../../core/validation/display_name.dart';
 import '../data/auth_api.dart';
 
 /// The three prototype steps (prototype/app.js's login screen): phone
@@ -22,6 +23,7 @@ enum AuthError {
   deviceConflict,
   staleDeviceCredential,
   nameRequired,
+  nameTooLong,
   network,
   server,
 }
@@ -44,6 +46,7 @@ String authErrorMessageTr(AuthError error) {
     AuthError.deviceConflict => 'Bu cihaz başka bir hesaba bağlı',
     AuthError.staleDeviceCredential => 'Cihaz kimliği yenilendi, tekrar dene',
     AuthError.nameRequired => 'Bir isim gir',
+    AuthError.nameTooLong => 'İsim en fazla 60 karakter olabilir',
     AuthError.network => 'Bağlantı sorunu, tekrar dene',
     AuthError.server => 'Sunucuya ulaşılamadı, birazdan tekrar dene',
   };
@@ -243,6 +246,10 @@ class AuthNotifier extends Notifier<AuthState> {
     final trimmed = state.name.trim();
     if (trimmed.isEmpty) {
       state = state.copyWith(error: AuthError.nameRequired);
+      return false;
+    }
+    if (trimmed.length > maxDisplayNameLength) {
+      state = state.copyWith(error: AuthError.nameTooLong);
       return false;
     }
 
