@@ -516,7 +516,7 @@ func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds) ([]CatMarke
 // reachable through this method at all — it stays private, account-owned
 // state served by GET /v1/me/follows (FollowsService), never this public,
 // guest-readable read path. cursor is the opaque token from a previous
-// page's NextCursor, or "" for the first page; limit <= 0 falls back to
+// page's NextCursor, or "" for the first page; limit == 0 falls back to
 // defaultDiscoverLimit, matching ListCatUpdates' own convention.
 func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng float64, cursor string, limit int) (DiscoverPage, error) {
 	if filter != discoverFilterNearby && filter != discoverFilterNeedsHelp {
