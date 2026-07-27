@@ -65,6 +65,17 @@ type fakeCatsLister struct {
 
 	correctionCheckRow repository.GetUpdateForCorrectionCheckRow
 	correctionCheckErr error
+
+	distanceRows []repository.ListCatsByDistanceRow
+	distanceErr  error
+	// capturedDistance mirrors captured above, for ListCatsByDistance.
+	capturedDistance *repository.ListCatsByDistanceParams
+
+	needsHelpDistanceRows []repository.ListActiveNeedsHelpCatsByDistanceRow
+	needsHelpDistanceErr  error
+	// capturedNeedsHelpDistance mirrors captured above, for
+	// ListActiveNeedsHelpCatsByDistance.
+	capturedNeedsHelpDistance *repository.ListActiveNeedsHelpCatsByDistanceParams
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
@@ -129,6 +140,20 @@ func (f fakeCatsLister) DeleteOwnUpdate(ctx context.Context, arg repository.Dele
 
 func (f fakeCatsLister) GetUpdateForCorrectionCheck(ctx context.Context, arg repository.GetUpdateForCorrectionCheckParams) (repository.GetUpdateForCorrectionCheckRow, error) {
 	return f.correctionCheckRow, f.correctionCheckErr
+}
+
+func (f fakeCatsLister) ListCatsByDistance(ctx context.Context, arg repository.ListCatsByDistanceParams) ([]repository.ListCatsByDistanceRow, error) {
+	if f.capturedDistance != nil {
+		*f.capturedDistance = arg
+	}
+	return f.distanceRows, f.distanceErr
+}
+
+func (f fakeCatsLister) ListActiveNeedsHelpCatsByDistance(ctx context.Context, arg repository.ListActiveNeedsHelpCatsByDistanceParams) ([]repository.ListActiveNeedsHelpCatsByDistanceRow, error) {
+	if f.capturedNeedsHelpDistance != nil {
+		*f.capturedNeedsHelpDistance = arg
+	}
+	return f.needsHelpDistanceRows, f.needsHelpDistanceErr
 }
 
 func TestCatsService_ListNearby(t *testing.T) {
@@ -1382,5 +1407,221 @@ func TestCatsService_DeleteOwnUpdate_WindowExpired(t *testing.T) {
 	err := svc.DeleteOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), userID.String())
 	if !errors.Is(err, ErrCorrectionWindowExpired) {
 		t.Fatalf("expected ErrCorrectionWindowExpired, got %v", err)
+	}
+}
+
+// galataLat/galataLng are a real inside-istanbulBounds coordinate (Galata
+// Kulesi), reused across ListDiscover tests exactly like
+// TestCatsService_ListNearby above reuses the same landmark for its own
+// fixture coordinates.
+const (
+	galataLat = 41.0256
+	galataLng = 28.9744
+)
+
+func TestCatsService_ListDiscover_InvalidFilter(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{})
+
+	_, err := svc.ListDiscover(context.Background(), "popular", galataLat, galataLng, "", 0)
+	if !errors.Is(err, ErrInvalidDiscoverFilter) {
+		t.Fatalf("expected ErrInvalidDiscoverFilter, got %v", err)
+	}
+}
+
+func TestCatsService_ListDiscover_InvalidArea(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{})
+
+	// well outside istanbulBounds (e.g. ankara).
+	_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, 39.93, 32.85, "", 0)
+	if !errors.Is(err, ErrInvalidArea) {
+		t.Fatalf("expected ErrInvalidArea, got %v", err)
+	}
+}
+
+func TestCatsService_ListDiscover_InvalidLimit(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{})
+
+	for _, limit := range []int{-1, maxDiscoverLimit + 1} {
+		if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", limit); !errors.Is(err, ErrInvalidLimit) {
+			t.Errorf("limit %d: expected ErrInvalidLimit, got %v", limit, err)
+		}
+	}
+}
+
+func TestCatsService_ListDiscover_InvalidCursor(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{})
+
+	_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "not-base64!!", 0)
+	if !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("expected ErrInvalidCursor, got %v", err)
+	}
+}
+
+func TestCatsService_ListDiscover_Nearby_PaginatesAndEncodesCursor(t *testing.T) {
+	nearID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	midID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	farID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+
+	var captured repository.ListCatsByDistanceParams
+	svc := NewCatsService(fakeCatsLister{
+		capturedDistance: &captured,
+		// limit+1 rows, exactly like ListCatUpdates' own pagination test.
+		distanceRows: []repository.ListCatsByDistanceRow{
+			{ID: nearID, Name: pgtype.Text{String: "tekir", Valid: true}, PhotoUrl: "https://placecats.com/a/200/200", DistanceM: 50},
+			{ID: midID, Name: pgtype.Text{String: "boncuk", Valid: true}, PhotoUrl: "https://placecats.com/b/200/200", DistanceM: 120},
+			{ID: farID, Name: pgtype.Text{String: "pamuk", Valid: true}, PhotoUrl: "https://placecats.com/c/200/200", DistanceM: 900},
+		},
+	})
+
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 2)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("expected 2 items on the first page, got %d", len(page.Items))
+	}
+	if page.Items[0].DistanceMeters != 50 || page.Items[1].DistanceMeters != 120 {
+		t.Errorf("unexpected distances: %v, %v", page.Items[0].DistanceMeters, page.Items[1].DistanceMeters)
+	}
+	if page.NextCursor == "" {
+		t.Fatal("expected a next cursor, got none")
+	}
+
+	// the request reaching the store must ask for limit+1 rows and carry
+	// the caller's own lat/lng through untouched.
+	if captured.RowLimit != 3 {
+		t.Errorf("expected row_limit 3 (limit+1), got %d", captured.RowLimit)
+	}
+	if captured.Lat != galataLat || captured.Lng != galataLng {
+		t.Errorf("expected lat/lng %v/%v, got %v/%v", galataLat, galataLng, captured.Lat, captured.Lng)
+	}
+	if captured.AfterDistanceM.Valid {
+		t.Errorf("expected no after_distance_m on the first page, got %v", captured.AfterDistanceM)
+	}
+
+	// the cursor must round-trip back to the position of the last item served.
+	decoded, err := decodeDiscoverCursor(page.NextCursor)
+	if err != nil {
+		t.Fatalf("expected cursor to decode, got %v", err)
+	}
+	if decoded.distanceMeters != 120 || decoded.id != uuid.UUID(midID.Bytes).String() {
+		t.Errorf("expected cursor at (120, %s), got (%v, %s)", uuid.UUID(midID.Bytes).String(), decoded.distanceMeters, decoded.id)
+	}
+
+	// a second page, presenting that cursor, must decode it back into the
+	// after_distance_m/after_id the store receives — real windowing (the
+	// store actually honoring that predicate to return the next rows) is
+	// postgres's job, exercised by the repository integration test, not
+	// this fake, which always returns the same fixed rows regardless of
+	// what it was asked for.
+	if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, page.NextCursor, 2); err != nil {
+		t.Fatalf("expected no error on second page, got %v", err)
+	}
+	if !captured.AfterDistanceM.Valid || captured.AfterDistanceM.Float64 != 120 {
+		t.Errorf("expected after_distance_m 120, got %v", captured.AfterDistanceM)
+	}
+	if uuid.UUID(captured.AfterID.Bytes).String() != uuid.UUID(midID.Bytes).String() {
+		t.Errorf("expected after_id %s, got %s", uuid.UUID(midID.Bytes).String(), uuid.UUID(captured.AfterID.Bytes).String())
+	}
+}
+
+func TestCatsService_ListDiscover_Nearby_NoNextPageWhenExactlyLimitRows(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{
+		distanceRows: []repository.ListCatsByDistanceRow{
+			{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, DistanceM: 50},
+		},
+	})
+
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 5)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(page.Items))
+	}
+	if page.NextCursor != "" {
+		t.Errorf("expected no next cursor when fewer rows than limit+1 came back, got %q", page.NextCursor)
+	}
+}
+
+func TestCatsService_ListDiscover_NeedsHelp_PassesClockAsNow(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
+	var captured repository.ListActiveNeedsHelpCatsByDistanceParams
+	svc := NewCatsService(fakeCatsLister{
+		capturedNeedsHelpDistance: &captured,
+		needsHelpDistanceRows: []repository.ListActiveNeedsHelpCatsByDistanceRow{
+			{
+				ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				NeedsHelpCategory:  pgtype.Text{String: "injured_or_sick", Valid: true},
+				NeedsHelpCreatedAt: pgtype.Timestamptz{Time: fixedNow.Add(-time.Hour), Valid: true},
+				NeedsHelpExpiresAt: pgtype.Timestamptz{Time: fixedNow.Add(time.Hour), Valid: true},
+				DistanceM:          200,
+			},
+		},
+	}, WithClock(func() time.Time { return fixedNow }))
+
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "", 0)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !captured.Now.Valid || !captured.Now.Time.Equal(fixedNow) {
+		t.Fatalf("expected the query's now param to equal the service's own clock, got %v", captured.Now)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(page.Items))
+	}
+	if page.Items[0].ActiveAlert == nil {
+		t.Fatal("expected an active alert to be derived for a row the needs_help query already filtered as active")
+	}
+	if page.Items[0].ActiveAlert.Category != "injured_or_sick" {
+		t.Errorf("unexpected category: %s", page.Items[0].ActiveAlert.Category)
+	}
+}
+
+// TestCatsService_ListDiscover_NeedsHelp_ExactExpiryBoundary mirrors
+// TestCatsService_ListNearby_ActiveAlertBoundaries: deriveActiveAlert treats
+// an update expiring at exactly the clock's current instant as no longer
+// active (!expiresAt.After(clock()), not >=) — this only matters here
+// because ListDiscover reuses one pinned `now` reading (see its own
+// comment) for both the query param an integration-tested database would
+// filter on and this in-process derivation; a row that (in a real database)
+// could never actually be returned by the needs_help query at this exact
+// boundary is still exercised here to prove the Go-side derivation agrees
+// with the SQL-side boundary rather than drifting a moment later.
+func TestCatsService_ListDiscover_NeedsHelp_ExactExpiryBoundary(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
+	svc := NewCatsService(fakeCatsLister{
+		needsHelpDistanceRows: []repository.ListActiveNeedsHelpCatsByDistanceRow{
+			{
+				ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				NeedsHelpCategory:  pgtype.Text{String: "trapped", Valid: true},
+				NeedsHelpCreatedAt: pgtype.Timestamptz{Time: fixedNow.Add(-time.Hour), Valid: true},
+				NeedsHelpExpiresAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+				DistanceM:          75,
+			},
+		},
+	}, WithClock(func() time.Time { return fixedNow }))
+
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "", 0)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if page.Items[0].ActiveAlert != nil {
+		t.Error("expected no active alert exactly at the expiry boundary")
+	}
+}
+
+func TestCatsService_ListDiscover_EmptyResult(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{})
+
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 0)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(page.Items) != 0 {
+		t.Fatalf("expected no items, got %d", len(page.Items))
+	}
+	if page.NextCursor != "" {
+		t.Errorf("expected no next cursor for an empty result, got %v", page.NextCursor)
 	}
 }

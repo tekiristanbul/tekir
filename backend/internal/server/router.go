@@ -37,6 +37,7 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 
 	r.Get("/v1/cats", cats.Nearby)
 	r.Get("/v1/cats/nearby", cats.NearbyDuplicates)
+	r.Get("/v1/cats/discover", cats.Discover)
 	r.Get("/v1/cats/{cat_id}", cats.Detail)
 	r.With(handler.OptionalBearer(accessTokens)).Get("/v1/cats/{cat_id}/updates", cats.UpdateHistory)
 	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/cats", cats.Create)

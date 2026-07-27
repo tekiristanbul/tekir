@@ -211,6 +211,83 @@ func (h *CatsHandler) NearbyDuplicates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toDuplicateCandidateResponses(candidates))
 }
 
+// discoverCatResponse is one entry of GET /v1/cats/discover's paginated
+// result (issue #82) — the same map-marker-preview fields catMarkerResponse
+// carries, minus area (this is a distance-ordered list, not a viewport —
+// tapping an entry opens the existing cat-detail flow, which fetches its
+// own coordinates), plus DistanceMeters, the field this endpoint adds.
+type discoverCatResponse struct {
+	ID             string               `json:"id"`
+	Name           string               `json:"name"`
+	PrimaryPhoto   string               `json:"primary_photo"`
+	AreaLabel      *string              `json:"area_label"`
+	DistanceMeters float64              `json:"distance_meters"`
+	ActiveAlert    *activeAlertResponse `json:"active_alert"`
+	LastUpdateAt   *time.Time           `json:"last_update_at"`
+}
+
+// discoverPageResponse is GET /v1/cats/discover's page envelope — the same
+// shape as updateHistoryResponse: NextCursor is null once the last page has
+// been served.
+type discoverPageResponse struct {
+	Items      []discoverCatResponse `json:"items"`
+	NextCursor *string               `json:"next_cursor"`
+}
+
+// Discover answers GET /v1/cats/discover?lat=&lng=&filter=nearby|needs_help
+// &cursor=&limit= (issue #82): the location-aware half of the mvp discover
+// screen's three surfaces (docs/product/discovery.md) — every active cat,
+// or only those with a currently active needs-help alert, nearest first
+// from the caller's own (lat, lng). Public: like GET /v1/cats' bbox mode
+// and GET /v1/cats/nearby, a guest reaches this with no bearer at all — the
+// third discovery surface (followed cats) is the only one that requires an
+// account, and it stays on GET /v1/me/follows, never this endpoint.
+func (h *CatsHandler) Discover(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	lat, lng, err := parseLatLng(q.Get("lat"), q.Get("lng"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	filter := q.Get("filter")
+
+	limit := 0
+	if raw := q.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be an integer"})
+			return
+		}
+		limit = parsed
+	}
+
+	page, err := h.cats.ListDiscover(r.Context(), filter, lat, lng, q.Get("cursor"), limit)
+	if err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+
+	items := make([]discoverCatResponse, 0, len(page.Items))
+	for _, c := range page.Items {
+		items = append(items, discoverCatResponse{
+			ID:             c.ID,
+			Name:           c.Name,
+			PrimaryPhoto:   c.PrimaryPhoto,
+			AreaLabel:      c.AreaLabel,
+			DistanceMeters: c.DistanceMeters,
+			ActiveAlert:    toActiveAlertResponse(c.ActiveAlert),
+			LastUpdateAt:   c.LastUpdateAt,
+		})
+	}
+
+	var nextCursor *string
+	if page.NextCursor != "" {
+		nextCursor = &page.NextCursor
+	}
+	writeJSON(w, http.StatusOK, discoverPageResponse{Items: items, NextCursor: nextCursor})
+}
+
 // createCatResponse wraps the created cat per docs/architecture/api.md's
 // `201 { cat }` sketch.
 type createCatResponse struct {
@@ -518,6 +595,8 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid needs-help category"})
 	case errors.Is(err, service.ErrInvalidArea):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid area"})
+	case errors.Is(err, service.ErrInvalidDiscoverFilter):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid discover filter"})
 	case errors.Is(err, service.ErrMissingPhoto):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "photo is required"})
 	case errors.Is(err, service.ErrMediaTooLarge):

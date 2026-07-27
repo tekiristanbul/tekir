@@ -54,6 +54,14 @@ var ErrInvalidNeedsHelpCategory = errors.New("invalid needs-help category")
 // (nan/inf/out-of-range lat/lng).
 var ErrInvalidArea = errors.New("invalid area")
 
+// ErrInvalidDiscoverFilter means GET /v1/cats/discover's filter query param
+// (issue #82) wasn't one of the two mvp discovery views this endpoint
+// serves — "nearby" or "needs_help". "following" isn't a value this
+// endpoint recognizes at all: followed cats stay on GET /v1/me/follows
+// (docs/product/discovery.md's third surface is private, account-owned
+// state, not a location-aware read).
+var ErrInvalidDiscoverFilter = errors.New("invalid discover filter")
+
 // ErrMissingPhoto means POST /v1/cats was submitted without the required
 // initial photo (docs/product/cats.md: "the minimum information to add a
 // cat is a photo and a location").
@@ -100,6 +108,22 @@ const (
 	// standalone duplicate-candidate endpoint and POST /v1/cats' own
 	// server-side duplicate check (see Create).
 	duplicateCheckRadiusMeters = 50
+
+	// defaultDiscoverLimit/maxDiscoverLimit (issue #82) mirror
+	// defaultUpdatesLimit/maxUpdatesLimit's exact shape for
+	// GET /v1/cats/discover's own page size.
+	defaultDiscoverLimit = 20
+	maxDiscoverLimit     = 50
+)
+
+// discoverFilterNearby/discoverFilterNeedsHelp are the only two values
+// GET /v1/cats/discover's filter query param accepts (issue #82) — a plain
+// string rather than a Go-side enum type, since it crosses the http
+// boundary as one anyway and this keeps ListDiscover's dispatch a single
+// switch rather than a parse-then-switch.
+const (
+	discoverFilterNearby    = "nearby"
+	discoverFilterNeedsHelp = "needs_help"
 )
 
 // istanbulBounds is the product's one existing geographic-boundary
@@ -216,6 +240,74 @@ type CatMarker struct {
 	LastUpdateAt *time.Time
 }
 
+// DiscoverCat is one entry of GET /v1/cats/discover's paginated result
+// (issue #82): the same map-marker-preview fields ListNearby/ListFollows
+// already return, minus lat/lng (this is a distance-ordered list, not a
+// viewport — a client that needs a cat's coordinates fetches its detail),
+// plus DistanceMeters, the one field this endpoint adds. ActiveAlert is
+// always non-nil for a "needs_help"-filter result (the query itself only
+// returns cats with a currently active alert) and may be nil or non-nil
+// for a "nearby"-filter result, exactly like CatMarker's.
+type DiscoverCat struct {
+	ID             string
+	Name           string
+	PrimaryPhoto   string
+	AreaLabel      *string
+	DistanceMeters float64
+	ActiveAlert    *ActiveAlert
+	LastUpdateAt   *time.Time
+}
+
+// DiscoverPage is one nearest-first page of GET /v1/cats/discover.
+// NextCursor is empty when there is no further page — mirrors UpdatesPage.
+type DiscoverPage struct {
+	Items      []DiscoverCat
+	NextCursor string
+}
+
+// discoverCursor is the decoded, opaque keyset pagination position: the
+// (distance_m, id) of the last item on the previous page. Distinct from
+// updatesCursor (created_at/seq) — this list is ordered by a computed
+// distance, not a stored timestamp.
+type discoverCursor struct {
+	distanceMeters float64
+	id             string
+}
+
+// encodeDiscoverCursor/decodeDiscoverCursor keep the pagination position
+// opaque to clients, mirroring encode/decodeUpdatesCursor's exact shape —
+// distance is encoded via strconv.FormatFloat's shortest-round-trip format
+// ('g', precision -1), the same convention Go's own %v/json float
+// formatting relies on to guarantee ParseFloat(FormatFloat(x)) == x, so
+// re-decoding a page boundary's own distance can never drift from the
+// float64 the database returned it as.
+func encodeDiscoverCursor(c discoverCursor) string {
+	raw := strconv.FormatFloat(c.distanceMeters, 'g', -1, 64) + ":" + c.id
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func decodeDiscoverCursor(raw string) (*discoverCursor, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, ErrInvalidCursor
+	}
+	distPart, idPart, ok := strings.Cut(string(decoded), ":")
+	if !ok {
+		return nil, ErrInvalidCursor
+	}
+	dist, err := strconv.ParseFloat(distPart, 64)
+	if err != nil {
+		return nil, ErrInvalidCursor
+	}
+	if _, err := uuid.Parse(idPart); err != nil {
+		return nil, ErrInvalidCursor
+	}
+	return &discoverCursor{distanceMeters: dist, id: idPart}, nil
+}
+
 // DuplicateCandidate is one nearby existing cat the add-cat flow shows
 // before final submission (issue #70, docs/product/cats.md/trust.md —
 // advisory only, never blocks creation on its own).
@@ -317,6 +409,8 @@ type CatsStore interface {
 	GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error)
 	ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error)
 	CreateCatWithMedia(ctx context.Context, arg repository.CreateCatWithMediaParams) (repository.CreateCatWithMediaRow, error)
+	ListCatsByDistance(ctx context.Context, arg repository.ListCatsByDistanceParams) ([]repository.ListCatsByDistanceRow, error)
+	ListActiveNeedsHelpCatsByDistance(ctx context.Context, arg repository.ListActiveNeedsHelpCatsByDistanceParams) ([]repository.ListActiveNeedsHelpCatsByDistanceRow, error)
 }
 
 type CatsService struct {
@@ -410,6 +504,150 @@ func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds) ([]CatMarke
 		})
 	}
 	return markers, nil
+}
+
+// ListDiscover answers GET /v1/cats/discover (issue #82): active cats
+// nearest-first from (lat, lng), keyset-paginated. filter selects which of
+// the two location-aware mvp discovery surfaces (docs/product/discovery.md)
+// this call serves — discoverFilterNearby (every active cat) or
+// discoverFilterNeedsHelp (only a cat whose latest needs-help update is
+// still active against s.clock(), never the database's own now() or a
+// client-supplied one). The third discovery surface, followed cats, isn't
+// reachable through this method at all — it stays private, account-owned
+// state served by GET /v1/me/follows (FollowsService), never this public,
+// guest-readable read path. cursor is the opaque token from a previous
+// page's NextCursor, or "" for the first page; limit <= 0 falls back to
+// defaultDiscoverLimit, matching ListCatUpdates' own convention.
+func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng float64, cursor string, limit int) (DiscoverPage, error) {
+	if filter != discoverFilterNearby && filter != discoverFilterNeedsHelp {
+		return DiscoverPage{}, ErrInvalidDiscoverFilter
+	}
+	if !withinIstanbul(lat, lng) {
+		return DiscoverPage{}, ErrInvalidArea
+	}
+	if limit == 0 {
+		limit = defaultDiscoverLimit
+	}
+	if limit < 0 || limit > maxDiscoverLimit {
+		return DiscoverPage{}, ErrInvalidLimit
+	}
+	decoded, err := decodeDiscoverCursor(cursor)
+	if err != nil {
+		return DiscoverPage{}, err
+	}
+
+	var afterDistance pgtype.Float8
+	var afterID pgtype.UUID
+	if decoded != nil {
+		afterDistance = pgtype.Float8{Float64: decoded.distanceMeters, Valid: true}
+		// decodeDiscoverCursor already validated decoded.id parses as a
+		// uuid, so the error here can never actually trigger — checked
+		// anyway rather than discarding it.
+		parsedID, err := uuid.Parse(decoded.id)
+		if err != nil {
+			return DiscoverPage{}, ErrInvalidCursor
+		}
+		afterID = pgtype.UUID{Bytes: parsedID, Valid: true}
+	}
+
+	// fetch one extra row to detect a next page, exactly like ListCatUpdates.
+	rowLimit := int32(limit + 1)
+
+	// now is read once and reused for both the needs_help query's own
+	// active-alert filter and this method's own ActiveAlert derivation
+	// below (via the fixedClock closure) — two separate s.clock() calls a
+	// few lines apart would risk the real time.Now() ticking forward
+	// between them, which could make a cat the database just filtered in
+	// as "still active" come back with ActiveAlert == nil (deriveActiveAlert
+	// deciding, a moment later, that it had *just* expired). One instant,
+	// used consistently, is what issue #82's "needs_help returns only cats
+	// whose alert is active... ordered nearest first" requires.
+	now := s.clock()
+	fixedClock := func() time.Time { return now }
+
+	var (
+		items   []DiscoverCat
+		lastRow *discoverRow
+	)
+	switch filter {
+	case discoverFilterNearby:
+		rows, err := s.db.ListCatsByDistance(ctx, repository.ListCatsByDistanceParams{
+			Lng: lng, Lat: lat,
+			AfterDistanceM: afterDistance,
+			AfterID:        afterID,
+			RowLimit:       rowLimit,
+		})
+		if err != nil {
+			return DiscoverPage{}, err
+		}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+		}
+		for _, r := range rows {
+			items = append(items, toDiscoverCat(fixedClock, r.ID, r.Name, r.PhotoUrl, r.AreaLabel, r.LastUpdateAt, r.NeedsHelpCategory, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt, r.DistanceM))
+		}
+		if hasMore && len(rows) > 0 {
+			last := rows[len(rows)-1]
+			lastRow = &discoverRow{id: last.ID, distanceMeters: last.DistanceM}
+		}
+	case discoverFilterNeedsHelp:
+		rows, err := s.db.ListActiveNeedsHelpCatsByDistance(ctx, repository.ListActiveNeedsHelpCatsByDistanceParams{
+			Lng: lng, Lat: lat,
+			Now:            pgtype.Timestamptz{Time: now, Valid: true},
+			AfterDistanceM: afterDistance,
+			AfterID:        afterID,
+			RowLimit:       rowLimit,
+		})
+		if err != nil {
+			return DiscoverPage{}, err
+		}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+		}
+		for _, r := range rows {
+			items = append(items, toDiscoverCat(fixedClock, r.ID, r.Name, r.PhotoUrl, r.AreaLabel, r.LastUpdateAt, r.NeedsHelpCategory, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt, r.DistanceM))
+		}
+		if hasMore && len(rows) > 0 {
+			last := rows[len(rows)-1]
+			lastRow = &discoverRow{id: last.ID, distanceMeters: last.DistanceM}
+		}
+	}
+
+	page := DiscoverPage{Items: items}
+	if lastRow != nil {
+		page.NextCursor = encodeDiscoverCursor(discoverCursor{distanceMeters: lastRow.distanceMeters, id: uuid.UUID(lastRow.id.Bytes).String()})
+	}
+	return page, nil
+}
+
+// discoverRow is the minimal (id, distance) pair ListDiscover needs to
+// build the next page's cursor, kept independent of which of the two
+// per-filter row types (ListCatsByDistanceRow/
+// ListActiveNeedsHelpCatsByDistanceRow) it came from.
+type discoverRow struct {
+	id             pgtype.UUID
+	distanceMeters float64
+}
+
+// toDiscoverCat builds one DiscoverCat from either filter's row fields —
+// both ListCatsByDistanceRow and ListActiveNeedsHelpCatsByDistanceRow share
+// this exact field shape (see their query comments in db/queries/cats.sql),
+// so one conversion serves both switch cases above instead of duplicating
+// it per row type. clock is ListDiscover's fixedClock (a single s.clock()
+// reading pinned for the whole call), not s.clock itself — see ListDiscover's
+// own comment on why.
+func toDiscoverCat(clock func() time.Time, id pgtype.UUID, name pgtype.Text, photoURL string, areaLabel pgtype.Text, lastUpdateAt pgtype.Timestamptz, needsHelpCategory pgtype.Text, needsHelpCreatedAt, needsHelpExpiresAt pgtype.Timestamptz, distanceMeters float64) DiscoverCat {
+	return DiscoverCat{
+		ID:             uuid.UUID(id.Bytes).String(),
+		Name:           name.String,
+		PrimaryPhoto:   photoURL,
+		AreaLabel:      textPtr(areaLabel),
+		DistanceMeters: distanceMeters,
+		ActiveAlert:    deriveActiveAlert(clock, needsHelpCategory, needsHelpCreatedAt, needsHelpExpiresAt),
+		LastUpdateAt:   timestamptzPtr(lastUpdateAt),
+	}
 }
 
 func timestamptzPtr(ts pgtype.Timestamptz) *time.Time {
