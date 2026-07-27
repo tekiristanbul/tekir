@@ -299,7 +299,7 @@ func decodeDiscoverCursor(raw string) (*discoverCursor, error) {
 		return nil, ErrInvalidCursor
 	}
 	dist, err := strconv.ParseFloat(distPart, 64)
-	if err != nil {
+	if err != nil || math.IsNaN(dist) || math.IsInf(dist, 0) || dist < 0 {
 		return nil, ErrInvalidCursor
 	}
 	if _, err := uuid.Parse(idPart); err != nil {
