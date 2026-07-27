@@ -165,7 +165,17 @@ class AuthNotifier extends Notifier<AuthState> {
       // credential: without re-running init() here, nothing would ever
       // register a replacement, and every subsequent attempt would keep
       // sending no device token at all.
-      await ref.read(deviceIdentityServiceProvider).init();
+      final device = await ref.read(deviceIdentityServiceProvider).init();
+      if (device == null) {
+        // init() swallows registration/storage failures and returns null
+        // rather than throwing. Verifying now would send no device token
+        // at all, which the server can only answer with the same 401 the
+        // AuthDeviceTokenInvalidException branch below handles — but this
+        // isn't a stale credential, it's a network/server problem, so
+        // report it as such instead of making the doomed request.
+        state = state.copyWith(isSubmitting: false, error: AuthError.network);
+        return false;
+      }
       final session = await ref
           .read(authApiProvider)
           .verifyOtp(

@@ -166,7 +166,9 @@ class AuthApi {
   Exception _mapVerifyOtpError(DioException e) {
     final status = e.response?.statusCode;
     if (status == 401) {
-      return _isDeviceTokenError(e) ? const AuthDeviceTokenInvalidException() : const OtpInvalidCodeException();
+      return _isDeviceTokenError(e)
+          ? const AuthDeviceTokenInvalidException()
+          : const OtpInvalidCodeException();
     }
     return switch (status) {
       400 => const OtpInvalidPhoneException(),

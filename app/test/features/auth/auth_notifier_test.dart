@@ -23,6 +23,37 @@ class _FakeDeviceStorage implements DeviceKeyValueStorage {
   Future<void> delete(String key) async => _data.remove(key);
 }
 
+class _EmptyDeviceStorage implements DeviceKeyValueStorage {
+  final _data = <String, String>{};
+
+  @override
+  Future<String?> read(String key) async => _data[key];
+
+  @override
+  Future<void> write(String key, String value) async => _data[key] = value;
+
+  @override
+  Future<void> delete(String key) async => _data.remove(key);
+}
+
+class _FailingRegistrationAdapter implements HttpClientAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    throw DioException(
+      requestOptions: options,
+      type: DioExceptionType.connectionError,
+      message: 'connection refused',
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
 class _CountingRegistrationAdapter implements HttpClientAdapter {
   int callCount = 0;
 
@@ -311,11 +342,12 @@ void main() {
           AuthError.staleDeviceCredential,
         );
         expect(container.read(authProvider).isSubmitting, isFalse);
+        expect(authErrorMessageTr(AuthError.staleDeviceCredential), isNotEmpty);
         expect(
-          authErrorMessageTr(AuthError.staleDeviceCredential),
-          isNotEmpty,
+          deviceService.cached,
+          isNull,
+          reason: 'stale credential dropped',
         );
-        expect(deviceService.cached, isNull, reason: 'stale credential dropped');
         expect(storage._data.containsKey('device_token'), isFalse);
         expect(
           registrationAdapter.callCount,
@@ -340,6 +372,42 @@ void main() {
           registrationAdapter.callCount,
           1,
           reason: 'stale credential must not be replayed; a fresh one is used',
+        );
+      },
+    );
+
+    test(
+      'a device identity init() failure maps to AuthError.network, no verify api call',
+      () async {
+        final deviceService = DeviceIdentityService(
+          storage: _EmptyDeviceStorage(),
+          dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
+            ..httpClientAdapter = _FailingRegistrationAdapter(),
+        );
+        final api = _FakeAuthApi()
+          ..nextSession = const AuthSession(
+            accessToken: 'at',
+            refreshToken: 'rt',
+            userId: 'user-1',
+            isNewAccount: false,
+          );
+        final container = _containerWith(
+          api,
+          deviceIdentityService: deviceService,
+        );
+        final notifier = container.read(authProvider.notifier);
+        notifier.setPhone('5321112233');
+        notifier.setCode('123456');
+
+        final done = await notifier.verifyCode();
+
+        expect(done, isFalse);
+        expect(container.read(authProvider).error, AuthError.network);
+        expect(container.read(authProvider).isSubmitting, isFalse);
+        expect(
+          api.lastVerifiedPhone,
+          isNull,
+          reason: 'a doomed no-device-token request must never be sent',
         );
       },
     );
