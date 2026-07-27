@@ -197,4 +197,24 @@ void main() {
     expect(find.byType(MapScreen), findsOneWidget);
     expect(find.byType(CatDetailScreen), findsNothing);
   });
+
+  testWidgets(
+    'the back action falls back to the map when reached via go(), with nothing to pop',
+    (tester) async {
+      // Mirrors add-cat's success navigation (context.go('/cats/:id')),
+      // which replaces the whole stack instead of pushing onto it — unlike
+      // every other path to this screen in this file, there is nothing to
+      // pop here.
+      await _pumpMap(tester);
+      appRouter.go('/cats/$_catId');
+      await tester.pumpAndSettle();
+      expect(find.byType(CatDetailScreen), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.chevron_left));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(MapScreen), findsOneWidget);
+      expect(find.byType(CatDetailScreen), findsNothing);
+    },
+  );
 }

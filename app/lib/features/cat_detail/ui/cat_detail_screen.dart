@@ -284,7 +284,17 @@ class _BackCircleButton extends StatelessWidget {
       elevation: 2,
       child: InkWell(
         customBorder: const CircleBorder(),
-        onTap: () => context.pop(),
+        onTap: () {
+          // add-cat's success path (and a duplicate-candidate "bu zaten var"
+          // pick) lands here via context.go, which replaces the whole stack
+          // instead of pushing — so there is nothing to pop in that case.
+          // Fall back to the map, the app's root destination.
+          if (context.canPop()) {
+            context.pop();
+          } else {
+            context.go('/');
+          }
+        },
         child: const SizedBox(
           width: kTapMin,
           height: kTapMin,
