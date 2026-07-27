@@ -3,11 +3,35 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:dio/dio.dart';
+
+import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/auth/data/auth_api.dart';
 import 'package:app/features/auth/ui/auth_gate.dart';
 import 'package:app/features/auth/ui/login_screen.dart';
+
+// Pre-populated in-memory storage so AuthNotifier.verifyCode's device
+// identity init() resolves instantly with no real platform channel —
+// mirrors cat_update_composer_notifier_test.dart's identical need.
+class _FakeDeviceStorage implements DeviceKeyValueStorage {
+  final _data = <String, String>{'device_id': 'did-1', 'device_token': 'tok-1'};
+
+  @override
+  Future<String?> read(String key) async => _data[key];
+
+  @override
+  Future<void> write(String key, String value) async => _data[key] = value;
+
+  @override
+  Future<void> delete(String key) async => _data.remove(key);
+}
+
+DeviceIdentityService _fakeDeviceIdentityService() => DeviceIdentityService(
+  storage: _FakeDeviceStorage(),
+  dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080')),
+);
 
 class _FakeAuthApi implements AuthApi {
   AuthSession? nextSession;
@@ -83,6 +107,9 @@ Widget _appWith(
     overrides: [
       authApiProvider.overrideWithValue(api),
       sessionIdentityServiceProvider.overrideWithValue(session),
+      deviceIdentityServiceProvider.overrideWithValue(
+        _fakeDeviceIdentityService(),
+      ),
     ],
     child: MaterialApp.router(theme: AppTheme.light, routerConfig: router),
   );

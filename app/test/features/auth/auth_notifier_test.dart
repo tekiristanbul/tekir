@@ -1,9 +1,55 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
 import 'package:app/features/auth/data/auth_api.dart';
 import 'package:app/features/auth/ui/auth_notifier.dart';
+
+// Mirrors cat_update_composer_notifier_test.dart's fakes exactly — same
+// stale-device-credential recovery mechanism, applied here to the login
+// flow instead of the update composer.
+class _FakeDeviceStorage implements DeviceKeyValueStorage {
+  final _data = <String, String>{'device_id': 'did-1', 'device_token': 'tok-1'};
+
+  @override
+  Future<String?> read(String key) async => _data[key];
+
+  @override
+  Future<void> write(String key, String value) async => _data[key] = value;
+
+  @override
+  Future<void> delete(String key) async => _data.remove(key);
+}
+
+class _CountingRegistrationAdapter implements HttpClientAdapter {
+  int callCount = 0;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    callCount++;
+    return ResponseBody.fromString(
+      '{"device_id":"did-fresh-$callCount","device_token":"tok-fresh-$callCount"}',
+      201,
+      headers: {
+        'content-type': ['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+DeviceIdentityService _defaultDeviceIdentityService() => DeviceIdentityService(
+  storage: _FakeDeviceStorage(),
+  dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080')),
+);
 
 class _FakeAuthApi implements AuthApi {
   Object? nextRequestError;
@@ -69,12 +115,16 @@ class _FakeSessionIdentityService implements SessionIdentityService {
 ProviderContainer _containerWith(
   _FakeAuthApi api, {
   _FakeSessionIdentityService? session,
+  DeviceIdentityService? deviceIdentityService,
 }) {
   final container = ProviderContainer(
     overrides: [
       authApiProvider.overrideWithValue(api),
       sessionIdentityServiceProvider.overrideWithValue(
         session ?? _FakeSessionIdentityService(),
+      ),
+      deviceIdentityServiceProvider.overrideWithValue(
+        deviceIdentityService ?? _defaultDeviceIdentityService(),
       ),
     ],
   );
@@ -230,6 +280,67 @@ void main() {
         // the session is already saved even though the flow isn't finished —
         // the account genuinely exists server-side at this point.
         expect(session.saved?.userId, 'user-2');
+      },
+    );
+
+    test(
+      'a stale device credential invalidates and re-registers on the next attempt',
+      () async {
+        final storage = _FakeDeviceStorage(); // pre-populated with did-1/tok-1
+        final registrationAdapter = _CountingRegistrationAdapter();
+        final deviceService = DeviceIdentityService(
+          storage: storage,
+          dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
+            ..httpClientAdapter = registrationAdapter,
+        );
+        final api = _FakeAuthApi()
+          ..nextVerifyError = const AuthDeviceTokenInvalidException();
+        final container = _containerWith(
+          api,
+          deviceIdentityService: deviceService,
+        );
+        final notifier = container.read(authProvider.notifier);
+        notifier.setPhone('5321112233');
+        notifier.setCode('123456');
+
+        final firstDone = await notifier.verifyCode();
+
+        expect(firstDone, isFalse);
+        expect(
+          container.read(authProvider).error,
+          AuthError.staleDeviceCredential,
+        );
+        expect(container.read(authProvider).isSubmitting, isFalse);
+        expect(
+          authErrorMessageTr(AuthError.staleDeviceCredential),
+          isNotEmpty,
+        );
+        expect(deviceService.cached, isNull, reason: 'stale credential dropped');
+        expect(storage._data.containsKey('device_token'), isFalse);
+        expect(
+          registrationAdapter.callCount,
+          0,
+          reason: 'invalidate() only clears state, it does not re-register',
+        );
+
+        // Retryable: a following successful attempt re-registers first.
+        api
+          ..nextVerifyError = null
+          ..nextSession = const AuthSession(
+            accessToken: 'at',
+            refreshToken: 'rt',
+            userId: 'user-1',
+            isNewAccount: false,
+          );
+        final secondDone = await notifier.verifyCode();
+
+        expect(secondDone, isTrue);
+        expect(container.read(authProvider).error, isNull);
+        expect(
+          registrationAdapter.callCount,
+          1,
+          reason: 'stale credential must not be replayed; a fresh one is used',
+        );
       },
     );
 

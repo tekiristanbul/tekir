@@ -47,6 +47,7 @@ lib/
 
 - device registration remains non-blocking so public browsing works from first launch.
 - authenticated actions redirect to phone otp login and return the user to the interrupted flow after success.
+- a stale locally-cached device credential (the server no longer recognizes it) self-heals on retry: `AuthNotifier.verifyCode` invalidates it and re-registers before the next attempt, mirroring `cat_update_composer_notifier`'s identical recovery for the same failure mode — see [[api]]'s otp/verify error notes.
 - following, ordinary updates, needs-help, media uploads, and new-cat creation require an authenticated account.
 - notification permission is requested after following or an explicit notification opt-in, not on first launch.
 - `add_cat/` (issue #70) is the first feature besides follow to call `AuthGate.require` (the map screen's add-cat button); it also introduces this app's first multi-step, single-notifier flow shape (location → non-blocking duplicate check → details/photo/name → submit), mirroring `AuthNotifier`/`LoginScreen`'s one-route, step-switching pattern rather than one go_router route per step. A retried submission (after a transient failure) reuses the same client-generated `Idempotency-Key` for the lifetime of that attempt, matching [[api]]'s retry contract.
