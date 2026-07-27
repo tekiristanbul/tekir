@@ -79,13 +79,17 @@ const _authenticatedSession = SessionIdentity(
   userId: 'u1',
 );
 
-Future<void> _pump(WidgetTester tester, {required _FakeFollowsApi followsApi}) async {
+Future<void> _pump(
+  WidgetTester tester, {
+  required _FakeFollowsApi followsApi,
+}) async {
   final router = GoRouter(
     routes: [
       GoRoute(
         path: '/',
-        builder: (context, state) =>
-            const Scaffold(body: Center(child: FollowButton(catId: _catId))),
+        builder: (context, state) => const Scaffold(
+          body: Center(child: FollowButton(catId: _catId)),
+        ),
       ),
     ],
   );
@@ -145,10 +149,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(api.unfollowCalls, 1);
-    expect(
-      find.text('Bu kedi için bildirim almak ister misin?'),
-      findsNothing,
-    );
+    expect(find.text('Bu kedi için bildirim almak ister misin?'), findsNothing);
   });
 
   testWidgets(
@@ -191,9 +192,6 @@ void main() {
     await tester.tap(find.text('İzin ver'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Bu kedi için bildirim almak ister misin?'),
-      findsNothing,
-    );
+    expect(find.text('Bu kedi için bildirim almak ister misin?'), findsNothing);
   });
 }

@@ -147,11 +147,7 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.notifications_none,
-              size: 40,
-              color: AppColors.faint,
-            ),
+            Icon(Icons.notifications_none, size: 40, color: AppColors.faint),
             SizedBox(height: AppSpacing.s3),
             Text(
               'Henüz bildirimin yok',
@@ -177,11 +173,7 @@ class _ErrorRetry extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.error_outline,
-              size: 40,
-              color: AppColors.faint,
-            ),
+            const Icon(Icons.error_outline, size: 40, color: AppColors.faint),
             const SizedBox(height: AppSpacing.s3),
             const Text(
               'Bildirimler yüklenemedi',

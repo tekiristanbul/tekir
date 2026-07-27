@@ -109,6 +109,36 @@ func notifCreateTestDevice(t *testing.T, ctx context.Context, store *repository.
 // CreateNeedsHelpUpdate always enqueue one), so without this a test
 // asserting on exactly what DispatchPending processed would be at the
 // mercy of test run order.
+// dispatchUntilProcessed calls DispatchPending repeatedly until updateID's
+// own notification_outbox row is marked processed. A single call claims at
+// most a fixed batch, ordered oldest-first — under go test ./...'s
+// cross-package parallelism against this same shared database, other
+// packages' concurrently-enqueued rows can crowd out this test's own
+// within one call, so this loops rather than assuming one call is enough
+// (mirrors drainPending's same reasoning). Fails the test if updateID's
+// row still isn't processed after a generous number of calls, rather than
+// looping forever against a bug.
+func dispatchUntilProcessed(t *testing.T, ctx context.Context, pool *pgxpool.Pool, notifications *service.NotificationService, updateID pgtype.UUID) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		processed, err := notifications.DispatchPending(ctx)
+		if err != nil {
+			t.Fatalf("dispatch: %v", err)
+		}
+		var processedAt pgtype.Timestamptz
+		if err := pool.QueryRow(ctx, "select processed_at from notification_outbox where update_id = $1", updateID).Scan(&processedAt); err != nil {
+			t.Fatalf("query outbox processed_at: %v", err)
+		}
+		if processedAt.Valid {
+			return
+		}
+		if processed == 0 {
+			t.Fatalf("dispatch made no progress and update %s is still unprocessed", uuid.UUID(updateID.Bytes).String())
+		}
+	}
+	t.Fatalf("update %s never became processed after 200 dispatch calls", uuid.UUID(updateID.Bytes).String())
+}
+
 func drainPending(t *testing.T, ctx context.Context, store *repository.Store) {
 	t.Helper()
 	drain := service.NewNotificationService(store, service.NewFakeNotificationSender())
@@ -172,26 +202,28 @@ func TestNotificationService_DispatchPending_NeedsHelpFansOutExcludingAuthorAndR
 
 	sender := service.NewFakeNotificationSender()
 	notifications := service.NewNotificationService(store, sender)
-	processed, err := notifications.DispatchPending(ctx)
-	if err != nil {
-		t.Fatalf("dispatch: %v", err)
-	}
-	if processed != 1 {
-		t.Fatalf("expected exactly 1 outbox row processed, got %d", processed)
-	}
+	// go test ./... runs other packages' integration tests against this
+	// same shared DATABASE_URL concurrently, and they keep enqueueing their
+	// own outbox rows throughout — so neither DispatchPending's own
+	// claimed/processed count, nor "one call is enough to reach this row",
+	// is safe to assume; every assertion below is scoped to this test's
+	// own updateID/device rather than a global count.
+	dispatchUntilProcessed(t, ctx, pool, notifications, updateID)
 
-	sent := sender.Sent()
-	if len(sent) != 1 {
-		t.Fatalf("expected exactly 1 notification sent, got %d: %+v", len(sent), sent)
+	var sentToFollower []service.FakeSentNotification
+	for _, s := range sender.Sent() {
+		if s.UpdateID == uuid.UUID(updateID.Bytes).String() {
+			sentToFollower = append(sentToFollower, s)
+		}
 	}
-	if sent[0].DeviceID != uuid.UUID(followerDevice.Bytes).String() {
-		t.Errorf("expected notification sent to follower's device, got %q", sent[0].DeviceID)
+	if len(sentToFollower) != 1 {
+		t.Fatalf("expected exactly 1 notification sent for this update, got %d: %+v", len(sentToFollower), sentToFollower)
 	}
-	if sent[0].UpdateID != uuid.UUID(updateID.Bytes).String() {
-		t.Errorf("unexpected update id: %q", sent[0].UpdateID)
+	if sentToFollower[0].DeviceID != uuid.UUID(followerDevice.Bytes).String() {
+		t.Errorf("expected notification sent to follower's device, got %q", sentToFollower[0].DeviceID)
 	}
-	if sent[0].Category != "injured_or_sick" {
-		t.Errorf("unexpected category: %q", sent[0].Category)
+	if sentToFollower[0].Category != "injured_or_sick" {
+		t.Errorf("unexpected category: %q", sentToFollower[0].Category)
 	}
 
 	var notifCount int
@@ -224,6 +256,12 @@ func TestNotificationService_DispatchPending_OrdinaryUpdateProducesNoNotificatio
 		t.Fatalf("follow: %v", err)
 	}
 
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:           updateID,
@@ -237,15 +275,16 @@ func TestNotificationService_DispatchPending_OrdinaryUpdateProducesNoNotificatio
 
 	sender := service.NewFakeNotificationSender()
 	notifications := service.NewNotificationService(store, sender)
-	processed, err := notifications.DispatchPending(ctx)
-	if err != nil {
-		t.Fatalf("dispatch: %v", err)
-	}
-	if processed != 1 {
-		t.Fatalf("expected exactly 1 outbox row processed, got %d", processed)
-	}
-	if len(sender.Sent()) != 0 {
-		t.Fatalf("expected no notifications sent for an ordinary update, got %+v", sender.Sent())
+	// see the fan-out test above for why this loops and scopes its
+	// assertion to this test's own updateID rather than a global count —
+	// go test ./... runs other packages' tests against the same database
+	// concurrently.
+	dispatchUntilProcessed(t, ctx, pool, notifications, updateID)
+
+	for _, s := range sender.Sent() {
+		if s.UpdateID == uuid.UUID(updateID.Bytes).String() {
+			t.Fatalf("expected no notification sent for this ordinary update, got %+v", s)
+		}
 	}
 }
 
@@ -262,9 +301,16 @@ func TestNotificationService_DispatchPending_IdempotentRedispatch(t *testing.T) 
 		t.Fatalf("follow: %v", err)
 	}
 
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
 	createdAt := time.Now()
+	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
-		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ID:                 updateID,
 		CatID:              catID,
 		AuthorUserID:       author,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
@@ -277,29 +323,35 @@ func TestNotificationService_DispatchPending_IdempotentRedispatch(t *testing.T) 
 	sender := service.NewFakeNotificationSender()
 	notifications := service.NewNotificationService(store, sender)
 
-	first, err := notifications.DispatchPending(ctx)
-	if err != nil {
-		t.Fatalf("first dispatch: %v", err)
-	}
-	if first != 1 {
-		t.Fatalf("expected 1 processed on first dispatch, got %d", first)
-	}
-	if len(sender.Sent()) != 1 {
-		t.Fatalf("expected 1 send after first dispatch, got %d", len(sender.Sent()))
+	// see the fan-out test above for why this loops and scopes its
+	// assertion to this test's own updateID rather than a global count —
+	// go test ./... runs other packages' tests against the same database
+	// concurrently.
+	dispatchUntilProcessed(t, ctx, pool, notifications, updateID)
+	sentAfterFirst := countSentFor(sender, updateID)
+	if sentAfterFirst != 1 {
+		t.Fatalf("expected 1 send for this update after first dispatch, got %d", sentAfterFirst)
 	}
 
-	// the row is already marked processed — a second call must find
-	// nothing left to claim, and must not send again.
-	second, err := notifications.DispatchPending(ctx)
-	if err != nil {
+	// the row is already marked processed — a further dispatch (whether it
+	// claims 0 rows or claims other packages' unrelated rows) must never
+	// send to this update's recipient again.
+	if _, err := notifications.DispatchPending(ctx); err != nil {
 		t.Fatalf("second dispatch: %v", err)
 	}
-	if second != 0 {
-		t.Fatalf("expected 0 processed on second dispatch, got %d", second)
+	if sentAfter := countSentFor(sender, updateID); sentAfter != 1 {
+		t.Fatalf("expected still exactly 1 send for this update after a second dispatch, got %d", sentAfter)
 	}
-	if len(sender.Sent()) != 1 {
-		t.Fatalf("expected still exactly 1 send after second dispatch, got %d", len(sender.Sent()))
+}
+
+func countSentFor(sender *service.FakeNotificationSender, updateID pgtype.UUID) int {
+	count := 0
+	for _, s := range sender.Sent() {
+		if s.UpdateID == uuid.UUID(updateID.Bytes).String() {
+			count++
+		}
 	}
+	return count
 }
 
 // TestNotificationService_DispatchPending_ConcurrentDispatchNoDuplicateSends

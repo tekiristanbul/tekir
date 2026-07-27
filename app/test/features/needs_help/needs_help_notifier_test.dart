@@ -138,24 +138,32 @@ ProviderContainer _containerWith(
 }
 
 void main() {
-  test('selectCategory sets a single selection, replacing any previous one', () {
-    final container = _containerWith(_FakeNeedsHelpApi());
-    addTearDown(container.dispose);
-    final notifier = container.read(needsHelpProvider(_catId).notifier);
+  test(
+    'selectCategory sets a single selection, replacing any previous one',
+    () {
+      final container = _containerWith(_FakeNeedsHelpApi());
+      addTearDown(container.dispose);
+      final notifier = container.read(needsHelpProvider(_catId).notifier);
 
-    notifier.selectCategory('trapped');
-    expect(container.read(needsHelpProvider(_catId)).category, 'trapped');
+      notifier.selectCategory('trapped');
+      expect(container.read(needsHelpProvider(_catId)).category, 'trapped');
 
-    notifier.selectCategory('water_needed');
-    expect(container.read(needsHelpProvider(_catId)).category, 'water_needed');
-  });
+      notifier.selectCategory('water_needed');
+      expect(
+        container.read(needsHelpProvider(_catId)).category,
+        'water_needed',
+      );
+    },
+  );
 
   test('submit with no category selected is a no-op', () async {
     final api = _FakeNeedsHelpApi();
     final container = _containerWith(api);
     addTearDown(container.dispose);
 
-    final ok = await container.read(needsHelpProvider(_catId).notifier).submit();
+    final ok = await container
+        .read(needsHelpProvider(_catId).notifier)
+        .submit();
 
     expect(ok, isFalse);
     expect(api.createCalls, 0);
@@ -210,29 +218,32 @@ void main() {
     expect(api.lastComment, isNull);
   });
 
-  test('duplicate submits while in flight create at most one request', () async {
-    final gate = Completer<void>();
-    final api = _FakeNeedsHelpApi()
-      ..nextResult = _entry('nh-1')
-      ..gate = gate;
-    final container = _containerWith(api);
-    addTearDown(container.dispose);
-    await container.read(catDetailProvider(_catId).notifier).load();
+  test(
+    'duplicate submits while in flight create at most one request',
+    () async {
+      final gate = Completer<void>();
+      final api = _FakeNeedsHelpApi()
+        ..nextResult = _entry('nh-1')
+        ..gate = gate;
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
 
-    final notifier = container.read(needsHelpProvider(_catId).notifier);
-    notifier.selectCategory('trapped');
+      final notifier = container.read(needsHelpProvider(_catId).notifier);
+      notifier.selectCategory('trapped');
 
-    final first = notifier.submit();
-    final second = notifier.submit();
+      final first = notifier.submit();
+      final second = notifier.submit();
 
-    expect(container.read(needsHelpProvider(_catId)).isSubmitting, isTrue);
+      expect(container.read(needsHelpProvider(_catId)).isSubmitting, isTrue);
 
-    gate.complete();
-    final results = await Future.wait([first, second]);
+      gate.complete();
+      final results = await Future.wait([first, second]);
 
-    expect(api.createCalls, 1);
-    expect(results, [true, false]);
-  });
+      expect(api.createCalls, 1);
+      expect(results, [true, false]);
+    },
+  );
 
   test(
     'no cached session surfaces as a retryable unauthorized error, without calling the api (issue #78)',
@@ -305,25 +316,29 @@ void main() {
     );
   }
 
-  test('an unmapped exception also surfaces as a retryable server error', () async {
-    final api = _FakeNeedsHelpApi()..nextError = Exception('boom');
-    final container = _containerWith(api);
-    addTearDown(container.dispose);
-    await container.read(catDetailProvider(_catId).notifier).load();
+  test(
+    'an unmapped exception also surfaces as a retryable server error',
+    () async {
+      final api = _FakeNeedsHelpApi()..nextError = Exception('boom');
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
 
-    final notifier = container.read(needsHelpProvider(_catId).notifier);
-    notifier.selectCategory('trapped');
-    final ok = await notifier.submit();
+      final notifier = container.read(needsHelpProvider(_catId).notifier);
+      notifier.selectCategory('trapped');
+      final ok = await notifier.submit();
 
-    expect(ok, isFalse);
-    expect(
-      container.read(needsHelpProvider(_catId)).error,
-      NeedsHelpSubmitError.server,
-    );
-  });
+      expect(ok, isFalse);
+      expect(
+        container.read(needsHelpProvider(_catId)).error,
+        NeedsHelpSubmitError.server,
+      );
+    },
+  );
 
   test('reset clears selection, comment, and a stale error', () async {
-    final api = _FakeNeedsHelpApi()..nextError = const NeedsHelpNetworkException();
+    final api = _FakeNeedsHelpApi()
+      ..nextError = const NeedsHelpNetworkException();
     final container = _containerWith(api);
     addTearDown(container.dispose);
     await container.read(catDetailProvider(_catId).notifier).load();

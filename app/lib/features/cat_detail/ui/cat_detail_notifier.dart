@@ -153,7 +153,8 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
     final category = entry.needsHelpCategory;
     final categoryLabel = entry.needsHelpCategoryLabel;
     final expiresAt = entry.needsHelpExpiresAt;
-    final activeAlert = (category != null && categoryLabel != null && expiresAt != null)
+    final activeAlert =
+        (category != null && categoryLabel != null && expiresAt != null)
         ? ActiveAlert(
             category: category,
             categoryLabel: categoryLabel,

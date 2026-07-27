@@ -219,9 +219,7 @@ Future<void> _openSheet(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('cat detail exposes the needs-help entry point', (
-    tester,
-  ) async {
+  testWidgets('cat detail exposes the needs-help entry point', (tester) async {
     await _pump(tester, needsHelpApi: _FakeNeedsHelpApi());
 
     expect(
@@ -272,27 +270,28 @@ void main() {
     },
   );
 
-  testWidgets('an optional comment is trimmed and sent alongside the category', (
-    tester,
-  ) async {
-    final api = _FakeNeedsHelpApi()..nextResult = _entry('nh-1');
-    await _pump(tester, needsHelpApi: api);
-    await _openSheet(tester);
+  testWidgets(
+    'an optional comment is trimmed and sent alongside the category',
+    (tester) async {
+      final api = _FakeNeedsHelpApi()..nextResult = _entry('nh-1');
+      await _pump(tester, needsHelpApi: api);
+      await _openSheet(tester);
 
-    await tester.tap(find.text('Mahsur kalmış'));
-    await tester.enterText(
-      find.byType(TextField),
-      '  sağ arka ayağını basamıyor  ',
-    );
-    await tester.pump();
-    await tester.tap(
-      find.widgetWithText(ElevatedButton, 'Yardım bildirimini gönder'),
-    );
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Mahsur kalmış'));
+      await tester.enterText(
+        find.byType(TextField),
+        '  sağ arka ayağını basamıyor  ',
+      );
+      await tester.pump();
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Yardım bildirimini gönder'),
+      );
+      await tester.pumpAndSettle();
 
-    expect(api.lastCategory, 'trapped');
-    expect(api.lastComment, 'sağ arka ayağını basamıyor');
-  });
+      expect(api.lastCategory, 'trapped');
+      expect(api.lastComment, 'sağ arka ayağını basamıyor');
+    },
+  );
 
   testWidgets('submitting shows a spinner and disables the submit button', (
     tester,
@@ -352,27 +351,33 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('validation failure shows its turkish message inline and offers retry', (
-    tester,
-  ) async {
-    final api = _FakeNeedsHelpApi()
-      ..nextError = const NeedsHelpValidationException();
-    await _pump(tester, needsHelpApi: api);
-    await _openSheet(tester);
+  testWidgets(
+    'validation failure shows its turkish message inline and offers retry',
+    (tester) async {
+      final api = _FakeNeedsHelpApi()
+        ..nextError = const NeedsHelpValidationException();
+      await _pump(tester, needsHelpApi: api);
+      await _openSheet(tester);
 
-    await tester.tap(find.text('Güvensiz bir yerde'));
-    await tester.pump();
-    await tester.tap(
-      find.widgetWithText(ElevatedButton, 'Yardım bildirimini gönder'),
-    );
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Güvensiz bir yerde'));
+      await tester.pump();
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Yardım bildirimini gönder'),
+      );
+      await tester.pumpAndSettle();
 
-    expect(
-      find.text(needsHelpSubmitErrorMessageTr(NeedsHelpSubmitError.validation)),
-      findsOneWidget,
-    );
-    expect(find.widgetWithText(ElevatedButton, 'Tekrar dene'), findsOneWidget);
-  });
+      expect(
+        find.text(
+          needsHelpSubmitErrorMessageTr(NeedsHelpSubmitError.validation),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(ElevatedButton, 'Tekrar dene'),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('unauthorized failure shows its turkish message inline', (
     tester,
@@ -475,7 +480,9 @@ void main() {
         sessionIdentityService: _FakeSessionIdentityService(),
       );
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Yardıma ihtiyacı var'));
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Yardıma ihtiyacı var'),
+      );
       await tester.pumpAndSettle();
 
       expect(
@@ -498,7 +505,9 @@ void main() {
       sessionIdentityService: _FakeSessionIdentityService(),
     );
 
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Yardıma ihtiyacı var'));
+    await tester.tap(
+      find.widgetWithText(ElevatedButton, 'Yardıma ihtiyacı var'),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Vazgeç'));
     await tester.pumpAndSettle();
@@ -525,7 +534,9 @@ void main() {
         authApi: authApi,
       );
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Yardıma ihtiyacı var'));
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Yardıma ihtiyacı var'),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Giriş yap'));
       await tester.pumpAndSettle();

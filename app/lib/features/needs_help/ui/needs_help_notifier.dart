@@ -38,7 +38,13 @@ const needsHelpCategoryOptions = [
   NeedsHelpCategoryOption('trapped', 'Mahsur kalmış', Icons.block),
 ];
 
-enum NeedsHelpSubmitError { validation, unauthorized, notFound, network, server }
+enum NeedsHelpSubmitError {
+  validation,
+  unauthorized,
+  notFound,
+  network,
+  server,
+}
 
 /// Turkish, actionable copy for each mapped failure — mirrors
 /// [updateSubmitErrorMessageTr]'s shape.
@@ -48,7 +54,8 @@ String needsHelpSubmitErrorMessageTr(NeedsHelpSubmitError error) {
     NeedsHelpSubmitError.unauthorized => 'Kimlik doğrulanamadı, tekrar dene.',
     NeedsHelpSubmitError.notFound => 'Bu kedi artık bulunamıyor.',
     NeedsHelpSubmitError.network => 'Bağlantı sorunu, tekrar dene.',
-    NeedsHelpSubmitError.server => 'Sunucuya ulaşılamadı, birazdan tekrar dene.',
+    NeedsHelpSubmitError.server =>
+      'Sunucuya ulaşılamadı, birazdan tekrar dene.',
   };
 }
 

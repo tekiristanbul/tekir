@@ -43,7 +43,9 @@ class _NeedsHelpSheetState extends ConsumerState<NeedsHelpSheet> {
   }
 
   Future<void> _submit() async {
-    final ok = await ref.read(needsHelpProvider(widget.catId).notifier).submit();
+    final ok = await ref
+        .read(needsHelpProvider(widget.catId).notifier)
+        .submit();
     if (ok && mounted) Navigator.of(context).pop(true);
   }
 
@@ -102,7 +104,11 @@ class _NeedsHelpSheetState extends ConsumerState<NeedsHelpSheet> {
                           ? CachedNetworkImageProvider(widget.catPhotoUrl!)
                           : null,
                       child: widget.catPhotoUrl == null
-                          ? const Icon(Icons.pets, size: 14, color: AppColors.muted)
+                          ? const Icon(
+                              Icons.pets,
+                              size: 14,
+                              color: AppColors.muted,
+                            )
                           : null,
                     ),
                     const SizedBox(width: AppSpacing.s2),
@@ -231,8 +237,11 @@ Future<void> openNeedsHelpSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) =>
-        NeedsHelpSheet(catId: catId, catName: catName, catPhotoUrl: catPhotoUrl),
+    builder: (_) => NeedsHelpSheet(
+      catId: catId,
+      catName: catName,
+      catPhotoUrl: catPhotoUrl,
+    ),
   );
   if (result != true || !context.mounted) return;
   ScaffoldMessenger.of(

@@ -54,9 +54,8 @@ Future<void> _pump(WidgetTester tester, _FakeNotificationsApi api) async {
       ),
       GoRoute(
         path: '/cats/:id',
-        builder: (context, state) => Scaffold(
-          body: Text('cat detail ${state.pathParameters['id']}'),
-        ),
+        builder: (context, state) =>
+            Scaffold(body: Text('cat detail ${state.pathParameters['id']}')),
       ),
     ],
   );
@@ -97,64 +96,67 @@ void main() {
     expect(api.fetchCalls, 2);
   });
 
-  testWidgets('lists notifications newest first, distinguishing read from unread', (
-    tester,
-  ) async {
-    final api = _FakeNotificationsApi(
-      firstPage: NotificationsPage(
-        items: [_notification('1'), _notification('2', read: true)],
-        nextCursor: null,
-      ),
-    );
-    await _pump(tester, api);
-    await tester.pumpAndSettle();
+  testWidgets(
+    'lists notifications newest first, distinguishing read from unread',
+    (tester) async {
+      final api = _FakeNotificationsApi(
+        firstPage: NotificationsPage(
+          items: [_notification('1'), _notification('2', read: true)],
+          nextCursor: null,
+        ),
+      );
+      await _pump(tester, api);
+      await tester.pumpAndSettle();
 
-    expect(
-      find.text('Takip ettiğin bir kedi için yardım bildirimi'),
-      findsNWidgets(2),
-    );
-  });
+      expect(
+        find.text('Takip ettiğin bir kedi için yardım bildirimi'),
+        findsNWidgets(2),
+      );
+    },
+  );
 
-  testWidgets('a load-more button appears when a next page exists, and pages in more items', (
-    tester,
-  ) async {
-    final api = _FakeNotificationsApi(
-      firstPage: NotificationsPage(
-        items: [_notification('1')],
-        nextCursor: 'cursor-1',
-      ),
-      secondPage: NotificationsPage(
-        items: [_notification('2')],
-        nextCursor: null,
-      ),
-    );
-    await _pump(tester, api);
-    await tester.pumpAndSettle();
+  testWidgets(
+    'a load-more button appears when a next page exists, and pages in more items',
+    (tester) async {
+      final api = _FakeNotificationsApi(
+        firstPage: NotificationsPage(
+          items: [_notification('1')],
+          nextCursor: 'cursor-1',
+        ),
+        secondPage: NotificationsPage(
+          items: [_notification('2')],
+          nextCursor: null,
+        ),
+      );
+      await _pump(tester, api);
+      await tester.pumpAndSettle();
 
-    expect(find.text('Daha fazla göster'), findsOneWidget);
+      expect(find.text('Daha fazla göster'), findsOneWidget);
 
-    await tester.tap(find.text('Daha fazla göster'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Daha fazla göster'));
+      await tester.pumpAndSettle();
 
-    expect(
-      find.text('Takip ettiğin bir kedi için yardım bildirimi'),
-      findsNWidgets(2),
-    );
-    expect(find.text('Daha fazla göster'), findsNothing);
-  });
+      expect(
+        find.text('Takip ettiğin bir kedi için yardım bildirimi'),
+        findsNWidgets(2),
+      );
+      expect(find.text('Daha fazla göster'), findsNothing);
+    },
+  );
 
   testWidgets('tapping a notification marks it read and navigates to the cat', (
     tester,
   ) async {
     final api = _FakeNotificationsApi(
-      firstPage: NotificationsPage(items: [_notification('1')], nextCursor: null),
+      firstPage: NotificationsPage(
+        items: [_notification('1')],
+        nextCursor: null,
+      ),
     );
     await _pump(tester, api);
     await tester.pumpAndSettle();
 
-    await tester.tap(
-      find.text('Takip ettiğin bir kedi için yardım bildirimi'),
-    );
+    await tester.tap(find.text('Takip ettiğin bir kedi için yardım bildirimi'));
     await tester.pumpAndSettle();
 
     expect(api.markReadCalls, ['1']);
