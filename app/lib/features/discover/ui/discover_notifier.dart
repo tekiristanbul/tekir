@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/identity/session_identity.dart';
 import '../../follow/data/follows_api.dart';
 import '../../map/data/cat_marker.dart';
 
@@ -38,23 +39,43 @@ class DiscoverState {
 /// endpoint — the full discover scope (nearby/needs-help/all-by-distance) is
 /// deliberately out of scope here and tracked as a separate follow-up issue.
 ///
-/// Mirrors [ProfileNotifier]'s plain load()-triggered-by-the-screen shape
-/// for now, not [FollowsNotifier]'s own build()-time session watch — the
-/// account-scoped reset-on-session-change this state also needs (issue #80
-/// product-owner review, finding 5) lands together with profile/badges/
-/// notifications' own equivalent fix, so all four get the same race-safe
-/// treatment in one pass rather than this one alone risking a build() vs.
-/// explicit load() race.
+/// [build]/[load] reset-and-guard on the session's account id exactly like
+/// [ProfileNotifier] (issue #80 product-owner review, finding 5) — see its
+/// doc comment for why [build] uses `ref.listen` rather than `ref.watch`,
+/// skips any transition through `AsyncLoading`, compares account ids (not
+/// the whole session), why [load] reads the id off
+/// [SessionIdentityService.cached] rather than [sessionProvider]'s own
+/// reactive value, and why it re-checks after its await.
 class DiscoverNotifier extends Notifier<DiscoverState> {
   @override
-  DiscoverState build() => const DiscoverState();
+  DiscoverState build() {
+    ref.listen(sessionProvider, (previous, next) {
+      if (previous == null || previous.isLoading || next.isLoading) return;
+      if (previous.value?.userId != next.value?.userId) {
+        state = const DiscoverState();
+      }
+    });
+    return const DiscoverState();
+  }
 
   Future<void> load() async {
+    final requestedFor = ref
+        .read(sessionIdentityServiceProvider)
+        .cached
+        ?.userId;
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       final cats = await ref.read(followsApiProvider).fetchFollows();
+      if (ref.read(sessionIdentityServiceProvider).cached?.userId !=
+          requestedFor) {
+        return;
+      }
       state = DiscoverState(cats: cats, hasLoadedOnce: true);
     } catch (e) {
+      if (ref.read(sessionIdentityServiceProvider).cached?.userId !=
+          requestedFor) {
+        return;
+      }
       state = state.copyWith(isLoading: false, hasLoadedOnce: true, error: e);
     }
   }

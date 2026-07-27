@@ -1,8 +1,30 @@
 import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
+
+// A fixed device identity, for SessionNotifier.logout's own test group
+// below — mirrors the plain-fake convention used throughout this test
+// suite rather than standing up a real DeviceIdentityService.
+class _FixedDeviceIdentityService implements DeviceIdentityService {
+  _FixedDeviceIdentityService(this._cached);
+
+  final DeviceIdentity? _cached;
+
+  @override
+  DeviceIdentity? get cached => _cached;
+
+  @override
+  Future<DeviceIdentity?> init() async => _cached;
+
+  @override
+  void resetFailedInit() {}
+
+  @override
+  Future<void> invalidate() async {}
+}
 
 // ── fake storage ─────────────────────────────────────────────────────────────
 
@@ -78,6 +100,26 @@ class _NoStoreAdapter implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     callCount++;
+    return ResponseBody.fromString('', 204);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+// Captures the request headers of the last call — used to verify the
+// X-Device-Token header logout() attaches (issue #80 product-owner
+// review, finding 5).
+class _CapturingAdapter implements HttpClientAdapter {
+  RequestOptions? lastRequest;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    lastRequest = options;
     return ResponseBody.fromString('', 204);
   }
 
@@ -270,6 +312,128 @@ void main() {
 
       expect(await storage.read('device_id'), 'device-1');
       expect(await storage.read('device_token'), 'device-token-1');
+    });
+
+    test(
+      'sends X-Device-Token when a device token is passed, so the backend '
+      'can unlink this installation from the account being logged out of',
+      () async {
+        final adapter = _CapturingAdapter();
+        final svc = SessionIdentityService(
+          storage: _FakeStorage(),
+          dio: _dioWith(adapter),
+        );
+        await svc.save(
+          const SessionIdentity(
+            accessToken: 'at',
+            refreshToken: 'rt',
+            userId: 'u',
+          ),
+        );
+
+        await svc.logout(deviceToken: 'device-token-1');
+
+        expect(
+          adapter.lastRequest?.headers['X-Device-Token'],
+          'device-token-1',
+        );
+      },
+    );
+
+    test('sends no X-Device-Token when no device token is passed (still '
+        'succeeds — the backend leaves the device link untouched)', () async {
+      final adapter = _CapturingAdapter();
+      final svc = SessionIdentityService(
+        storage: _FakeStorage(),
+        dio: _dioWith(adapter),
+      );
+      await svc.save(
+        const SessionIdentity(
+          accessToken: 'at',
+          refreshToken: 'rt',
+          userId: 'u',
+        ),
+      );
+
+      await svc.logout();
+
+      expect(
+        adapter.lastRequest?.headers.containsKey('X-Device-Token'),
+        isFalse,
+      );
+      expect(svc.cached, isNull);
+    });
+  });
+
+  group('SessionNotifier.logout', () {
+    test('passes the installation\'s cached device token through to '
+        'SessionIdentityService.logout', () async {
+      final adapter = _CapturingAdapter();
+      final container = ProviderContainer(
+        overrides: [
+          sessionIdentityServiceProvider.overrideWithValue(
+            SessionIdentityService(
+              storage: _FakeStorage(),
+              dio: _dioWith(adapter),
+            ),
+          ),
+          deviceIdentityServiceProvider.overrideWithValue(
+            _FixedDeviceIdentityService(
+              const DeviceIdentity(
+                deviceId: 'device-1',
+                deviceToken: 'device-token-1',
+              ),
+            ),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      await container
+          .read(sessionProvider.notifier)
+          .save(
+            const SessionIdentity(
+              accessToken: 'at',
+              refreshToken: 'rt',
+              userId: 'u',
+            ),
+          );
+
+      await container.read(sessionProvider.notifier).logout();
+
+      expect(adapter.lastRequest?.headers['X-Device-Token'], 'device-token-1');
+      expect(container.read(sessionProvider).value, isNull);
+    });
+
+    test('never invalidates the device identity — only the account link is '
+        'affected, server-side', () async {
+      final device = _FixedDeviceIdentityService(
+        const DeviceIdentity(deviceId: 'device-1', deviceToken: 'tok-1'),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sessionIdentityServiceProvider.overrideWithValue(
+            SessionIdentityService(
+              storage: _FakeStorage(),
+              dio: _dioWith(_NoStoreAdapter()),
+            ),
+          ),
+          deviceIdentityServiceProvider.overrideWithValue(device),
+        ],
+      );
+      addTearDown(container.dispose);
+      await container
+          .read(sessionProvider.notifier)
+          .save(
+            const SessionIdentity(
+              accessToken: 'at',
+              refreshToken: 'rt',
+              userId: 'u',
+            ),
+          );
+
+      await container.read(sessionProvider.notifier).logout();
+
+      expect(device.cached?.deviceToken, 'tok-1');
     });
   });
 }

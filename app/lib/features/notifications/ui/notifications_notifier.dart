@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/identity/session_identity.dart';
 import '../data/notification.dart';
 import '../data/notifications_api.dart';
 
@@ -47,14 +48,42 @@ class NotificationsState {
 /// (issue #78) — mirrors [CatDetailNotifier]'s load/loadMore/pagination
 /// shape. A single (non-family) instance: unlike a cat detail, there is
 /// exactly one inbox, the caller's own.
+///
+/// [build]/[load] reset-and-guard on the session's account id exactly like
+/// [ProfileNotifier] (issue #80 product-owner review, finding 5) — see its
+/// doc comment for why [build] uses `ref.listen` rather than `ref.watch`,
+/// skips any transition through `AsyncLoading`, compares account ids (not
+/// the whole session), why [load] reads the id off
+/// [SessionIdentityService.cached] rather than [sessionProvider]'s own
+/// reactive value, and why it re-checks after its await. [loadMore]/
+/// [markRead] aren't separately guarded: both require an already-loaded,
+/// non-empty inbox (`state.nextCursor`/a matching item id), and [load]'s
+/// own reset already clears both back to empty the instant the account
+/// changes, so neither can act on another account's data.
 class NotificationsNotifier extends Notifier<NotificationsState> {
   @override
-  NotificationsState build() => const NotificationsState();
+  NotificationsState build() {
+    ref.listen(sessionProvider, (previous, next) {
+      if (previous == null || previous.isLoading || next.isLoading) return;
+      if (previous.value?.userId != next.value?.userId) {
+        state = const NotificationsState();
+      }
+    });
+    return const NotificationsState();
+  }
 
   Future<void> load() async {
+    final requestedFor = ref
+        .read(sessionIdentityServiceProvider)
+        .cached
+        ?.userId;
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       final page = await ref.read(notificationsApiProvider).fetch();
+      if (ref.read(sessionIdentityServiceProvider).cached?.userId !=
+          requestedFor) {
+        return;
+      }
       state = NotificationsState(
         items: page.items,
         nextCursor: page.nextCursor,
@@ -62,6 +91,10 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
         hasLoadedOnce: true,
       );
     } catch (e) {
+      if (ref.read(sessionIdentityServiceProvider).cached?.userId !=
+          requestedFor) {
+        return;
+      }
       state = state.copyWith(isLoading: false, hasLoadedOnce: true, error: e);
     }
   }

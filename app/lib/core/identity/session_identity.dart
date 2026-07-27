@@ -132,7 +132,16 @@ class SessionIdentityService {
   /// best-effort revokes the refresh token server-side. The installation's
   /// device identity is never touched — logging out ends the account
   /// session, not the app's own device registration.
-  Future<void> logout() async {
+  ///
+  /// [deviceToken], when the caller has one cached, is sent as
+  /// `X-Device-Token` (issue #80 product-owner review, finding 5) so the
+  /// backend can unlink this installation from the account being logged
+  /// out of — the fix for the "device already linked to another account"
+  /// bug that used to permanently block signing into a different account
+  /// on the same device. Best-effort like the revoke itself: a missing or
+  /// stale token just means the backend leaves the link alone (a no-op,
+  /// never an error), and logout still succeeds either way.
+  Future<void> logout({String? deviceToken}) async {
     final refreshToken =
         _cached?.refreshToken ?? await _storage.read(_keyRefreshToken);
     _cached = null;
@@ -144,6 +153,9 @@ class SessionIdentityService {
       await _dio.post<void>(
         '/v1/auth/logout',
         data: {'refresh_token': refreshToken},
+        options: deviceToken != null
+            ? Options(headers: {'X-Device-Token': deviceToken})
+            : null,
       );
     } catch (_) {
       // Best-effort — local session is already cleared either way, and a
@@ -204,9 +216,20 @@ class SessionNotifier extends AsyncNotifier<SessionIdentity?> {
   }
 
   /// Logs out and updates state immediately, regardless of whether the
-  /// best-effort server-side revoke succeeds.
+  /// best-effort server-side revoke succeeds. Passes the installation's own
+  /// cached device token through (issue #80 product-owner review, finding
+  /// 5) so the backend can unlink it from this account — never calls
+  /// [DeviceIdentityService.invalidate]: the installation's device
+  /// identity itself must survive a logout unchanged, only its account
+  /// link is affected, server-side.
   Future<void> logout() async {
-    await ref.read(sessionIdentityServiceProvider).logout();
+    final deviceToken = ref
+        .read(deviceIdentityServiceProvider)
+        .cached
+        ?.deviceToken;
+    await ref
+        .read(sessionIdentityServiceProvider)
+        .logout(deviceToken: deviceToken);
     state = const AsyncData(null);
   }
 }

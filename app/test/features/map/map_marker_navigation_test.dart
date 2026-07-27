@@ -66,7 +66,7 @@ class _GuestSessionIdentityService implements SessionIdentityService {
   Future<void> save(SessionIdentity identity) async {}
 
   @override
-  Future<void> logout() async {}
+  Future<void> logout({String? deviceToken}) async {}
 }
 
 Future<void> _pumpMap(WidgetTester tester) async {

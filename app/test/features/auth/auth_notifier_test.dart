@@ -137,7 +137,7 @@ class _FakeSessionIdentityService implements SessionIdentityService {
   }
 
   @override
-  Future<void> logout() async {
+  Future<void> logout({String? deviceToken}) async {
     logoutCalls++;
     _cached = null;
   }

@@ -52,7 +52,7 @@ class _FakeSessionIdentityService implements SessionIdentityService {
   Future<void> save(SessionIdentity identity) async => _cached = identity;
 
   @override
-  Future<void> logout() async => _cached = null;
+  Future<void> logout({String? deviceToken}) async => _cached = null;
 }
 
 class _FakeAuthApi implements AuthApi {
