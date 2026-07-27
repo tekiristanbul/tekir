@@ -288,7 +288,7 @@ class _BackCircleButton extends StatelessWidget {
           // add-cat's success path (and a duplicate-candidate "bu zaten var"
           // pick) lands here via context.go, which replaces the whole stack
           // instead of pushing — so there is nothing to pop in that case.
-          // Fall back to the map, the only other top-level destination.
+          // Fall back to the map, the app's root destination.
           if (context.canPop()) {
             context.pop();
           } else {
