@@ -2,12 +2,10 @@ package service
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/tekiristanbul/tekir/backend/internal/repository"
@@ -175,11 +173,13 @@ func (s *ProfileService) GetProfile(ctx context.Context, userID string) (Profile
 	}
 	pgUserID := pgtype.UUID{Bytes: userUUID, Valid: true}
 
+	// userID always comes from a valid, already-validated bearer session
+	// (RequireBearer resolves it before this is ever called), so
+	// pgx.ErrNoRows here is not a real "profile not found" case to map to
+	// a dedicated sentinel — it's just propagated as-is; the handler
+	// answers any error here with a generic 500.
 	user, err := s.db.GetUserByID(ctx, pgUserID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Profile{}, ErrUpdateNotFound // unreachable in practice: userID always comes from a valid bearer session
-		}
 		return Profile{}, err
 	}
 

@@ -126,11 +126,13 @@ type updateResponse struct {
 	NeedsHelpCategoryLabel *string    `json:"needs_help_category_label"`
 	NeedsHelpExpiresAt     *time.Time `json:"needs_help_expires_at"`
 	NeedsHelpActive        *bool      `json:"needs_help_active"`
-	// AuthorIsMe/CorrectionExpiresAt (issue #80) are only meaningful on
-	// GET /v1/cats/{cat_id}/updates, which uses OptionalBearer — both stay
-	// their zero value (false/null) for a guest read. Omitted from the two
-	// correction endpoints' own responses (see updateCorrectionResponse
-	// below), which already know the caller is the author.
+	// AuthorIsMe/CorrectionExpiresAt (issue #80): on GET
+	// /v1/cats/{cat_id}/updates (OptionalBearer), both stay their zero
+	// value (false/null) for a guest read. This same struct also backs
+	// POST .../updates and PATCH .../updates/{id}'s own responses — both
+	// always set AuthorIsMe true and a real CorrectionExpiresAt, since the
+	// caller who just created or corrected an update is, by construction,
+	// its author.
 	AuthorIsMe          bool       `json:"author_is_me"`
 	CorrectionExpiresAt *time.Time `json:"correction_expires_at"`
 }

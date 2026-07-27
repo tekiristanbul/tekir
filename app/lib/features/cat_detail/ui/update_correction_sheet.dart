@@ -56,7 +56,7 @@ class _UpdateCorrectionSheetState extends ConsumerState<UpdateCorrectionSheet> {
     // Refreshes the countdown chip once a minute — no need for
     // second-level precision on a 10-minute window, and a coarser tick
     // means far fewer rebuilds while the sheet is open.
-    _ticker = Timer.periodic(const Duration(seconds: 30), (_) {
+    _ticker = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted) setState(() {});
     });
   }
