@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -64,10 +65,17 @@ type FakeObjectStore struct {
 // returns a store rooted there. publicBaseURL (e.g. "http://localhost:8080")
 // is prepended to every url Put returns, so it's always absolute — a client
 // can't resolve a host-relative path on its own — matching what a real
-// s3-compatible provider would hand back natively.
+// s3-compatible provider would hand back natively. publicBaseURL must
+// itself already be absolute (scheme and host); this fails loudly rather
+// than silently going on to hand back the same non-absolute urls this
+// constructor exists to prevent.
 func NewFakeObjectStore(dir, publicBaseURL string) (*FakeObjectStore, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create media local dir: %w", err)
+	}
+	parsed, err := url.Parse(publicBaseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("media public base url %q must be absolute (scheme and host)", publicBaseURL)
 	}
 	return &FakeObjectStore{dir: dir, publicBaseURL: strings.TrimRight(publicBaseURL, "/")}, nil
 }

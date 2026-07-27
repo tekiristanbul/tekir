@@ -58,6 +58,21 @@ func TestFakeObjectStore_PutTrimsTrailingSlashFromBaseURL(t *testing.T) {
 	}
 }
 
+func TestFakeObjectStore_RejectsNonAbsoluteBaseURL(t *testing.T) {
+	invalid := []string{
+		"",
+		"localhost:8080",
+		"/v1/media/objects",
+		"http://",
+		"://missing-scheme",
+	}
+	for _, base := range invalid {
+		if _, err := NewFakeObjectStore(t.TempDir(), base); err == nil {
+			t.Errorf("NewFakeObjectStore(%q): expected an error, got nil", base)
+		}
+	}
+}
+
 func TestFakeObjectStore_DeleteMissingIsNoop(t *testing.T) {
 	store, err := NewFakeObjectStore(t.TempDir(), "http://localhost:8080")
 	if err != nil {
