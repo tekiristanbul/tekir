@@ -15,7 +15,11 @@ type Querier interface {
 	// device is linked (or re-verified as already linked) to an account.
 	// idempotent — only rows still missing user_id are touched, so calling this
 	// repeatedly (retries, re-verification) never reassigns an already-set
-	// owner.
+	// owner. Conflict-safe against follows_user_cat_uq only because
+	// DeleteRedundantDeviceFollows already ran first in the same transaction
+	// (issue #71) — a device can have at most one follow per cat
+	// (follows_device_cat_uq), so at most one row here can still be
+	// unbackfilled for a given cat once duplicates are gone.
 	BackfillFollowsUserID(ctx context.Context, arg BackfillFollowsUserIDParams) error
 	// issue #65: called inside AuthService.linkDevice's transaction, once a
 	// device is linked (or re-verified as already linked) to an account.
@@ -125,6 +129,16 @@ type Querier interface {
 	// doesn't currently follow deletes zero rows and succeeds silently rather
 	// than erroring.
 	DeleteFollow(ctx context.Context, arg DeleteFollowParams) error
+	// issue #71: called inside AuthService.linkDevice's transaction,
+	// immediately before BackfillFollowsUserID. Deletes this device's
+	// not-yet-backfilled follow rows that are pure duplicates of a follow the
+	// target account already owns for the same cat (from a previous device
+	// link, or a direct account follow) — the account already effectively
+	// follows that cat, so the duplicate carries no new information. This is
+	// what keeps BackfillFollowsUserID's plain assignment below conflict-safe
+	// against follows_user_cat_uq: after this delete, at most one
+	// not-yet-owned row remains per cat for this device.
+	DeleteRedundantDeviceFollows(ctx context.Context, arg DeleteRedundantDeviceFollowsParams) error
 	// traits are fetched separately via ListCatTraits (join against the traits
 	// vocabulary) rather than aggregated in here, so each trait can carry its
 	// display_name without hand-rolling composite-type aggregation in sql. the

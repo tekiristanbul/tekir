@@ -54,11 +54,33 @@ left join lateral (
 where f.user_id = sqlc.arg(user_id)
 order by c.last_update_at desc nulls last, c.id desc;
 
+-- name: DeleteRedundantDeviceFollows :exec
+-- issue #71: called inside AuthService.linkDevice's transaction,
+-- immediately before BackfillFollowsUserID. Deletes this device's
+-- not-yet-backfilled follow rows that are pure duplicates of a follow the
+-- target account already owns for the same cat (from a previous device
+-- link, or a direct account follow) — the account already effectively
+-- follows that cat, so the duplicate carries no new information. This is
+-- what keeps BackfillFollowsUserID's plain assignment below conflict-safe
+-- against follows_user_cat_uq: after this delete, at most one
+-- not-yet-owned row remains per cat for this device.
+delete from follows f
+where f.device_id = sqlc.arg(device_id)
+  and f.user_id is null
+  and exists (
+    select 1 from follows owned
+    where owned.cat_id = f.cat_id and owned.user_id = sqlc.arg(user_id)
+  );
+
 -- name: BackfillFollowsUserID :exec
 -- issue #65: called inside AuthService.linkDevice's transaction, once a
 -- device is linked (or re-verified as already linked) to an account.
 -- idempotent — only rows still missing user_id are touched, so calling this
 -- repeatedly (retries, re-verification) never reassigns an already-set
--- owner.
+-- owner. Conflict-safe against follows_user_cat_uq only because
+-- DeleteRedundantDeviceFollows already ran first in the same transaction
+-- (issue #71) — a device can have at most one follow per cat
+-- (follows_device_cat_uq), so at most one row here can still be
+-- unbackfilled for a given cat once duplicates are gone.
 update follows set user_id = sqlc.arg(user_id)
 where device_id = sqlc.arg(device_id) and user_id is null;

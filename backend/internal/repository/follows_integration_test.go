@@ -2,12 +2,14 @@ package repository_test
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tekiristanbul/tekir/backend/internal/repository"
 	"github.com/tekiristanbul/tekir/backend/internal/service"
@@ -365,5 +367,189 @@ func TestStore_CatExists_ForFollows(t *testing.T) {
 	}
 	if exists {
 		t.Error("expected unknown cat to report exists=false")
+	}
+}
+
+// TestStore_DeleteRedundantDeviceFollows_RemovesDuplicateOfAccountOwnedFollow
+// proves issue #71's runtime fix in isolation: a device's not-yet-backfilled
+// follow is deleted when the target account already owns a follow for the
+// same cat, so the caller (linkDevice) can safely run
+// BackfillFollowsUserID next without risking a follows_user_cat_uq
+// violation.
+func TestStore_DeleteRedundantDeviceFollows_RemovesDuplicateOfAccountOwnedFollow(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "tekir")
+	userID := createTestUser(t, ctx, store)
+	deviceID := createTestDevice(t, ctx, store)
+
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{UserID: userID, CatID: catID}); err != nil {
+		t.Fatalf("seed account-owned follow: %v", err)
+	}
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{DeviceID: deviceID, CatID: catID}); err != nil {
+		t.Fatalf("seed legacy device follow: %v", err)
+	}
+
+	if err := store.DeleteRedundantDeviceFollows(ctx, repository.DeleteRedundantDeviceFollowsParams{
+		DeviceID: deviceID,
+		UserID:   userID,
+	}); err != nil {
+		t.Fatalf("delete redundant device follows: %v", err)
+	}
+
+	// the account-owned row must be the only one left for this cat.
+	rows, err := store.ListFollowedCats(ctx, userID)
+	if err != nil {
+		t.Fatalf("list followed cats: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != catID {
+		t.Fatalf("expected exactly one follow row for (user, cat), got %+v", rows)
+	}
+
+	// the now-safe backfill must not error (nothing left to conflict with).
+	if err := store.BackfillFollowsUserID(ctx, repository.BackfillFollowsUserIDParams{
+		DeviceID: deviceID,
+		UserID:   userID,
+	}); err != nil {
+		t.Fatalf("backfill after dedup: %v", err)
+	}
+}
+
+// TestStore_DeleteRedundantDeviceFollows_LeavesNonConflictingFollowUntouched
+// proves the delete is scoped precisely: a device-owned follow with no
+// conflicting account-owned row for that cat is a genuine (not duplicate)
+// candidate for backfill, and must survive untouched.
+func TestStore_DeleteRedundantDeviceFollows_LeavesNonConflictingFollowUntouched(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "tekir")
+	userID := createTestUser(t, ctx, store)
+	deviceID := createTestDevice(t, ctx, store)
+
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{DeviceID: deviceID, CatID: catID}); err != nil {
+		t.Fatalf("seed legacy device follow: %v", err)
+	}
+
+	if err := store.DeleteRedundantDeviceFollows(ctx, repository.DeleteRedundantDeviceFollowsParams{
+		DeviceID: deviceID,
+		UserID:   userID,
+	}); err != nil {
+		t.Fatalf("delete redundant device follows: %v", err)
+	}
+
+	if err := store.BackfillFollowsUserID(ctx, repository.BackfillFollowsUserIDParams{
+		DeviceID: deviceID,
+		UserID:   userID,
+	}); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	rows, err := store.ListFollowedCats(ctx, userID)
+	if err != nil {
+		t.Fatalf("list followed cats: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != catID {
+		t.Fatalf("expected the non-conflicting follow to survive and be backfilled, got %+v", rows)
+	}
+}
+
+// followsUserCatConflictRepairSQL mirrors migration 00018's repair
+// statement exactly (issue #71) — kept here as a literal so this test can
+// exercise the same logic the migration ships, without depending on goose
+// or re-running every migration from scratch.
+const followsUserCatConflictRepairSQL = `
+with candidates as (
+  select
+    f.device_id,
+    f.cat_id,
+    d.user_id as target_user_id,
+    row_number() over (
+      partition by f.cat_id, d.user_id
+      order by f.created_at, f.device_id
+    ) as rn,
+    exists (
+      select 1 from follows owned
+      where owned.cat_id = f.cat_id and owned.user_id = d.user_id
+    ) as already_owned
+  from follows f
+  join devices d on d.id = f.device_id
+  where f.user_id is null and d.user_id is not null
+)
+delete from follows f
+using candidates c
+where f.device_id = c.device_id
+  and f.cat_id = c.cat_id
+  and (c.already_owned or c.rn > 1);
+
+update follows f
+set user_id = d.user_id
+from devices d
+where f.device_id = d.id
+  and d.user_id is not null
+  and f.user_id is null;
+`
+
+// TestFollowsUserCatConflictRepair_TwoLinkedDevicesSameUserSameCat_Idempotent
+// is issue #71's migration-level regression: two devices already linked to
+// the same account each have their own legacy device-owned follow for the
+// same cat (exactly what migration 00016's original, unfixed bulk backfill
+// choked on with a follows_user_cat_uq violation). The repair must resolve
+// this without error, leave exactly one account-owned follow, and be a
+// no-op if run again.
+func TestFollowsUserCatConflictRepair_TwoLinkedDevicesSameUserSameCat_Idempotent(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "migration-repair-cat")
+	userID := createTestUser(t, ctx, store)
+	deviceA := createTestDevice(t, ctx, store)
+	deviceB := createTestDevice(t, ctx, store)
+
+	// both devices already linked to the account (post-00012), but their
+	// follows haven't been backfilled yet (pre-00016-backfill shape).
+	if err := store.LinkDeviceToUser(ctx, repository.LinkDeviceToUserParams{ID: deviceA, UserID: userID}); err != nil {
+		t.Fatalf("link device A: %v", err)
+	}
+	if err := store.LinkDeviceToUser(ctx, repository.LinkDeviceToUserParams{ID: deviceB, UserID: userID}); err != nil {
+		t.Fatalf("link device B: %v", err)
+	}
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{DeviceID: deviceA, CatID: catID}); err != nil {
+		t.Fatalf("seed device A follow: %v", err)
+	}
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{DeviceID: deviceB, CatID: catID}); err != nil {
+		t.Fatalf("seed device B follow: %v", err)
+	}
+
+	dsn := os.Getenv("DATABASE_URL")
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect for raw repair: %v", err)
+	}
+	defer pool.Close()
+
+	if _, err := pool.Exec(ctx, followsUserCatConflictRepairSQL); err != nil {
+		t.Fatalf("repair (first run): %v", err)
+	}
+
+	rows, err := store.ListFollowedCats(ctx, userID)
+	if err != nil {
+		t.Fatalf("list followed cats: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != catID {
+		t.Fatalf("expected exactly one account-owned follow after repair, got %+v", rows)
+	}
+
+	// idempotent: nothing left to conflict with or reassign.
+	if _, err := pool.Exec(ctx, followsUserCatConflictRepairSQL); err != nil {
+		t.Fatalf("repair (second run, must be a no-op): %v", err)
+	}
+	rows, err = store.ListFollowedCats(ctx, userID)
+	if err != nil {
+		t.Fatalf("list followed cats after repeat repair: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != catID {
+		t.Fatalf("expected repeat repair to be a no-op, got %+v", rows)
 	}
 }

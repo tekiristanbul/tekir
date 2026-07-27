@@ -76,6 +76,7 @@ type AuthStore interface {
 
 	GetDeviceByID(ctx context.Context, id pgtype.UUID) (repository.GetDeviceByIDRow, error)
 	LinkDeviceToUser(ctx context.Context, arg repository.LinkDeviceToUserParams) error
+	DeleteRedundantDeviceFollows(ctx context.Context, arg repository.DeleteRedundantDeviceFollowsParams) error
 	BackfillFollowsUserID(ctx context.Context, arg repository.BackfillFollowsUserIDParams) error
 	BackfillUpdatesAuthorUserID(ctx context.Context, arg repository.BackfillUpdatesAuthorUserIDParams) error
 }
@@ -383,6 +384,16 @@ func (s *AuthService) linkDevice(ctx context.Context, db AuthStore, deviceID, us
 
 	deviceArg := pgtype.UUID{Bytes: deviceID, Valid: true}
 	userArg := pgtype.UUID{Bytes: userID, Valid: true}
+	// Must run before BackfillFollowsUserID (issue #71): drops this
+	// device's own not-yet-backfilled follow rows that duplicate a follow
+	// the account already owns for the same cat, so the plain assignment
+	// below can never violate follows_user_cat_uq.
+	if err := db.DeleteRedundantDeviceFollows(ctx, repository.DeleteRedundantDeviceFollowsParams{
+		DeviceID: deviceArg,
+		UserID:   userArg,
+	}); err != nil {
+		return err
+	}
 	if err := db.BackfillFollowsUserID(ctx, repository.BackfillFollowsUserIDParams{
 		UserID:   userArg,
 		DeviceID: deviceArg,

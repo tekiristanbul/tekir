@@ -136,6 +136,10 @@ func (f *fakeAuthStore) LinkDeviceToUser(_ context.Context, arg repository.LinkD
 	return nil
 }
 
+func (f *fakeAuthStore) DeleteRedundantDeviceFollows(_ context.Context, _ repository.DeleteRedundantDeviceFollowsParams) error {
+	return nil
+}
+
 func (f *fakeAuthStore) BackfillFollowsUserID(_ context.Context, arg repository.BackfillFollowsUserIDParams) error {
 	f.backfillFollowsCalls = append(f.backfillFollowsCalls, backfillCall{
 		deviceID: uuid.UUID(arg.DeviceID.Bytes),
