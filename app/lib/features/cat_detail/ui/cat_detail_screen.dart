@@ -772,12 +772,14 @@ class _CorrectionMenuButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // kTapMin-square tap target (this app's minimum touch target
+    // everywhere else), even though the visible glyph stays small to fit
+    // the timeline row's compact header.
     return SizedBox(
-      width: 28,
-      height: 28,
+      width: kTapMin,
+      height: kTapMin,
       child: IconButton(
         padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(),
         iconSize: 16,
         icon: const Icon(Icons.more_vert, color: AppColors.faint),
         tooltip: 'Güncellemeyi düzelt',

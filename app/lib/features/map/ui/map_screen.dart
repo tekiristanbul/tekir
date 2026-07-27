@@ -372,17 +372,21 @@ class _TopBanner extends StatelessWidget {
 class _ProfileButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.92),
-      shape: const CircleBorder(),
-      elevation: 2,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: () => _gatedOpenProfile(context, ref),
-        child: const SizedBox(
-          width: kTapMin,
-          height: kTapMin,
-          child: Icon(Icons.person_outline, color: AppColors.ink),
+    return Semantics(
+      button: true,
+      label: 'Profil',
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.92),
+        shape: const CircleBorder(),
+        elevation: 2,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () => _gatedOpenProfile(context, ref),
+          child: const SizedBox(
+            width: kTapMin,
+            height: kTapMin,
+            child: Icon(Icons.person_outline, color: AppColors.ink),
+          ),
         ),
       ),
     );
