@@ -425,6 +425,27 @@ class _UpdateActionsRow extends ConsumerWidget {
     final busy = ref.watch(
       catUpdateComposerProvider(catId).select((s) => s.isSubmitting),
     );
+    // issue #80 product-owner review, finding 4: derived straight from the
+    // already-loaded timeline (state.updates), never a client-only
+    // "just submitted" flag — the caller's own most recent 'seen' entry,
+    // if it's still inside the 10-minute correction window, is exactly the
+    // signal that a repeat "Gördüm" tap would be redundant. Another
+    // account's update on this cat never sets this (authorIsMe is
+    // server-derived per entry), and it re-enables the instant the window
+    // closes, on the next rebuild — no extra timer needed since
+    // isCorrectionOpen() is re-evaluated against DateTime.now() on every
+    // watch.
+    final alreadySeenRecently = ref.watch(
+      catDetailProvider(catId).select(
+        (s) => s.updates.any(
+          (u) =>
+              u.authorIsMe &&
+              u.kind == 'ordinary' &&
+              u.statuses.contains('seen') &&
+              u.isCorrectionOpen(),
+        ),
+      ),
+    );
 
     return Row(
       children: [
@@ -432,16 +453,31 @@ class _UpdateActionsRow extends ConsumerWidget {
           child: SizedBox(
             height: kTapMin,
             child: ElevatedButton.icon(
-              onPressed: busy ? null : () => _gatedSubmitSeen(context, ref),
+              onPressed: (busy || alreadySeenRecently)
+                  ? null
+                  : () => _gatedSubmitSeen(context, ref),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.primaryInk,
+                backgroundColor: alreadySeenRecently
+                    ? AppColors.primarySoft
+                    : AppColors.primary,
+                foregroundColor: alreadySeenRecently
+                    ? AppColors.primaryStrong
+                    : AppColors.primaryInk,
+                disabledBackgroundColor: alreadySeenRecently
+                    ? AppColors.primarySoft
+                    : null,
+                disabledForegroundColor: alreadySeenRecently
+                    ? AppColors.primaryStrong
+                    : null,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
                 textStyle: const TextStyle(fontWeight: FontWeight.w600),
               ),
-              icon: const Icon(Icons.visibility_outlined, size: 18),
+              icon: Icon(
+                alreadySeenRecently ? Icons.check : Icons.visibility_outlined,
+                size: 18,
+              ),
               label: const Text('Gördüm'),
             ),
           ),

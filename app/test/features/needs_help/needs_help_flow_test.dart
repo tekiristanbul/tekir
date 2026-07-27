@@ -98,6 +98,7 @@ class _FakeCatDetailApi implements CatDetailApi {
     String catId, {
     required List<String> statuses,
     String? comment,
+    String idempotencyKey = '',
   }) async => _entry('unused');
 
   @override

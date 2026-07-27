@@ -105,15 +105,23 @@ class CatDetailApi {
   /// sure a session exists first (see [AuthGate]) — this method does not
   /// trigger sign-in itself, so an unauthenticated call surfaces as a plain
   /// [UpdateUnauthorizedException] rather than a silent retry.
+  ///
+  /// idempotencyKey (issue #80 product-owner review, finding 4) must be the
+  /// same value across retries of the same attempt — mirrors
+  /// [AddCatApi.createCat]'s exact contract — so a rapid repeat "Gördüm" tap
+  /// or a retried request can never create a second update row; the backend
+  /// resolves a retried key to the original update instead of erroring.
   Future<CatUpdateEntry> createUpdate(
     String catId, {
     required List<String> statuses,
     String? comment,
+    required String idempotencyKey,
   }) async {
     try {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '/v1/cats/$catId/updates',
         data: {'statuses': statuses, 'comment': comment},
+        options: Options(headers: {'Idempotency-Key': idempotencyKey}),
       );
       final body = response.data;
       if (body == null) throw const UpdateServerException();
