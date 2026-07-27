@@ -3,9 +3,12 @@ import 'package:go_router/go_router.dart';
 import '../../features/account/ui/account_screen.dart';
 import '../../features/add_cat/ui/add_cat_screen.dart';
 import '../../features/auth/ui/login_screen.dart';
+import '../../features/badges/ui/badge_detail_screen.dart';
+import '../../features/badges/ui/badges_screen.dart';
 import '../../features/cat_detail/ui/cat_detail_screen.dart';
 import '../../features/map/ui/map_screen.dart';
 import '../../features/notifications/ui/notifications_screen.dart';
+import '../../features/profile/ui/profile_screen.dart';
 
 /// Map is the first screen (docs/product/map.md). Remaining tabs (discover /
 /// notifications) and modal contribution routes land with the real screens
@@ -40,6 +43,16 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/notifications',
       builder: (context, state) => const NotificationsScreen(),
+    ),
+    GoRoute(
+      path: '/profile',
+      builder: (context, state) => const ProfileScreen(),
+    ),
+    GoRoute(path: '/badges', builder: (context, state) => const BadgesScreen()),
+    GoRoute(
+      path: '/badges/:id',
+      builder: (context, state) =>
+          BadgeDetailScreen(badgeId: state.pathParameters['id']!),
     ),
   ],
 );

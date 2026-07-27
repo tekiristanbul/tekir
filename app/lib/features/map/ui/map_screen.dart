@@ -176,6 +176,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
           Positioned(
             top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+            left: AppSpacing.s4,
+            child: PointerInterceptor(child: _ProfileButton()),
+          ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + AppSpacing.s3,
             right: AppSpacing.s4,
             child: PointerInterceptor(child: _NotificationsButton()),
           ),
@@ -350,6 +355,46 @@ class _TopBanner extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Entry point onto the authenticated profile surface (issue #80) — a
+/// glass circle button over the map, mirroring [_NotificationsButton]
+/// exactly (same visual language, same gate-at-intent pattern): a guest's
+/// tap shows AuthGate's prompt sheet first rather than pushing `/profile`
+/// and landing on its own guest empty-state. Positioned opposite the
+/// notifications button since the account/settings entry point
+/// (docs/architecture/flutter.md's `profile`/`account` split) has no
+/// dedicated persistent nav bar in this app's flat, map-first architecture
+/// (docs/product/map.md) — unlike the approved prototype's bottom tab bar.
+class _ProfileButton extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.92),
+      shape: const CircleBorder(),
+      elevation: 2,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () => _gatedOpenProfile(context, ref),
+        child: const SizedBox(
+          width: kTapMin,
+          height: kTapMin,
+          child: Icon(Icons.person_outline, color: AppColors.ink),
+        ),
+      ),
+    );
+  }
+
+  void _gatedOpenProfile(BuildContext context, WidgetRef ref) {
+    unawaited(
+      AuthGate.require(
+        context,
+        ref,
+        contextText: 'Profilini görmek için giriş yap',
+        onAuthenticated: () => context.push('/profile'),
       ),
     );
   }
