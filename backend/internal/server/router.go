@@ -29,7 +29,7 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: corsOrigins,
 		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
-		AllowedHeaders: []string{"Content-Type", "Authorization", "X-Device-Token"},
+		AllowedHeaders: []string{"Content-Type", "Authorization", "X-Device-Token", "Idempotency-Key"},
 	}))
 
 	r.Get("/healthz", health.Live)
