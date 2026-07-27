@@ -85,6 +85,18 @@ class _FakeCatDetailApi implements CatDetailApi {
     if (nextError != null) throw nextError!;
     return nextResult!;
   }
+
+  @override
+  Future<CatUpdateEntry> correctUpdate(
+    String catId,
+    String updateId, {
+    required List<String> statuses,
+    String? comment,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> deleteUpdate(String catId, String updateId) =>
+      throw UnimplementedError();
 }
 
 // Same technique as cat_detail_screen_test.dart's fixed notifier: a build()

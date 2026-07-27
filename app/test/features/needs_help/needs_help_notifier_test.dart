@@ -65,6 +65,18 @@ class _FakeCatDetailApi implements CatDetailApi {
     required List<String> statuses,
     String? comment,
   }) async => _entry('unused');
+
+  @override
+  Future<CatUpdateEntry> correctUpdate(
+    String catId,
+    String updateId, {
+    required List<String> statuses,
+    String? comment,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> deleteUpdate(String catId, String updateId) =>
+      throw UnimplementedError();
 }
 
 class _FakeNeedsHelpApi implements NeedsHelpApi {

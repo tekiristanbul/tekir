@@ -664,12 +664,20 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		return CatUpdate{}, err
 	}
 
+	expiresAt := createdAt.Add(updateCorrectionWindow)
 	return CatUpdate{
 		ID:        uuid.UUID(row.ID.Bytes).String(),
 		Kind:      "ordinary",
 		Statuses:  sorted,
 		Comment:   comment,
 		CreatedAt: createdAt,
+		// the caller always authored the update they just created, and it
+		// is always freshly inside the correction window at creation time
+		// (issue #80) — never left false/nil the way a zero-value CatUpdate
+		// would, which would otherwise hide the correction affordance from
+		// the client immediately after posting until the next full reload.
+		AuthorIsMe:          true,
+		CorrectionExpiresAt: &expiresAt,
 	}, nil
 }
 

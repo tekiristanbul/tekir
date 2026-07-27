@@ -113,6 +113,18 @@ class _FakeCatDetailApi implements CatDetailApi {
     if (nextError != null) throw nextError!;
     return nextResult!;
   }
+
+  @override
+  Future<CatUpdateEntry> correctUpdate(
+    String catId,
+    String updateId, {
+    required List<String> statuses,
+    String? comment,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> deleteUpdate(String catId, String updateId) =>
+      throw UnimplementedError();
 }
 
 // Returns a malformed (missing device_id/device_token) body on the first

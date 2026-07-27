@@ -14,6 +14,7 @@ import '../data/cat_detail.dart';
 import 'cat_detail_notifier.dart';
 import 'cat_update_composer_notifier.dart';
 import 'cat_update_sheet.dart';
+import 'update_correction_sheet.dart';
 
 const _heroHeight = 280.0;
 
@@ -142,6 +143,7 @@ class _CatDetailBody extends ConsumerWidget {
               else ...[
                 for (var i = 0; i < state.updates.length; i++)
                   _TimelineItem(
+                    catId: detail.id,
                     update: state.updates[i],
                     isLast: i == state.updates.length - 1 && !state.hasNextPage,
                   ),
@@ -655,8 +657,13 @@ class _NeedsHelpTag extends StatelessWidget {
 /// italic) muted body text — per issue #21's requirement that the two
 /// never blur together.
 class _TimelineItem extends StatelessWidget {
-  const _TimelineItem({required this.update, required this.isLast});
+  const _TimelineItem({
+    required this.catId,
+    required this.update,
+    required this.isLast,
+  });
 
+  final String catId;
   final CatUpdateEntry update;
   final bool isLast;
 
@@ -719,6 +726,16 @@ class _TimelineItem extends StatelessWidget {
                           color: AppColors.faint,
                         ),
                       ),
+                      // issue #80: only the author sees this, and only
+                      // while their own ordinary update is still within
+                      // its 10-minute correction window — a soft-deleted
+                      // update never reaches this list at all, for any
+                      // reader, so no separate "not deleted" check is
+                      // needed here.
+                      if (update.authorIsMe &&
+                          !update.isNeedsHelp &&
+                          update.isCorrectionOpen())
+                        _CorrectionMenuButton(catId: catId, update: update),
                     ],
                   ),
                   if (update.comment != null) ...[
@@ -737,6 +754,35 @@ class _TimelineItem extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The correction-window "⋮" affordance (issue #80) — only ever shown to an
+/// update's own author, and only while it's still open (see the call site
+/// in _TimelineItem above). No dedicated read-only state: once the window
+/// closes, this button simply stops rendering rather than rendering
+/// disabled, since there is nothing left it could still do.
+class _CorrectionMenuButton extends StatelessWidget {
+  const _CorrectionMenuButton({required this.catId, required this.update});
+
+  final String catId;
+  final CatUpdateEntry update;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 28,
+      height: 28,
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(),
+        iconSize: 16,
+        icon: const Icon(Icons.more_vert, color: AppColors.faint),
+        tooltip: 'Güncellemeyi düzelt',
+        onPressed: () =>
+            openUpdateCorrectionSheet(context, catId: catId, entry: update),
       ),
     );
   }

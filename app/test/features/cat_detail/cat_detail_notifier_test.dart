@@ -60,6 +60,18 @@ class _FakeCatDetailApi implements CatDetailApi {
     required List<String> statuses,
     String? comment,
   }) => throw UnimplementedError();
+
+  @override
+  Future<CatUpdateEntry> correctUpdate(
+    String catId,
+    String updateId, {
+    required List<String> statuses,
+    String? comment,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> deleteUpdate(String catId, String updateId) =>
+      throw UnimplementedError();
 }
 
 ProviderContainer _containerWith(_FakeCatDetailApi api) {
@@ -236,5 +248,76 @@ void main() {
     final state = container.read(catDetailProvider(_catId));
     expect(state.updates, isEmpty);
     expect(state.detail, isNull);
+  });
+
+  test(
+    'replaceUpdate (issue #80) swaps the entry in place, keeping position',
+    () async {
+      final container = _containerWith(
+        _FakeCatDetailApi(
+          detail: _detail,
+          updatesPages: [
+            UpdatesPage(
+              items: [_update('u2'), _update('u1')],
+              nextCursor: null,
+            ),
+          ],
+        ),
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      final corrected = _update('u1', comment: 'düzeltildi');
+      notifier.replaceUpdate(corrected);
+
+      final state = container.read(catDetailProvider(_catId));
+      expect(state.updates.map((u) => u.id), ['u2', 'u1']);
+      expect(state.updates[1].comment, 'düzeltildi');
+    },
+  );
+
+  test(
+    'replaceUpdate is a no-op if the id is no longer in the timeline',
+    () async {
+      final container = _containerWith(
+        _FakeCatDetailApi(
+          detail: _detail,
+          updatesPages: [
+            UpdatesPage(items: [_update('u1')], nextCursor: null),
+          ],
+        ),
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      notifier.replaceUpdate(_update('does-not-exist'));
+
+      final state = container.read(catDetailProvider(_catId));
+      expect(state.updates.map((u) => u.id), ['u1']);
+    },
+  );
+
+  test('removeUpdate (issue #80) drops exactly the deleted entry', () async {
+    final container = _containerWith(
+      _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: [
+          UpdatesPage(items: [_update('u2'), _update('u1')], nextCursor: null),
+        ],
+      ),
+    );
+    addTearDown(container.dispose);
+
+    final notifier = container.read(catDetailProvider(_catId).notifier);
+    await notifier.load();
+
+    notifier.removeUpdate('u2');
+
+    final state = container.read(catDetailProvider(_catId));
+    expect(state.updates.map((u) => u.id), ['u1']);
   });
 }

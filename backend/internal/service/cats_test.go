@@ -577,6 +577,16 @@ func TestCatsService_CreateOrdinaryUpdate_Success(t *testing.T) {
 	if len(update.Statuses) != 2 || update.Statuses[0] != "fed" || update.Statuses[1] != "water_provided" {
 		t.Errorf("expected sorted statuses [fed water_provided], got %v", update.Statuses)
 	}
+	// issue #80: a freshly created update is always the caller's own and
+	// always inside its own correction window at creation time — the
+	// client must see this immediately, not only after a reload.
+	if !update.AuthorIsMe {
+		t.Error("expected AuthorIsMe true on a freshly created update")
+	}
+	wantExpiresAt := fixedNow.Add(updateCorrectionWindow)
+	if update.CorrectionExpiresAt == nil || !update.CorrectionExpiresAt.Equal(wantExpiresAt) {
+		t.Errorf("expected correction_expires_at %v, got %v", wantExpiresAt, update.CorrectionExpiresAt)
+	}
 
 	if uuid.UUID(captured.CatID.Bytes).String() != catID.String() {
 		t.Errorf("unexpected repository cat id: %v", captured.CatID)
