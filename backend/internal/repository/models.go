@@ -57,6 +57,15 @@ type Medium struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
+type Notification struct {
+	ID        pgtype.UUID        `json:"id"`
+	DeviceID  pgtype.UUID        `json:"device_id"`
+	CatID     pgtype.UUID        `json:"cat_id"`
+	UpdateID  pgtype.UUID        `json:"update_id"`
+	ReadAt    pgtype.Timestamptz `json:"read_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type NotificationOutbox struct {
 	ID          pgtype.UUID        `json:"id"`
 	UpdateID    pgtype.UUID        `json:"update_id"`

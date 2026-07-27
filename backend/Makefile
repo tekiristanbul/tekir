@@ -1,4 +1,4 @@
-.PHONY: run build test lint fmt sqlc migrate-up migrate-down migrate-status seed
+.PHONY: run run-notifier build test lint fmt sqlc migrate-up migrate-down migrate-status seed
 
 DATABASE_URL ?= postgres://catsofistanbul:catsofistanbul@localhost:5432/catsofistanbul?sslmode=disable
 export DATABASE_URL
@@ -11,8 +11,12 @@ export JWT_SIGNING_KEY
 run:
 	go run ./cmd/api
 
+run-notifier:
+	go run ./cmd/notifier
+
 build:
 	go build -o bin/api ./cmd/api
+	go build -o bin/notifier ./cmd/notifier
 
 test:
 	go test ./...

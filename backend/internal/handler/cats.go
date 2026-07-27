@@ -398,6 +398,40 @@ func (h *CatsHandler) CreateUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toUpdateResponse(update))
 }
 
+// createNeedsHelpRequest is the body of POST /v1/cats/{cat_id}/needs-help
+// (issue #78). DisallowUnknownFields rejects any client-supplied kind,
+// expires_at, or active — all server-derived, mirroring createUpdateRequest.
+type createNeedsHelpRequest struct {
+	Category string  `json:"category"`
+	Comment  *string `json:"comment"`
+}
+
+// CreateNeedsHelp answers POST /v1/cats/{cat_id}/needs-help: records a new
+// needs-help report for the cat, attributed to the authenticated account
+// resolved from the caller's Authorization: Bearer, exactly like
+// CreateUpdate — a needs-help report requires the same authenticated
+// account, never guest/device-only, per issue #78's gate-at-intent
+// requirement.
+func (h *CatsHandler) CreateNeedsHelp(w http.ResponseWriter, r *http.Request) {
+	var req createNeedsHelpRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	user := UserFromContext(r.Context())
+	device := DeviceFromContext(r.Context())
+	update, err := h.cats.CreateNeedsHelpUpdate(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, device.DeviceID, req.Category, req.Comment)
+	if err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, toUpdateResponse(update))
+}
+
 func writeCatsServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrInvalidCatID):
@@ -410,6 +444,8 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"})
 	case errors.Is(err, service.ErrInvalidStatuses):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid statuses"})
+	case errors.Is(err, service.ErrInvalidNeedsHelpCategory):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid needs-help category"})
 	case errors.Is(err, service.ErrInvalidArea):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid area"})
 	case errors.Is(err, service.ErrMissingPhoto):

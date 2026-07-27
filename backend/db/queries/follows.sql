@@ -84,3 +84,23 @@ where f.device_id = sqlc.arg(device_id)
 -- unbackfilled for a given cat once duplicates are gone.
 update follows set user_id = sqlc.arg(user_id)
 where device_id = sqlc.arg(device_id) and user_id is null;
+
+-- name: ListNeedsHelpRecipientDevices :many
+-- issue #78: the notification worker's recipient-resolution step for one
+-- needs-help update. Joins account-owned follows (never device-owned ones
+-- — following, like the update itself, is account state) to that
+-- account's linked devices. author_user_id excludes the reporter from
+-- their own notification without a separate filter step; revoked_at is
+-- null excludes a device the account has since revoked; device_id is
+-- distinct in case a future schema allows more than one follow row per
+-- (user_id, cat_id), which follows_user_cat_uq today prevents but this
+-- query shouldn't rely on. never joins on device_id — only account
+-- ownership (user_id) determines who follows a cat, per [[community]]'s
+-- private-following contract; devices are purely the push-delivery target.
+select distinct d.id as device_id
+from follows f
+join devices d on d.user_id = f.user_id
+where f.cat_id = sqlc.arg(cat_id)
+  and f.user_id is not null
+  and f.user_id != sqlc.arg(author_user_id)
+  and d.revoked_at is null;

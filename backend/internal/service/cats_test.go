@@ -34,6 +34,11 @@ type fakeCatsLister struct {
 	// copy of fakeCatsLister that ends up inside CatsService.
 	captured *repository.CreateOrdinaryUpdateParams
 
+	createNeedsHelpRow repository.CreateUpdateRow
+	createNeedsHelpErr error
+	// capturedNeedsHelp mirrors captured above, for CreateNeedsHelpUpdate.
+	capturedNeedsHelp *repository.CreateNeedsHelpUpdateParams
+
 	idempotencyRow repository.GetCatByIdempotencyKeyRow
 	idempotencyErr error
 
@@ -68,6 +73,13 @@ func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository
 		*f.captured = arg
 	}
 	return f.createRow, f.createErr
+}
+
+func (f fakeCatsLister) CreateNeedsHelpUpdate(ctx context.Context, arg repository.CreateNeedsHelpUpdateParams) (repository.CreateUpdateRow, error) {
+	if f.capturedNeedsHelp != nil {
+		*f.capturedNeedsHelp = arg
+	}
+	return f.createNeedsHelpRow, f.createNeedsHelpErr
 }
 
 func (f fakeCatsLister) GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error) {
@@ -650,6 +662,114 @@ func TestCatsService_CreateOrdinaryUpdate_RepositoryFailure(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true, createErr: errors.New("connection refused")})
 
 	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+}
+
+func TestCatsService_CreateNeedsHelpUpdate_Success(t *testing.T) {
+	catID := uuid.New()
+	userID := uuid.New()
+	deviceID := uuid.New()
+	returnedID := uuid.New()
+	fixedNow := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	var captured repository.CreateNeedsHelpUpdateParams
+	svc := NewCatsService(fakeCatsLister{
+		exists:             true,
+		createNeedsHelpRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		capturedNeedsHelp:  &captured,
+	}, WithClock(func() time.Time { return fixedNow }))
+
+	comment := "sağ arka ayağını basamıyor"
+	update, err := svc.CreateNeedsHelpUpdate(context.Background(), catID.String(), userID.String(), deviceID.String(), "injured_or_sick", &comment)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if update.ID != returnedID.String() {
+		t.Errorf("expected id %s, got %s", returnedID.String(), update.ID)
+	}
+	if update.Kind != "needs_help" {
+		t.Errorf("expected kind needs_help, got %q", update.Kind)
+	}
+	if update.NeedsHelpCategory == nil || *update.NeedsHelpCategory != "injured_or_sick" {
+		t.Errorf("unexpected needs-help category: %v", update.NeedsHelpCategory)
+	}
+	if update.NeedsHelpCategoryLabel == nil || *update.NeedsHelpCategoryLabel != needsHelpCategoryLabels["injured_or_sick"] {
+		t.Errorf("unexpected needs-help category label: %v", update.NeedsHelpCategoryLabel)
+	}
+	wantExpiresAt := fixedNow.Add(NeedsHelpExpiry)
+	if update.NeedsHelpExpiresAt == nil || !update.NeedsHelpExpiresAt.Equal(wantExpiresAt) {
+		t.Errorf("expected expires_at %v, got %v", wantExpiresAt, update.NeedsHelpExpiresAt)
+	}
+	if update.NeedsHelpActive == nil || !*update.NeedsHelpActive {
+		t.Errorf("expected a freshly created needs-help update to be active, got %v", update.NeedsHelpActive)
+	}
+	if !update.CreatedAt.Equal(fixedNow) {
+		t.Errorf("expected server-derived created_at %v, got %v", fixedNow, update.CreatedAt)
+	}
+	// Statuses must be []string{}, never nil — a nil slice marshals to json
+	// `null`, but ListCatUpdates' row.Statuses (a sql coalesce(..., '{}'))
+	// never sends null over the wire, and Flutter's CatUpdateEntry.fromJson
+	// casts statuses as a non-nullable List.
+	if update.Statuses == nil || len(update.Statuses) != 0 {
+		t.Errorf("expected non-nil empty statuses, got %v", update.Statuses)
+	}
+
+	if uuid.UUID(captured.CatID.Bytes).String() != catID.String() {
+		t.Errorf("unexpected repository cat id: %v", captured.CatID)
+	}
+	if uuid.UUID(captured.AuthorUserID.Bytes).String() != userID.String() {
+		t.Errorf("unexpected repository author user id: %v", captured.AuthorUserID)
+	}
+	if captured.NeedsHelpCategory != "injured_or_sick" {
+		t.Errorf("unexpected repository category: %q", captured.NeedsHelpCategory)
+	}
+	if !captured.NeedsHelpExpiresAt.Time.Equal(wantExpiresAt) {
+		t.Errorf("expected repository expires_at %v, got %v", wantExpiresAt, captured.NeedsHelpExpiresAt.Time)
+	}
+}
+
+func TestCatsService_CreateNeedsHelpUpdate_InvalidCategory(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{exists: true})
+
+	cases := []string{"", "flying", "INJURED_OR_SICK", "injured_sick"}
+	for _, category := range cases {
+		t.Run(category, func(t *testing.T) {
+			if _, err := svc.CreateNeedsHelpUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), category, nil); !errors.Is(err, ErrInvalidNeedsHelpCategory) {
+				t.Fatalf("expected ErrInvalidNeedsHelpCategory, got %v", err)
+			}
+		})
+	}
+}
+
+func TestCatsService_CreateNeedsHelpUpdate_InvalidUserID(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{exists: true})
+	_, err := svc.CreateNeedsHelpUpdate(context.Background(), uuid.New().String(), "not-a-uuid", "", "trapped", nil)
+	if err == nil {
+		t.Fatal("expected error for invalid user id, got nil")
+	}
+}
+
+func TestCatsService_CreateNeedsHelpUpdate_InvalidCatID(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{})
+	_, err := svc.CreateNeedsHelpUpdate(context.Background(), "not-a-uuid", uuid.New().String(), uuid.New().String(), "trapped", nil)
+	if !errors.Is(err, ErrInvalidCatID) {
+		t.Fatalf("expected ErrInvalidCatID, got %v", err)
+	}
+}
+
+func TestCatsService_CreateNeedsHelpUpdate_UnknownCat(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{exists: false})
+	_, err := svc.CreateNeedsHelpUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), "trapped", nil)
+	if !errors.Is(err, ErrCatNotFound) {
+		t.Fatalf("expected ErrCatNotFound, got %v", err)
+	}
+}
+
+func TestCatsService_CreateNeedsHelpUpdate_RepositoryFailure(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{exists: true, createNeedsHelpErr: errors.New("connection refused")})
+	_, err := svc.CreateNeedsHelpUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), "trapped", nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
