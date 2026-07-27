@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // ObjectStore persists an already-validated media object under an
@@ -55,16 +56,20 @@ func validateObjectKey(key string) error {
 // This must never be wired in a production deployment — see
 // docs/architecture/backend.md's OBJECT_STORAGE_PROVIDER config.
 type FakeObjectStore struct {
-	dir string
+	dir           string
+	publicBaseURL string
 }
 
 // NewFakeObjectStore creates dir (and any missing parents) if needed and
-// returns a store rooted there.
-func NewFakeObjectStore(dir string) (*FakeObjectStore, error) {
+// returns a store rooted there. publicBaseURL (e.g. "http://localhost:8080")
+// is prepended to every url Put returns, so it's always absolute — a client
+// can't resolve a host-relative path on its own — matching what a real
+// s3-compatible provider would hand back natively.
+func NewFakeObjectStore(dir, publicBaseURL string) (*FakeObjectStore, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create media local dir: %w", err)
 	}
-	return &FakeObjectStore{dir: dir}, nil
+	return &FakeObjectStore{dir: dir, publicBaseURL: strings.TrimRight(publicBaseURL, "/")}, nil
 }
 
 // Put writes data to dir/key and returns the local, controlled-read-delivery
@@ -78,7 +83,7 @@ func (f *FakeObjectStore) Put(_ context.Context, key, _ string, data []byte) (st
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("write media object: %w", err)
 	}
-	return "/v1/media/objects/" + key, nil
+	return f.publicBaseURL + "/v1/media/objects/" + key, nil
 }
 
 // Delete removes dir/key. A missing file is not an error — see the

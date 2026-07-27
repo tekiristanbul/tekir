@@ -43,6 +43,12 @@ type Config struct {
 	// MediaLocalDir is where FakeObjectStore reads/writes uploaded media
 	// when ObjectStorageProvider is "fake". Unused by any other provider.
 	MediaLocalDir string
+	// MediaPublicBaseURL is prepended to the object key FakeObjectStore
+	// returns, so primary_photo/media urls are always absolute — matching
+	// what a real s3-compatible provider would return on its own — rather
+	// than a host-relative path a client can't resolve on its own. Unused
+	// by any other provider.
+	MediaPublicBaseURL string
 	// MediaMaxBytes bounds an uploaded file's size before it's ever decoded,
 	// so a request can't force the server to decompress an arbitrarily
 	// large image (issue #70's malformed/oversized-media rejection).
@@ -69,6 +75,7 @@ func Load() (Config, error) {
 		MediaLocalDir:         getEnv("MEDIA_LOCAL_DIR", "./data/media"),
 		MediaMaxBytes:         getEnvInt("MEDIA_MAX_BYTES", 8*1024*1024),
 	}
+	cfg.MediaPublicBaseURL = getEnv("MEDIA_PUBLIC_BASE_URL", "http://localhost:"+cfg.Port)
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")

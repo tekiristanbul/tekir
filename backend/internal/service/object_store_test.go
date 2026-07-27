@@ -10,7 +10,7 @@ import (
 
 func TestFakeObjectStore_PutGetDelete(t *testing.T) {
 	dir := t.TempDir()
-	store, err := NewFakeObjectStore(dir)
+	store, err := NewFakeObjectStore(dir, "http://localhost:8080")
 	if err != nil {
 		t.Fatalf("NewFakeObjectStore: %v", err)
 	}
@@ -19,7 +19,7 @@ func TestFakeObjectStore_PutGetDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if url != "/v1/media/objects/abc123.jpg" {
+	if url != "http://localhost:8080/v1/media/objects/abc123.jpg" {
 		t.Errorf("unexpected url: %q", url)
 	}
 
@@ -43,8 +43,23 @@ func TestFakeObjectStore_PutGetDelete(t *testing.T) {
 	}
 }
 
+func TestFakeObjectStore_PutTrimsTrailingSlashFromBaseURL(t *testing.T) {
+	store, err := NewFakeObjectStore(t.TempDir(), "http://localhost:8080/")
+	if err != nil {
+		t.Fatalf("NewFakeObjectStore: %v", err)
+	}
+
+	url, err := store.Put(context.Background(), "abc123.jpg", "image/jpeg", []byte("x"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if url != "http://localhost:8080/v1/media/objects/abc123.jpg" {
+		t.Errorf("unexpected url: %q", url)
+	}
+}
+
 func TestFakeObjectStore_DeleteMissingIsNoop(t *testing.T) {
-	store, err := NewFakeObjectStore(t.TempDir())
+	store, err := NewFakeObjectStore(t.TempDir(), "http://localhost:8080")
 	if err != nil {
 		t.Fatalf("NewFakeObjectStore: %v", err)
 	}
@@ -54,7 +69,7 @@ func TestFakeObjectStore_DeleteMissingIsNoop(t *testing.T) {
 }
 
 func TestFakeObjectStore_GetMissingReturnsErrObjectNotFound(t *testing.T) {
-	store, err := NewFakeObjectStore(t.TempDir())
+	store, err := NewFakeObjectStore(t.TempDir(), "http://localhost:8080")
 	if err != nil {
 		t.Fatalf("NewFakeObjectStore: %v", err)
 	}
@@ -69,7 +84,7 @@ func TestFakeObjectStore_GetMissingReturnsErrObjectNotFound(t *testing.T) {
 // straight through to this store.
 func TestFakeObjectStore_RejectsPathTraversal(t *testing.T) {
 	dir := t.TempDir()
-	store, err := NewFakeObjectStore(dir)
+	store, err := NewFakeObjectStore(dir, "http://localhost:8080")
 	if err != nil {
 		t.Fatalf("NewFakeObjectStore: %v", err)
 	}

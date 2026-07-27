@@ -59,7 +59,7 @@ func run() error {
 		return err
 	}
 
-	objectStore, err := newObjectStore(cfg.ObjectStorageProvider, cfg.MediaLocalDir)
+	objectStore, err := newObjectStore(cfg.ObjectStorageProvider, cfg.MediaLocalDir, cfg.MediaPublicBaseURL)
 	if err != nil {
 		return err
 	}
@@ -133,10 +133,10 @@ func newSmsSender(provider string) (service.SmsSender, error) {
 // docs/architecture/backend.md) is implemented as of issue #70, mirroring
 // newSmsSender: an unrecognized value fails loudly at startup rather than
 // silently defaulting to a provider the operator didn't ask for.
-func newObjectStore(provider, localDir string) (service.ObjectStore, error) {
+func newObjectStore(provider, localDir, publicBaseURL string) (service.ObjectStore, error) {
 	switch provider {
 	case "fake":
-		return service.NewFakeObjectStore(localDir)
+		return service.NewFakeObjectStore(localDir, publicBaseURL)
 	default:
 		return nil, fmt.Errorf("unsupported OBJECT_STORAGE_PROVIDER %q (only \"fake\" is implemented)", provider)
 	}
