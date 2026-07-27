@@ -33,5 +33,18 @@ services:
       postgres:
         condition: service_healthy
 
+  notifier:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.notifier
+    environment:
+      DATABASE_URL: postgres://catsofistanbul:catsofistanbul@postgres:5432/catsofistanbul?sslmode=disable
+      LOG_LEVEL: info
+      JWT_SIGNING_KEY: local-dev-only-not-a-secret
+      NOTIFICATION_PROVIDER: fake
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:

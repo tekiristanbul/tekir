@@ -77,7 +77,9 @@ GET  /v1/cats/{cat_id}/updates?cursor=&limit=   → { items: [{ id, kind, status
                                                               needs_help_expires_at|null, needs_help_active|null }],
                                                      next_cursor|null }
 POST /v1/cats/{cat_id}/updates     (Bearer required)  { statuses[], comment? }  → 201 { id, kind, statuses[], comment|null, created_at }
-POST /v1/cats/{cat_id}/needs-help  (Bearer required)  { category }              (not yet implemented)
+POST /v1/cats/{cat_id}/needs-help  (Bearer required)  { category, comment? }    → 201 { id, kind, comment|null, created_at,
+                                                                                        needs_help_category, needs_help_category_label,
+                                                                                        needs_help_expires_at, needs_help_active }  (implemented — issue #78)
 POST /v1/media                      (Bearer required; X-Device-Token optional; Idempotency-Key optional)  multipart file → 201 { media_id, url }  (implemented — issue #70)
 GET  /v1/media/objects/{key}                                                    → the object's raw bytes  (implemented — issue #70)
 ```
@@ -86,7 +88,7 @@ GET  /v1/media/objects/{key}                                                    
 
 `POST /v1/cats/{cat_id}/updates` resolves the authenticated account from `Authorization: Bearer` (implemented — issue #65, superseding #36's earlier device-token-only contract); `X-Device-Token` may still be supplied and is recorded alongside the account for installation/abuse-control association, but is never sufficient authorization on its own. `statuses` remains a non-empty set from `seen`, `fed`, and `water_provided`; comment-only requests remain invalid. the server derives author (account and, optionally, device) and timestamps and writes the update, statuses, `last_update_at`, and notification outbox entry transactionally.
 
-`POST /v1/cats/{cat_id}/needs-help` also requires bearer authentication. `expires_at` is server-computed as `created_at + 72h`.
+`POST /v1/cats/{cat_id}/needs-help` (implemented — issue #78) also requires bearer authentication; `X-Device-Token` is optional installation/abuse-control association only, identical to the ordinary-update contract above. `category` must be one of the fixed 5-value vocabulary; `expires_at` is server-computed as `created_at + 72h` (never client-supplied). The write and its `notification_outbox` enqueue commit transactionally, exactly like an ordinary update — see [[db]]/[[backend]] for how that outbox row is later drained.
 
 `POST /v1/media` (issue #70) is standalone media upload — independent of cat creation (a cat's own required initial photo is instead embedded directly in `POST /v1/cats`, above). Validation, ownership resolution, and `Idempotency-Key` handling are identical to `POST /v1/cats`'s photo (same shared pipeline, see [[backend]]). Not yet wired to any other write path — `updates.media_id` exists in [[db]] but no update-creation endpoint accepts one yet; this endpoint exists so that future path has somewhere to upload to.
 
@@ -98,13 +100,15 @@ GET  /v1/media/objects/{key}                                                    
 POST   /v1/cats/{cat_id}/follow      (Bearer required; X-Device-Token optional)   → 204   (implemented — issue #65, superseding #44's device-only contract)
 DELETE /v1/cats/{cat_id}/follow      (Bearer required)                             → 204   (implemented — issue #65)
 GET    /v1/me/follows                (Bearer required)                             → [{ id, name, primary_photo, area{lat,lng}, area_label|null, active_alert|null, last_update_at }]   (implemented — issue #65)
-GET    /v1/me/notifications?cursor=                               → [{ id, cat_id, update_id, read, created_at }]
-POST   /v1/me/notifications/{id}/read                             → 204
+GET    /v1/me/notifications?cursor=                               → { items: [{ id, cat_id, update_id, read, created_at }], next_cursor|null }   (implemented — issue #78)
+POST   /v1/me/notifications/{id}/read                             → 204   (implemented — issue #78)
 ```
 
 following is private, account-owned state (matching [[community]]) and does not create public content. an optional `X-Device-Token` on follow is recorded purely for installation/abuse-control association, never authorization — mirroring the updates contract above. both follow and unfollow are idempotent. pre-existing device-owned follows (issue #44) are backfilled onto an account automatically the moment the owning device links to it (see [[db]]'s `devices.user_id` design note) — no follow is ever lost or requires the client to re-follow after signing in.
 
-push delivery remains at-most-once for mvp through the notification outbox and notifications uniqueness constraint.
+`GET /v1/me/notifications` resolves the caller's own devices server-side (never another account's, even a former owner of a now-reassigned device) and returns only what was actually delivered to one of them — see [[db]]'s `notifications` table. `POST .../read` is owner-scoped the same way and idempotent (marking an already-read notification read again is a no-op, never an error).
+
+push delivery remains at-most-once for mvp through the notification outbox and notifications uniqueness constraint. issue #78 introduces the provider-neutral `NotificationSender` interface this depends on (see [[backend]]) — only a deterministic fake/dev-test implementation is wired for mvp; a real push vendor is out of scope and the worker fails to start rather than silently falling back to fake if misconfigured.
 
 ### modeling notes
 

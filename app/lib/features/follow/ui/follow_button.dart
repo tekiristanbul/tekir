@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../auth/ui/auth_gate.dart';
+import '../../notifications/ui/notification_optin_sheet.dart';
 import 'follow_state_notifier.dart';
 
 /// Follow/unfollow toggle for a cat (issue #65). Gate-at-intent: a guest's
@@ -58,6 +59,8 @@ class FollowButton extends ConsumerWidget {
   }
 
   Future<void> _toggle(BuildContext context, WidgetRef ref) async {
+    final wasFollowing =
+        ref.read(followsProvider).value?.contains(catId) ?? false;
     try {
       await ref.read(followsProvider.notifier).toggle(catId);
     } catch (e) {
@@ -65,6 +68,13 @@ class FollowButton extends ConsumerWidget {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(followActionErrorMessageTr(e))));
+      return;
+    }
+    // Notification permission is asked only after following a cat — never
+    // on unfollow, and at most once per session (issue #78,
+    // docs/product/notifications.md).
+    if (!wasFollowing && context.mounted) {
+      await maybeShowNotificationOptInSheet(context, ref);
     }
   }
 }

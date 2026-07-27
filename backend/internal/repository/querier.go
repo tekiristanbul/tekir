@@ -28,6 +28,17 @@ type Querier interface {
 	// lets the updates-history endpoint 404 on an unknown cat instead of
 	// silently returning an empty page indistinguishable from "no history yet".
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
+	// issue #78: the notification worker's read step. `for update skip locked`
+	// lets more than one worker process poll concurrently without claiming the
+	// same row twice — a second worker just skips a row the first already
+	// locked, rather than blocking on it or double-processing it once the
+	// first commits. joins updates for `kind`/`author_user_id` since the
+	// outbox itself doesn't carry them: an ordinary-update row's outbox entry
+	// is real (Store.CreateOrdinaryUpdate enqueues one for every write) but
+	// must never fan out to followers (see docs/product/notifications.md — mvp
+	// only notifies for needs-help), so the caller marks it processed with no
+	// recipients rather than skipping it here.
+	ClaimNotificationOutboxBatch(ctx context.Context, rowLimit int32) ([]ClaimNotificationOutboxBatchRow, error)
 	// atomic compare-and-set (code review fix, issue #58): the previous
 	// read-then-unconditional-update let two concurrent verifications of the
 	// same code both pass validation in application code before either wrote
@@ -85,6 +96,14 @@ type Querier interface {
 	// (pgx.ErrNoRows) on the conflicting retry, and the caller (MediaService)
 	// looks the existing row up via GetMediaByIdempotencyKey instead.
 	CreateMedia(ctx context.Context, arg CreateMediaParams) (Medium, error)
+	// issue #78: the notification worker's delivery-dedup insert. on conflict
+	// (device_id, update_id) do nothing means a retried or concurrently-run
+	// dispatch of the same outbox row never creates a second delivery record
+	// for the same device — no row comes back (pgx.ErrNoRows) on the
+	// conflicting attempt, and the caller (NotificationService.DispatchPending)
+	// treats that as "already delivered, don't send again" rather than an
+	// error (mirrors db/queries/media.sql's CreateMedia idiom).
+	CreateNotification(ctx context.Context, arg CreateNotificationParams) (Notification, error)
 	// issue #38: explicit enqueue replaces the removed updates_enqueue_outbox
 	// trigger (migration 00009) — Store.CreateOrdinaryUpdate is now the only
 	// caller, inside the same transaction as the update/statuses/last_update_at
@@ -219,6 +238,14 @@ type Querier interface {
 	// active-vs-expired against its own injected clock, never this query's own
 	// now().
 	ListFollowedCats(ctx context.Context, userID pgtype.UUID) ([]ListFollowedCatsRow, error)
+	// issue #78: newest-first keyset pagination for GET /v1/me/notifications,
+	// mirroring db/queries/updates.sql's ListCatUpdates shape. device_id is
+	// resolved from the caller's linked devices (join, not a bare where), so
+	// an account only ever sees notifications delivered to a device it
+	// currently owns — never another account's, even a former owner of the
+	// same device (LinkDeviceToUser only ever adds an owner, see
+	// docs/architecture/db.md, so this can't leak a stale link either).
+	ListMyNotifications(ctx context.Context, arg ListMyNotificationsParams) ([]ListMyNotificationsRow, error)
 	// issue #70: powers GET /v1/cats/nearby, the add-cat flow's non-blocking
 	// duplicate-candidate check (docs/product/cats.md, docs/product/trust.md —
 	// advisory only, never blocks creation on its own). st_dwithin on the
@@ -226,7 +253,31 @@ type Querier interface {
 	// bounding-box check does; radius_m is in meters, matching geography's
 	// native unit. photo_url coalesce mirrors ListCatsInBounds/GetCatByID.
 	ListNearbyCatsForDuplicateCheck(ctx context.Context, arg ListNearbyCatsForDuplicateCheckParams) ([]ListNearbyCatsForDuplicateCheckRow, error)
+	// issue #78: the notification worker's recipient-resolution step for one
+	// needs-help update. Joins account-owned follows (never device-owned ones
+	// — following, like the update itself, is account state) to that
+	// account's linked devices. author_user_id excludes the reporter from
+	// their own notification without a separate filter step; revoked_at is
+	// null excludes a device the account has since revoked; device_id is
+	// distinct in case a future schema allows more than one follow row per
+	// (user_id, cat_id), which follows_user_cat_uq today prevents but this
+	// query shouldn't rely on. never joins on device_id — only account
+	// ownership (user_id) determines who follows a cat, per [[community]]'s
+	// private-following contract; devices are purely the push-delivery target.
+	ListNeedsHelpRecipientDevices(ctx context.Context, arg ListNeedsHelpRecipientDevicesParams) ([]pgtype.UUID, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
+	// issue #78: called once per claimed row, after recipient resolution and
+	// (best-effort) delivery — including when delivery itself failed, since a
+	// send failure must never re-surface as a needs-help update rollback or an
+	// outbox row stuck retrying forever (see docs/product/notifications.md's
+	// at-most-once delivery acceptance for mvp).
+	MarkNotificationOutboxProcessed(ctx context.Context, arg MarkNotificationOutboxProcessedParams) error
+	// issue #78: owner-scoped through the same devices.user_id join
+	// ListMyNotifications uses, so marking a notification read can never
+	// affect a row belonging to another account's device. idempotent —
+	// marking an already-read notification read again just re-sets the same
+	// timestamp semantics (still "read"), never errors.
+	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) error
 	// idempotent, unconditional revoke — used only by logout, where "already
 	// revoked/expired" is not an error (see SessionService.Revoke). Never used
 	// for rotation; see RevokeRefreshTokenIfActive for that.

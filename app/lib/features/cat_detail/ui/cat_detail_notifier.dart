@@ -136,6 +136,47 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
       ),
     );
   }
+
+  /// [prependUpdate]'s needs-help counterpart (issue #78): a freshly
+  /// created needs-help update is always active (server-computed
+  /// expires_at is always 72h out — see NeedsHelpExpiry on the backend), so
+  /// unlike an ordinary update this also replaces [CatDetail.activeAlert]
+  /// with the alert this entry just became, instead of leaving the
+  /// previous one in place. Building [ActiveAlert] from entry's own fields
+  /// (rather than re-fetching) keeps this a single server round trip, the
+  /// same "server-confirmed entry, never optimistic" contract
+  /// [prependUpdate] already follows.
+  void applyNeedsHelpUpdate(CatUpdateEntry entry) {
+    final detail = state.detail;
+    if (detail == null) return;
+    if (state.updates.any((u) => u.id == entry.id)) return;
+    final category = entry.needsHelpCategory;
+    final categoryLabel = entry.needsHelpCategoryLabel;
+    final expiresAt = entry.needsHelpExpiresAt;
+    final activeAlert =
+        (category != null && categoryLabel != null && expiresAt != null)
+        ? ActiveAlert(
+            category: category,
+            categoryLabel: categoryLabel,
+            createdAt: entry.createdAt,
+            expiresAt: expiresAt,
+          )
+        : detail.activeAlert;
+    state = state.copyWith(
+      updates: [entry, ...state.updates],
+      detail: CatDetail(
+        id: detail.id,
+        name: detail.name,
+        lat: detail.lat,
+        lng: detail.lng,
+        areaLabel: detail.areaLabel,
+        primaryPhoto: detail.primaryPhoto,
+        createdAt: detail.createdAt,
+        lastUpdateAt: entry.createdAt,
+        activeAlert: activeAlert,
+      ),
+    );
+  }
 }
 
 final catDetailProvider =

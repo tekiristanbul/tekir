@@ -77,7 +77,13 @@ func run() error {
 	authSvc := service.NewAuthService(store, sms, sessionsSvc, cfg.OTPCodeTTL, cfg.OTPMaxAttempts, cfg.OTPResendCooldown, service.WithAuthTxRunner(store))
 	authHandler := handler.NewAuthHandler(authSvc, authSvc, sessionsSvc, sessionsSvc, authSvc)
 
-	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
+	// the api process only ever reads/acks notifications on an account's
+	// behalf; draining notification_outbox into them is cmd/notifier's
+	// separate process (see docs/architecture/backend.md).
+	notificationsInboxSvc := service.NewNotificationInboxService(store)
+	notificationsHandler := handler.NewNotificationsHandler(notificationsInboxSvc)
+
+	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, notificationsHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

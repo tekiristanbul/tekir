@@ -9,6 +9,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../../auth/ui/auth_gate.dart';
 import '../../follow/ui/follow_button.dart';
+import '../../needs_help/ui/needs_help_sheet.dart';
 import '../data/cat_detail.dart';
 import 'cat_detail_notifier.dart';
 import 'cat_update_composer_notifier.dart';
@@ -27,11 +28,11 @@ const _statusLabelsTr = {
 /// edge-to-edge hero photo, a compact last-update line, a follow toggle,
 /// and a newest-first status-update timeline. Posting an ordinary status
 /// update (issue #43, one-tap "seen" or the compact multi-status
-/// composition sheet) and following the cat (issue #65) are both in scope;
-/// editing the cat and needs-help creation remain out of scope. Both
-/// contribution actions are gated at the point of intent via [AuthGate] —
-/// a guest never sees the composer or mutates follow state before signing
-/// in (issue #65).
+/// composition sheet), following the cat (issue #65), and reporting
+/// needs-help (issue #78) are all in scope; editing the cat remains out of
+/// scope. Every contribution action is gated at the point of intent via
+/// [AuthGate] — a guest never sees the composer/needs-help sheet or
+/// mutates follow state before signing in.
 /// Permanent trait chips are not part of the mvp surface (issue #42) —
 /// behavioral observations belong in update comments instead. Matches
 /// prototype/app.js's renderDetail visual hierarchy; never shows raw
@@ -124,6 +125,12 @@ class _CatDetailBody extends ConsumerWidget {
               ),
               const SizedBox(height: AppSpacing.s4),
               _UpdateActionsRow(catId: detail.id),
+              const SizedBox(height: AppSpacing.s3),
+              _NeedsHelpCallout(
+                catId: detail.id,
+                catName: detail.name,
+                catPhotoUrl: detail.primaryPhoto,
+              ),
               const SizedBox(height: AppSpacing.s6),
               Text(
                 'Son güncellemeler',
@@ -514,6 +521,70 @@ class _UpdateActionsRow extends ConsumerWidget {
         context,
       ).showSnackBar(const SnackBar(content: Text('Güncelleme paylaşıldı')));
     }
+  }
+}
+
+/// The needs-help report entry point (issue #78), in its own warm callout
+/// below the ordinary-update actions — mirroring the approved prototype's
+/// `.help-callout` treatment (prototype/app.js:417-419), visually distinct
+/// from (and never blended with) the primary-accent update actions above
+/// it. Gate-at-intent, exactly like [_UpdateActionsRow]'s two actions: a
+/// guest never sees the needs-help sheet before signing in.
+class _NeedsHelpCallout extends StatelessWidget {
+  const _NeedsHelpCallout({
+    required this.catId,
+    required this.catName,
+    required this.catPhotoUrl,
+  });
+
+  final String catId;
+  final String catName;
+  final String? catPhotoUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.s3),
+      decoration: BoxDecoration(
+        color: AppColors.helpSoft,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Consumer(
+        builder: (context, ref, _) => SizedBox(
+          height: kTapMin,
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: () => _gatedOpenNeedsHelp(context, ref),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.help,
+              foregroundColor: AppColors.helpInk,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+              textStyle: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            icon: const Icon(Icons.warning_amber_rounded, size: 19),
+            label: const Text('Yardıma ihtiyacı var'),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _gatedOpenNeedsHelp(BuildContext context, WidgetRef ref) {
+    return AuthGate.require(
+      context,
+      ref,
+      contextText: 'Yardım bildirimi oluşturmak için giriş yap',
+      onAuthenticated: () => unawaited(
+        openNeedsHelpSheet(
+          context,
+          catId: catId,
+          catName: catName,
+          catPhotoUrl: catPhotoUrl,
+        ),
+      ),
+    );
   }
 }
 

@@ -66,6 +66,10 @@ type fakeCatsLister struct {
 	// copy of fakeCatsLister that ends up inside the service.
 	captured *repository.CreateOrdinaryUpdateParams
 
+	createNeedsHelpRow repository.CreateUpdateRow
+	createNeedsHelpErr error
+	capturedNeedsHelp  *repository.CreateNeedsHelpUpdateParams
+
 	idempotencyRow repository.GetCatByIdempotencyKeyRow
 	idempotencyErr error
 
@@ -97,6 +101,13 @@ func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository
 		*f.captured = arg
 	}
 	return f.createRow, f.createErr
+}
+
+func (f fakeCatsLister) CreateNeedsHelpUpdate(ctx context.Context, arg repository.CreateNeedsHelpUpdateParams) (repository.CreateUpdateRow, error) {
+	if f.capturedNeedsHelp != nil {
+		*f.capturedNeedsHelp = arg
+	}
+	return f.createNeedsHelpRow, f.createNeedsHelpErr
 }
 
 func (f fakeCatsLister) GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error) {
@@ -159,6 +170,7 @@ func routerForWithResolver(h *CatsHandler, resolver DeviceTokenResolver, validat
 	r.Get("/v1/cats/{cat_id}", h.Detail)
 	r.Get("/v1/cats/{cat_id}/updates", h.UpdateHistory)
 	r.With(RequireBearer(validator), OptionalDeviceToken(resolver)).Post("/v1/cats/{cat_id}/updates", h.CreateUpdate)
+	r.With(RequireBearer(validator), OptionalDeviceToken(resolver)).Post("/v1/cats/{cat_id}/needs-help", h.CreateNeedsHelp)
 	return r
 }
 
@@ -616,6 +628,11 @@ func newCreateUpdateRequest(catID, body string) *http.Request {
 	return withBearerToken(withDeviceToken(req))
 }
 
+func newCreateNeedsHelpRequest(catID, body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/v1/cats/"+catID+"/needs-help", strings.NewReader(body))
+	return withBearerToken(withDeviceToken(req))
+}
+
 func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
 	catID := uuid.New()
 	deviceID := uuid.New()
@@ -912,6 +929,142 @@ func TestCatsHandler_CreateUpdate_UnknownDeviceToken_StillSucceeds(t *testing.T)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateNeedsHelp_Success(t *testing.T) {
+	catID := uuid.New()
+	deviceID := uuid.New()
+	userID := uuid.New()
+	created := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	returnedID := uuid.New()
+	var captured repository.CreateNeedsHelpUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists:             true,
+		createNeedsHelpRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		capturedNeedsHelp:  &captured,
+	}, service.WithClock(func() time.Time { return created })), testMaxUploadBytes)
+
+	r := routerForWithResolver(h,
+		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: deviceID.String()}},
+		fakeAccessValidator{userID: userID.String()},
+	)
+	rec := httptest.NewRecorder()
+	req := newCreateNeedsHelpRequest(catID.String(), `{"category":"injured_or_sick","comment":"sağ arka ayağını basamıyor"}`)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body updateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.ID != returnedID.String() {
+		t.Errorf("unexpected id: %q", body.ID)
+	}
+	if body.Kind != "needs_help" {
+		t.Errorf("expected kind needs_help, got %q", body.Kind)
+	}
+	if body.NeedsHelpCategory == nil || *body.NeedsHelpCategory != "injured_or_sick" {
+		t.Errorf("unexpected needs_help_category: %v", body.NeedsHelpCategory)
+	}
+	if body.NeedsHelpActive == nil || !*body.NeedsHelpActive {
+		t.Errorf("expected needs_help_active true, got %v", body.NeedsHelpActive)
+	}
+	if body.Comment == nil || *body.Comment != "sağ arka ayağını basamıyor" {
+		t.Errorf("unexpected comment: %v", body.Comment)
+	}
+
+	if uuid.UUID(captured.CatID.Bytes).String() != catID.String() {
+		t.Errorf("unexpected captured cat id: %v", captured.CatID)
+	}
+	if uuid.UUID(captured.AuthorDeviceID.Bytes).String() != deviceID.String() {
+		t.Errorf("unexpected captured author device id: %v", captured.AuthorDeviceID)
+	}
+	if uuid.UUID(captured.AuthorUserID.Bytes).String() != userID.String() {
+		t.Errorf("unexpected captured author user id: %v", captured.AuthorUserID)
+	}
+	if captured.NeedsHelpCategory != "injured_or_sick" {
+		t.Errorf("unexpected captured category: %q", captured.NeedsHelpCategory)
+	}
+}
+
+func TestCatsHandler_CreateNeedsHelp_InvalidCategory(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newCreateNeedsHelpRequest(uuid.New().String(), `{"category":"flying"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateNeedsHelp_MissingCategory(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newCreateNeedsHelpRequest(uuid.New().String(), `{}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateNeedsHelp_MalformedJSON(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newCreateNeedsHelpRequest(uuid.New().String(), `{`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateNeedsHelp_RejectsUnknownFields(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newCreateNeedsHelpRequest(uuid.New().String(), `{"category":"trapped","expires_at":"2026-01-01T00:00:00Z"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateNeedsHelp_CatNotFound(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: false}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newCreateNeedsHelpRequest(uuid.New().String(), `{"category":"trapped"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateNeedsHelp_InvalidCatID(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newCreateNeedsHelpRequest("not-a-uuid", `{"category":"trapped"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_CreateNeedsHelp_RequiresBearer(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: true}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/cats/"+uuid.New().String()+"/needs-help", strings.NewReader(`{"category":"trapped"}`))
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

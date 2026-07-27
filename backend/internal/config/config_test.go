@@ -66,6 +66,42 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 }
 
+// TestLoad_NotificationProviderHasNoDefault proves NotificationProvider,
+// unlike OTPProvider/ObjectStorageProvider, is empty (not "fake") when
+// unset — issue #78 requires notification delivery to fail closed rather
+// than silently default to the dev/test provider in a production
+// deployment that forgot to set NOTIFICATION_PROVIDER. The empty-string
+// case is rejected by cmd/notifier's newNotificationSender, not here —
+// Load() itself never fails on it, mirroring how OTP_PROVIDER/
+// OBJECT_STORAGE_PROVIDER validation also lives at the cmd/api call site.
+func TestLoad_NotificationProviderHasNoDefault(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("JWT_SIGNING_KEY", "test-signing-key")
+	t.Setenv("NOTIFICATION_PROVIDER", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.NotificationProvider != "" {
+		t.Errorf("expected no default notification provider, got %q", cfg.NotificationProvider)
+	}
+}
+
+func TestLoad_NotificationProviderOverride(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("JWT_SIGNING_KEY", "test-signing-key")
+	t.Setenv("NOTIFICATION_PROVIDER", "fake")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.NotificationProvider != "fake" {
+		t.Errorf("expected notification provider fake, got %q", cfg.NotificationProvider)
+	}
+}
+
 func TestLoad_OverridesTTLsAndProvider(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("JWT_SIGNING_KEY", "test-signing-key")

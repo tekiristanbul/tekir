@@ -53,6 +53,15 @@ type Config struct {
 	// so a request can't force the server to decompress an arbitrarily
 	// large image (issue #70's malformed/oversized-media rejection).
 	MediaMaxBytes int
+
+	// NotificationProvider selects the NotificationSender implementation
+	// cmd/notifier uses (issue #78). Only "fake" (the deterministic,
+	// log-only, no-network dev/test provider — see docs/architecture/
+	// backend.md) is wired; a real push vendor is future work, mirroring
+	// OTPProvider's "fake"-only status. Deliberately has no default that
+	// silently falls back to "fake" in production — see
+	// cmd/notifier/main.go's newNotificationSender.
+	NotificationProvider string
 }
 
 func Load() (Config, error) {
@@ -74,6 +83,13 @@ func Load() (Config, error) {
 		ObjectStorageProvider: getEnv("OBJECT_STORAGE_PROVIDER", "fake"),
 		MediaLocalDir:         getEnv("MEDIA_LOCAL_DIR", "./data/media"),
 		MediaMaxBytes:         getEnvInt("MEDIA_MAX_BYTES", 8*1024*1024),
+
+		// no fallback default, unlike OTPProvider/ObjectStorageProvider
+		// above: issue #78 requires notification delivery to fail closed
+		// rather than silently run the fake provider when an operator
+		// simply forgot to set this — cmd/notifier's newNotificationSender
+		// rejects both an empty value and anything other than "fake".
+		NotificationProvider: os.Getenv("NOTIFICATION_PROVIDER"),
 	}
 	cfg.MediaPublicBaseURL = getEnv("MEDIA_PUBLIC_BASE_URL", "http://localhost:"+cfg.Port)
 

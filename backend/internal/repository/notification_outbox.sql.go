@@ -11,6 +11,62 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimNotificationOutboxBatch = `-- name: ClaimNotificationOutboxBatch :many
+select o.id, o.update_id, o.cat_id, u.kind, u.author_user_id, u.needs_help_category
+from notification_outbox o
+join updates u on u.id = o.update_id
+where o.processed_at is null
+order by o.created_at
+limit $1::int
+for update of o skip locked
+`
+
+type ClaimNotificationOutboxBatchRow struct {
+	ID                pgtype.UUID `json:"id"`
+	UpdateID          pgtype.UUID `json:"update_id"`
+	CatID             pgtype.UUID `json:"cat_id"`
+	Kind              string      `json:"kind"`
+	AuthorUserID      pgtype.UUID `json:"author_user_id"`
+	NeedsHelpCategory pgtype.Text `json:"needs_help_category"`
+}
+
+// issue #78: the notification worker's read step. `for update skip locked`
+// lets more than one worker process poll concurrently without claiming the
+// same row twice — a second worker just skips a row the first already
+// locked, rather than blocking on it or double-processing it once the
+// first commits. joins updates for `kind`/`author_user_id` since the
+// outbox itself doesn't carry them: an ordinary-update row's outbox entry
+// is real (Store.CreateOrdinaryUpdate enqueues one for every write) but
+// must never fan out to followers (see docs/product/notifications.md — mvp
+// only notifies for needs-help), so the caller marks it processed with no
+// recipients rather than skipping it here.
+func (q *Queries) ClaimNotificationOutboxBatch(ctx context.Context, rowLimit int32) ([]ClaimNotificationOutboxBatchRow, error) {
+	rows, err := q.db.Query(ctx, claimNotificationOutboxBatch, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimNotificationOutboxBatchRow
+	for rows.Next() {
+		var i ClaimNotificationOutboxBatchRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UpdateID,
+			&i.CatID,
+			&i.Kind,
+			&i.AuthorUserID,
+			&i.NeedsHelpCategory,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createNotificationOutbox = `-- name: CreateNotificationOutbox :exec
 insert into notification_outbox (update_id, cat_id)
 values ($1, $2)
@@ -30,5 +86,25 @@ type CreateNotificationOutboxParams struct {
 // transaction back) instead of duplicating work.
 func (q *Queries) CreateNotificationOutbox(ctx context.Context, arg CreateNotificationOutboxParams) error {
 	_, err := q.db.Exec(ctx, createNotificationOutbox, arg.UpdateID, arg.CatID)
+	return err
+}
+
+const markNotificationOutboxProcessed = `-- name: MarkNotificationOutboxProcessed :exec
+update notification_outbox set processed_at = $1
+where id = $2
+`
+
+type MarkNotificationOutboxProcessedParams struct {
+	ProcessedAt pgtype.Timestamptz `json:"processed_at"`
+	ID          pgtype.UUID        `json:"id"`
+}
+
+// issue #78: called once per claimed row, after recipient resolution and
+// (best-effort) delivery — including when delivery itself failed, since a
+// send failure must never re-surface as a needs-help update rollback or an
+// outbox row stuck retrying forever (see docs/product/notifications.md's
+// at-most-once delivery acceptance for mvp).
+func (q *Queries) MarkNotificationOutboxProcessed(ctx context.Context, arg MarkNotificationOutboxProcessedParams) error {
+	_, err := q.db.Exec(ctx, markNotificationOutboxProcessed, arg.ProcessedAt, arg.ID)
 	return err
 }

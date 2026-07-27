@@ -257,7 +257,10 @@ void main() {
       CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
     );
 
-    expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+    // The needs-help entry callout (issue #78) always renders and reuses
+    // this same icon (matching the approved prototype's go-help button) —
+    // exactly one instance means no banner is additionally shown.
+    expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
   });
 
   testWidgets(
@@ -288,8 +291,11 @@ void main() {
       expect(find.text('suya ihtiyacı var'), findsOneWidget);
       // an expired entry must never render with the active help color —
       // that emphasis is reserved for the active-alert banner alone, and
-      // this fixture has no active alert at all.
-      expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+      // this fixture has no active alert at all. The needs-help entry
+      // callout (issue #78) always renders and reuses this same icon
+      // (matching the approved prototype's go-help button) — exactly one
+      // instance means no banner is additionally shown.
+      expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
     },
   );
 }

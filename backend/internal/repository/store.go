@@ -156,3 +156,61 @@ func (s *Store) CreateOrdinaryUpdate(ctx context.Context, arg CreateOrdinaryUpda
 	})
 	return row, err
 }
+
+// CreateNeedsHelpUpdateParams groups the atomic write behind
+// POST /v1/cats/{cat_id}/needs-help (issue #78): the update row and the
+// cat's last_update_at move together or not at all, exactly like
+// CreateOrdinaryUpdateParams above — a needs-help report has no statuses
+// (update_statuses is an ordinary-update-only concept), so there's no
+// equivalent field here.
+type CreateNeedsHelpUpdateParams struct {
+	ID                 pgtype.UUID
+	CatID              pgtype.UUID
+	AuthorDeviceID     pgtype.UUID
+	AuthorUserID       pgtype.UUID
+	Comment            pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	NeedsHelpCategory  string
+	NeedsHelpExpiresAt pgtype.Timestamptz
+}
+
+// CreateNeedsHelpUpdate mirrors CreateOrdinaryUpdate's shape: insert the
+// update row (kind = 'needs_help'), move the cat's last_update_at forward,
+// and enqueue a notification_outbox row, all in one transaction. The
+// outbox row is enqueued unconditionally, the same as an ordinary update's
+// — NotificationService.DispatchPending (issue #78), not this write path,
+// is what decides an ordinary update's outbox row fans out to nobody while
+// a needs-help one fans out to the cat's followers (see
+// docs/product/notifications.md). No update_statuses loop: needs-help
+// reports don't have statuses.
+func (s *Store) CreateNeedsHelpUpdate(ctx context.Context, arg CreateNeedsHelpUpdateParams) (CreateUpdateRow, error) {
+	var row CreateUpdateRow
+	err := s.withTx(ctx, func(q *Queries) error {
+		var err error
+		row, err = q.CreateUpdate(ctx, CreateUpdateParams{
+			ID:                 arg.ID,
+			CatID:              arg.CatID,
+			Kind:               "needs_help",
+			Comment:            arg.Comment,
+			CreatedAt:          arg.CreatedAt,
+			NeedsHelpCategory:  pgtype.Text{String: arg.NeedsHelpCategory, Valid: true},
+			NeedsHelpExpiresAt: arg.NeedsHelpExpiresAt,
+			AuthorDeviceID:     arg.AuthorDeviceID,
+			AuthorUserID:       arg.AuthorUserID,
+		})
+		if err != nil {
+			return err
+		}
+		if err := q.UpdateCatLastUpdateAt(ctx, UpdateCatLastUpdateAtParams{
+			ID:           arg.CatID,
+			LastUpdateAt: arg.CreatedAt,
+		}); err != nil {
+			return err
+		}
+		return q.CreateNotificationOutbox(ctx, CreateNotificationOutboxParams{
+			UpdateID: row.ID,
+			CatID:    arg.CatID,
+		})
+	})
+	return row, err
+}

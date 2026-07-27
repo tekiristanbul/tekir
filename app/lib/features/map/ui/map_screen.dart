@@ -163,14 +163,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     });
 
     return Scaffold(
-      body: initialLocation.when(
-        data: (resolved) => _buildMap(
-          center: resolved.center,
-          showFallbackBanner: resolved.isFallback,
-        ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (_, _) =>
-            _buildMap(center: istanbulFallback, showFallbackBanner: true),
+      body: Stack(
+        children: [
+          initialLocation.when(
+            data: (resolved) => _buildMap(
+              center: resolved.center,
+              showFallbackBanner: resolved.isFallback,
+            ),
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (_, _) =>
+                _buildMap(center: istanbulFallback, showFallbackBanner: true),
+          ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+            right: AppSpacing.s4,
+            child: PointerInterceptor(child: _NotificationsButton()),
+          ),
+        ],
       ),
       floatingActionButton: PointerInterceptor(
         child: FloatingActionButton(
@@ -341,6 +350,44 @@ class _TopBanner extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Entry point onto the notification inbox (issue #78) — a glass circle
+/// button over the map, matching cat_detail_screen's `_BackCircleButton`
+/// visual language. Gate-at-intent, exactly like the add-cat FAB just
+/// below it: a guest's tap shows AuthGate's prompt sheet first (there is
+/// nothing to show a guest — an inbox is inherently account-owned state,
+/// see docs/product/privacy.md) rather than pushing `/notifications` and
+/// failing there.
+class _NotificationsButton extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.92),
+      shape: const CircleBorder(),
+      elevation: 2,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () => _gatedOpenNotifications(context, ref),
+        child: const SizedBox(
+          width: kTapMin,
+          height: kTapMin,
+          child: Icon(Icons.notifications_outlined, color: AppColors.ink),
+        ),
+      ),
+    );
+  }
+
+  void _gatedOpenNotifications(BuildContext context, WidgetRef ref) {
+    unawaited(
+      AuthGate.require(
+        context,
+        ref,
+        contextText: 'Bildirimlerini görmek için giriş yap',
+        onAuthenticated: () => context.push('/notifications'),
       ),
     );
   }

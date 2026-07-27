@@ -40,6 +40,15 @@ var ErrInvalidLimit = errors.New("invalid limit")
 // enough; the handler doesn't need to distinguish which rule failed.
 var ErrInvalidStatuses = errors.New("invalid statuses")
 
+// ErrInvalidNeedsHelpCategory means the submitted category falls outside
+// needsHelpCategoryLabels' fixed 5-value mvp vocabulary (issue #78) — the
+// same closed-vocabulary rejection ErrInvalidStatuses gives ordinary
+// updates, enforced here too even though updates_kind_fields_ck would also
+// reject an unrecognized value at the database level: failing before any
+// write starts means an invalid category never allocates an id or opens a
+// transaction.
+var ErrInvalidNeedsHelpCategory = errors.New("invalid needs-help category")
+
 // ErrInvalidArea means the submitted location falls outside the product's
 // geographic boundary (istanbulBounds below) or isn't well-formed
 // (nan/inf/out-of-range lat/lng).
@@ -261,6 +270,7 @@ type CatsStore interface {
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	ListCatUpdates(ctx context.Context, arg repository.ListCatUpdatesParams) ([]repository.ListCatUpdatesRow, error)
 	CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error)
+	CreateNeedsHelpUpdate(ctx context.Context, arg repository.CreateNeedsHelpUpdateParams) (repository.CreateUpdateRow, error)
 	GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error)
 	ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error)
 	CreateCatWithMedia(ctx context.Context, arg repository.CreateCatWithMediaParams) (repository.CreateCatWithMediaRow, error)
@@ -593,6 +603,84 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		Statuses:  sorted,
 		Comment:   comment,
 		CreatedAt: createdAt,
+	}, nil
+}
+
+// CreateNeedsHelpUpdate records a new needs-help report for cat id,
+// attributed to the authenticated account identified by userID — the same
+// bearer-required, optional-device-association shape as
+// CreateOrdinaryUpdate (issue #78 reuses #65's authorization model
+// unchanged). category must be one of needsHelpCategoryLabels' fixed 5
+// values; comment is optional. expires_at is always computed here as
+// createdAt + NeedsHelpExpiry (issue #4's fixed 72h, no early/manual
+// resolve) — never accepted from the caller. The update row and its
+// notification_outbox enqueue commit as one transaction (see
+// repository.Store.CreateNeedsHelpUpdate); which followers, if any, that
+// outbox row eventually notifies is NotificationService.DispatchPending's
+// decision, not this method's.
+func (s *CatsService) CreateNeedsHelpUpdate(ctx context.Context, id, userID, deviceID, category string, comment *string) (CatUpdate, error) {
+	catID, err := parseCatID(id)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
+	if _, ok := needsHelpCategoryLabels[category]; !ok {
+		return CatUpdate{}, ErrInvalidNeedsHelpCategory
+	}
+
+	// userID comes from the authenticated bearer context RequireBearer
+	// placed on the request — always a well-formed uuid, never
+	// client-supplied input to re-validate against a sentinel error here.
+	authorUserID, err := uuid.Parse(userID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+	authorDeviceID, err := optionalUUID(deviceID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
+	exists, err := s.db.CatExists(ctx, catID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+	if !exists {
+		return CatUpdate{}, ErrCatNotFound
+	}
+
+	createdAt := s.clock()
+	expiresAt := NeedsHelpExpiresAt(createdAt)
+	row, err := s.db.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:              catID,
+		AuthorDeviceID:     authorDeviceID,
+		AuthorUserID:       pgtype.UUID{Bytes: authorUserID, Valid: true},
+		Comment:            nullableText(comment),
+		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
+		NeedsHelpCategory:  category,
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	})
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
+	label := needsHelpCategoryLabels[category]
+	active := true
+	return CatUpdate{
+		ID:   uuid.UUID(row.ID.Bytes).String(),
+		Kind: "needs_help",
+		// always []string{}, never nil: ListCatUpdates' row.Statuses is a sql
+		// coalesce(..., '{}') and so is never null over the wire either — a
+		// needs-help update has no statuses of its own, but the response
+		// shape (and Flutter's CatUpdateEntry.fromJson, which casts statuses
+		// as a non-nullable List) must stay identical to that read path's.
+		Statuses:               []string{},
+		Comment:                comment,
+		CreatedAt:              createdAt,
+		NeedsHelpCategory:      &category,
+		NeedsHelpCategoryLabel: &label,
+		NeedsHelpExpiresAt:     &expiresAt,
+		NeedsHelpActive:        &active,
 	}, nil
 }
 

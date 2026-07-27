@@ -5,6 +5,7 @@ import '../../features/add_cat/ui/add_cat_screen.dart';
 import '../../features/auth/ui/login_screen.dart';
 import '../../features/cat_detail/ui/cat_detail_screen.dart';
 import '../../features/map/ui/map_screen.dart';
+import '../../features/notifications/ui/notifications_screen.dart';
 
 /// Map is the first screen (docs/product/map.md). Remaining tabs (discover /
 /// notifications) and modal contribution routes land with the real screens
@@ -35,6 +36,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/add-cat',
       builder: (context, state) => const AddCatScreen(),
+    ),
+    GoRoute(
+      path: '/notifications',
+      builder: (context, state) => const NotificationsScreen(),
     ),
   ],
 );

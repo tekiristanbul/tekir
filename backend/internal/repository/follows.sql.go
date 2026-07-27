@@ -187,3 +187,49 @@ func (q *Queries) ListFollowedCats(ctx context.Context, userID pgtype.UUID) ([]L
 	}
 	return items, nil
 }
+
+const listNeedsHelpRecipientDevices = `-- name: ListNeedsHelpRecipientDevices :many
+select distinct d.id as device_id
+from follows f
+join devices d on d.user_id = f.user_id
+where f.cat_id = $1
+  and f.user_id is not null
+  and f.user_id != $2
+  and d.revoked_at is null
+`
+
+type ListNeedsHelpRecipientDevicesParams struct {
+	CatID        pgtype.UUID `json:"cat_id"`
+	AuthorUserID pgtype.UUID `json:"author_user_id"`
+}
+
+// issue #78: the notification worker's recipient-resolution step for one
+// needs-help update. Joins account-owned follows (never device-owned ones
+// — following, like the update itself, is account state) to that
+// account's linked devices. author_user_id excludes the reporter from
+// their own notification without a separate filter step; revoked_at is
+// null excludes a device the account has since revoked; device_id is
+// distinct in case a future schema allows more than one follow row per
+// (user_id, cat_id), which follows_user_cat_uq today prevents but this
+// query shouldn't rely on. never joins on device_id — only account
+// ownership (user_id) determines who follows a cat, per [[community]]'s
+// private-following contract; devices are purely the push-delivery target.
+func (q *Queries) ListNeedsHelpRecipientDevices(ctx context.Context, arg ListNeedsHelpRecipientDevicesParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listNeedsHelpRecipientDevices, arg.CatID, arg.AuthorUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var device_id pgtype.UUID
+		if err := rows.Scan(&device_id); err != nil {
+			return nil, err
+		}
+		items = append(items, device_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
