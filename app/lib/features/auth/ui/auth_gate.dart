@@ -36,6 +36,12 @@ class AuthGate {
 
     final proceed = await showModalBottomSheet<bool>(
       context: context,
+      // issue #80 product-owner review: callers now include the shell's
+      // persistent add-cat fab (app_shell.dart) and other widgets whose
+      // context lives inside a StatefulShellRoute branch's own nested
+      // Navigator — the default nearest-Navigator target would paint this
+      // sheet underneath that shell chrome instead of above the whole app.
+      useRootNavigator: true,
       builder: (_) => _AuthPromptSheet(contextText: contextText),
     );
     if (proceed != true || !context.mounted) return;
