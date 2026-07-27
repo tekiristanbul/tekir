@@ -89,13 +89,55 @@ void main() {
   });
 
   group('AuthApi.verifyOtp error mapping', () {
-    test('401 -> OtpInvalidCodeException', () async {
-      final api = _apiWith(_FixedStatusAdapter(401));
-      await expectLater(
-        api.verifyOtp(phone: '+905321112233', code: '000000'),
-        throwsA(isA<OtpInvalidCodeException>()),
-      );
-    });
+    test(
+      '401 with no distinguishing body -> OtpInvalidCodeException',
+      () async {
+        final api = _apiWith(_FixedStatusAdapter(401));
+        await expectLater(
+          api.verifyOtp(phone: '+905321112233', code: '000000'),
+          throwsA(isA<OtpInvalidCodeException>()),
+        );
+      },
+    );
+
+    test(
+      '401 with {"error":"invalid code"} -> OtpInvalidCodeException',
+      () async {
+        final api = _apiWith(
+          _FixedStatusAdapter(401, body: '{"error":"invalid code"}'),
+        );
+        await expectLater(
+          api.verifyOtp(phone: '+905321112233', code: '000000'),
+          throwsA(isA<OtpInvalidCodeException>()),
+        );
+      },
+    );
+
+    test(
+      '401 with {"error":"missing device token"} -> AuthDeviceTokenInvalidException',
+      () async {
+        final api = _apiWith(
+          _FixedStatusAdapter(401, body: '{"error":"missing device token"}'),
+        );
+        await expectLater(
+          api.verifyOtp(phone: '+905321112233', code: '000000'),
+          throwsA(isA<AuthDeviceTokenInvalidException>()),
+        );
+      },
+    );
+
+    test(
+      '401 with {"error":"invalid device token"} -> AuthDeviceTokenInvalidException',
+      () async {
+        final api = _apiWith(
+          _FixedStatusAdapter(401, body: '{"error":"invalid device token"}'),
+        );
+        await expectLater(
+          api.verifyOtp(phone: '+905321112233', code: '000000'),
+          throwsA(isA<AuthDeviceTokenInvalidException>()),
+        );
+      },
+    );
 
     test('410 -> OtpExpiredCodeException', () async {
       final api = _apiWith(_FixedStatusAdapter(410));

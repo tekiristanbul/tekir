@@ -42,6 +42,17 @@ class OtpInvalidCodeException implements Exception {
   const OtpInvalidCodeException();
 }
 
+/// Thrown when `POST /v1/auth/otp/verify` answers 401 for a *device* token
+/// problem (missing, or one the server no longer recognizes) rather than a
+/// wrong/expired code — distinguished from [OtpInvalidCodeException] by the
+/// response body, since both share the same 401 status. This means the
+/// locally-cached device credential is stale: the caller should drop it
+/// (`DeviceIdentityService.invalidate`) so the next attempt registers a
+/// fresh one, instead of replaying the same dead token forever.
+class AuthDeviceTokenInvalidException implements Exception {
+  const AuthDeviceTokenInvalidException();
+}
+
 /// Thrown when `POST /v1/auth/otp/verify` answers 410 — the most recently
 /// issued code expired, or was already used once (replay).
 class OtpExpiredCodeException implements Exception {
@@ -154,15 +165,30 @@ class AuthApi {
 
   Exception _mapVerifyOtpError(DioException e) {
     final status = e.response?.statusCode;
+    if (status == 401) {
+      return _isDeviceTokenError(e)
+          ? const AuthDeviceTokenInvalidException()
+          : const OtpInvalidCodeException();
+    }
     return switch (status) {
       400 => const OtpInvalidPhoneException(),
-      401 => const OtpInvalidCodeException(),
       410 => const OtpExpiredCodeException(),
       409 => const AuthDeviceConflictException(),
       429 => const OtpTooManyAttemptsException(),
       null => const AuthNetworkException(),
       _ => const AuthServerException(),
     };
+  }
+
+  /// `RequireDeviceToken` middleware (missing/unrecognized X-Device-Token)
+  /// and `AuthHandler.VerifyOTP`'s own code-mismatch check both answer 401
+  /// with no other status-code distinction — the only way to tell them
+  /// apart is the response body's `error` text (see
+  /// docs/architecture/api.md / backend/internal/handler/device_auth.go).
+  bool _isDeviceTokenError(DioException e) {
+    final body = e.response?.data;
+    final message = body is Map ? body['error'] as String? : null;
+    return message != null && message.contains('device token');
   }
 }
 

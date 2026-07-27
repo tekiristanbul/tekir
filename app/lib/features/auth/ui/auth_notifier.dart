@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/identity/device_identity.dart';
 import '../../../core/identity/session_identity.dart';
 import '../data/auth_api.dart';
 
@@ -19,6 +20,7 @@ enum AuthError {
   expiredCode,
   tooManyAttempts,
   deviceConflict,
+  staleDeviceCredential,
   nameRequired,
   network,
   server,
@@ -40,6 +42,7 @@ String authErrorMessageTr(AuthError error) {
     AuthError.expiredCode => 'Kodun süresi doldu, yeni kod iste',
     AuthError.tooManyAttempts => 'Çok fazla deneme yaptın, yeni kod iste',
     AuthError.deviceConflict => 'Bu cihaz başka bir hesaba bağlı',
+    AuthError.staleDeviceCredential => 'Cihaz kimliği yenilendi, tekrar dene',
     AuthError.nameRequired => 'Bir isim gir',
     AuthError.network => 'Bağlantı sorunu, tekrar dene',
     AuthError.server => 'Sunucuya ulaşılamadı, birazdan tekrar dene',
@@ -154,6 +157,25 @@ class AuthNotifier extends Notifier<AuthState> {
 
     state = state.copyWith(isSubmitting: true, clearError: true);
     try {
+      // Lazily initializes (or awaits an in-flight, or retries a
+      // previously invalidated) device identity — mirrors
+      // cat_update_composer_notifier's own explicit init-before-submit
+      // call. This is what actually lets a retry recover after the
+      // AuthDeviceTokenInvalidException branch below invalidates a stale
+      // credential: without re-running init() here, nothing would ever
+      // register a replacement, and every subsequent attempt would keep
+      // sending no device token at all.
+      final device = await ref.read(deviceIdentityServiceProvider).init();
+      if (device == null) {
+        // init() swallows registration/storage failures and returns null
+        // rather than throwing. Verifying now would send no device token
+        // at all, which the server can only answer with the same 401 the
+        // AuthDeviceTokenInvalidException branch below handles — but this
+        // isn't a stale credential, it's a network/server problem, so
+        // report it as such instead of making the doomed request.
+        state = state.copyWith(isSubmitting: false, error: AuthError.network);
+        return false;
+      }
       final session = await ref
           .read(authApiProvider)
           .verifyOtp(
@@ -189,6 +211,24 @@ class AuthNotifier extends Notifier<AuthState> {
       state = state.copyWith(
         isSubmitting: false,
         error: AuthError.deviceConflict,
+      );
+    } on AuthDeviceTokenInvalidException {
+      // The stored device credential looked valid locally but the server
+      // no longer recognizes it — replaying the same token on retry would
+      // just 401 again, so drop it and let the next attempt's init() call
+      // above register a fresh one (mirrors
+      // cat_update_composer_notifier's identical recovery for its own
+      // stale-credential case). Best-effort: a secure-storage deletion
+      // failure must not leave the user stuck in isSubmitting forever
+      // without ever seeing the retryable error.
+      try {
+        await ref.read(deviceIdentityServiceProvider).invalidate();
+      } catch (_) {
+        // Ignored — falling through still surfaces the retryable error.
+      }
+      state = state.copyWith(
+        isSubmitting: false,
+        error: AuthError.staleDeviceCredential,
       );
     } on AuthNetworkException {
       state = state.copyWith(isSubmitting: false, error: AuthError.network);
