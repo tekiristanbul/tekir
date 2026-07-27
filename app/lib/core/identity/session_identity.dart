@@ -141,9 +141,23 @@ class SessionIdentityService {
   /// on the same device. Best-effort like the revoke itself: a missing or
   /// stale token just means the backend leaves the link alone (a no-op,
   /// never an error), and logout still succeeds either way.
+  ///
+  /// `POST /v1/auth/logout` requires `Authorization: Bearer` server-side
+  /// (see [[api]]) — this class deliberately uses its own bare [Dio], not
+  /// the shared, [BearerInterceptor]-equipped [ApiClient] (so refreshing
+  /// never recursively depends on the interceptor it's refreshing the
+  /// credential for), so the access token has to be attached here
+  /// explicitly, exactly like [BearerInterceptor] itself does. Read before
+  /// [_cached] is cleared below (falling back to storage, mirroring
+  /// [refreshToken]'s own fallback), since without it every logout call
+  /// silently 401s and the try/catch below swallows it — the local session
+  /// still clears correctly, but neither the server-side revoke nor the
+  /// device unlink above ever actually happens.
   Future<void> logout({String? deviceToken}) async {
     final refreshToken =
         _cached?.refreshToken ?? await _storage.read(_keyRefreshToken);
+    final accessToken =
+        _cached?.accessToken ?? await _storage.read(_keyAccessToken);
     _cached = null;
     _restoreFuture = null;
     await _clear();
@@ -153,9 +167,12 @@ class SessionIdentityService {
       await _dio.post<void>(
         '/v1/auth/logout',
         data: {'refresh_token': refreshToken},
-        options: deviceToken != null
-            ? Options(headers: {'X-Device-Token': deviceToken})
-            : null,
+        options: Options(
+          headers: {
+            if (accessToken != null) 'Authorization': 'Bearer $accessToken',
+            'X-Device-Token': ?deviceToken,
+          },
+        ),
       );
     } catch (_) {
       // Best-effort — local session is already cleared either way, and a

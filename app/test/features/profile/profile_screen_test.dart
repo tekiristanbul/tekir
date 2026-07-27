@@ -167,6 +167,60 @@ void main() {
     api.pending!.complete();
   });
 
+  testWidgets(
+    'a session that resolves after this screen has already mounted (e.g. a '
+    'cold-start restore racing this persistent shell tab, or logging in '
+    'while already on it) still loads the profile',
+    (tester) async {
+      final api = _FakeProfileApi(
+        nextProfile: Profile(
+          displayName: 'Ada',
+          totals: const ContributionTotals(
+            updates: 0,
+            helps: 0,
+            catsAdded: 0,
+            distinctCats: 0,
+          ),
+          badges: [_unearnedBadge('first_sighting')],
+          recentContributions: const [],
+        ),
+      );
+      final sessionService = _FakeSessionIdentityService();
+      final router = GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, state) => const ProfileScreen(),
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionIdentityServiceProvider.overrideWithValue(sessionService),
+            profileApiProvider.overrideWithValue(api),
+          ],
+          child: MaterialApp.router(
+            theme: AppTheme.light,
+            routerConfig: router,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Giriş yapmadın'), findsOneWidget);
+      expect(api.calls, 0);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ProfileScreen)),
+      );
+      await container.read(sessionProvider.notifier).save(_session);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ada'), findsOneWidget);
+      expect(api.calls, 1);
+    },
+  );
+
   testWidgets('shows display name, totals, and no-badges-yet copy', (
     tester,
   ) async {

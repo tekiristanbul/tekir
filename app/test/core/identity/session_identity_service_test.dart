@@ -314,6 +314,33 @@ void main() {
       expect(await storage.read('device_token'), 'device-token-1');
     });
 
+    test('sends Authorization: Bearer with the account\'s own access token — '
+        'POST /v1/auth/logout requires it server-side, and this class\'s own '
+        'bare Dio (unlike the shared, intercepted ApiClient) never attaches '
+        'it automatically; without this, every logout silently 401s and the '
+        'catch below swallows it, so neither the revoke nor the device '
+        'unlink above ever actually happens', () async {
+      final adapter = _CapturingAdapter();
+      final svc = SessionIdentityService(
+        storage: _FakeStorage(),
+        dio: _dioWith(adapter),
+      );
+      await svc.save(
+        const SessionIdentity(
+          accessToken: 'the-access-token',
+          refreshToken: 'rt',
+          userId: 'u',
+        ),
+      );
+
+      await svc.logout();
+
+      expect(
+        adapter.lastRequest?.headers['Authorization'],
+        'Bearer the-access-token',
+      );
+    });
+
     test(
       'sends X-Device-Token when a device token is passed, so the backend '
       'can unlink this installation from the account being logged out of',

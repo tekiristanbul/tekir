@@ -32,14 +32,19 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
+  void _loadIfNeeded() {
+    final state = ref.read(profileProvider);
+    if (ref.read(sessionIdentityServiceProvider).cached != null &&
+        !state.hasLoadedOnce &&
+        !state.isLoading) {
+      ref.read(profileProvider.notifier).load();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    Future.microtask(() {
-      if (ref.read(sessionIdentityServiceProvider).cached != null) {
-        ref.read(profileProvider.notifier).load();
-      }
-    });
+    Future.microtask(_loadIfNeeded);
   }
 
   Future<void> _openEditDisplayName(String? currentName) async {
@@ -59,6 +64,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(profileProvider);
     final isAuthenticated = ref.watch(sessionProvider).value != null;
+
+    // ProfileScreen lives in a persistent StatefulShellRoute branch
+    // (app_shell.dart) — unlike a pushed route, its State survives tab
+    // switches and stays mounted for the whole session, so initState's
+    // one-time check above only catches "already authenticated by first
+    // mount". This additionally catches session restore resolving
+    // asynchronously after mount (a cold start/reload racing
+    // sessionProvider's own restore()) and logging in while already
+    // sitting on this tab — both leave profile unloaded forever
+    // otherwise, since nothing else ever calls load() again.
+    ref.listen(sessionProvider, (previous, next) {
+      if (next.value != null) _loadIfNeeded();
+    });
 
     return Scaffold(
       backgroundColor: AppColors.bg,

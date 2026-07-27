@@ -22,20 +22,35 @@ class DiscoverScreen extends ConsumerStatefulWidget {
 }
 
 class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
+  void _loadIfNeeded() {
+    final state = ref.read(discoverProvider);
+    if (ref.read(sessionIdentityServiceProvider).cached != null &&
+        !state.hasLoadedOnce &&
+        !state.isLoading) {
+      ref.read(discoverProvider.notifier).load();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    Future.microtask(() {
-      if (ref.read(sessionIdentityServiceProvider).cached != null) {
-        ref.read(discoverProvider.notifier).load();
-      }
-    });
+    Future.microtask(_loadIfNeeded);
   }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(discoverProvider);
     final isAuthenticated = ref.watch(sessionProvider).value != null;
+
+    // DiscoverScreen lives in a persistent StatefulShellRoute branch
+    // (app_shell.dart) — see ProfileScreen's identical fix/comment: its
+    // State survives tab switches, so initState's one-time check above
+    // only catches "already authenticated by first mount"; this also
+    // catches session restore resolving after mount and logging in while
+    // already on this tab.
+    ref.listen(sessionProvider, (previous, next) {
+      if (next.value != null) _loadIfNeeded();
+    });
 
     return Scaffold(
       backgroundColor: AppColors.bg,

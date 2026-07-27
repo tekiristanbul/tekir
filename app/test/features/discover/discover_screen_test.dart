@@ -131,6 +131,58 @@ void main() {
     api.pending!.complete();
   });
 
+  testWidgets(
+    'a session that resolves after this screen has already mounted (e.g. a '
+    'cold-start restore racing this persistent shell tab, or logging in '
+    'while already on it) still loads the follows list',
+    (tester) async {
+      final api = _FakeFollowsApi(
+        nextCats: const [
+          CatMarker(
+            id: 'cat-1',
+            name: 'Tekir',
+            primaryPhoto: '',
+            lat: 41.0,
+            lng: 29.0,
+          ),
+        ],
+      );
+      final sessionService = _FakeSessionIdentityService();
+      final router = GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, state) => const DiscoverScreen(),
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionIdentityServiceProvider.overrideWithValue(sessionService),
+            followsApiProvider.overrideWithValue(api),
+          ],
+          child: MaterialApp.router(
+            theme: AppTheme.light,
+            routerConfig: router,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Giriş yapmadın'), findsOneWidget);
+      expect(api.calls, 0);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(DiscoverScreen)),
+      );
+      await container.read(sessionProvider.notifier).save(_session);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tekir'), findsOneWidget);
+      expect(api.calls, 1);
+    },
+  );
+
   testWidgets('shows the empty state when there are no followed cats', (
     tester,
   ) async {
