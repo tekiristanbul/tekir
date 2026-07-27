@@ -6,6 +6,10 @@ import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
 import 'package:app/features/auth/data/auth_api.dart';
 import 'package:app/features/auth/ui/auth_notifier.dart';
+import 'package:app/features/badges/data/badge.dart';
+import 'package:app/features/profile/data/profile.dart';
+import 'package:app/features/profile/data/profile_api.dart';
+import 'package:app/features/profile/ui/profile_notifier.dart';
 
 // Mirrors cat_update_composer_notifier_test.dart's fakes exactly — same
 // stale-device-credential recovery mechanism, applied here to the login
@@ -147,6 +151,7 @@ ProviderContainer _containerWith(
   _FakeAuthApi api, {
   _FakeSessionIdentityService? session,
   DeviceIdentityService? deviceIdentityService,
+  ProfileApi? profileApi,
 }) {
   final container = ProviderContainer(
     overrides: [
@@ -157,10 +162,19 @@ ProviderContainer _containerWith(
       deviceIdentityServiceProvider.overrideWithValue(
         deviceIdentityService ?? _defaultDeviceIdentityService(),
       ),
+      if (profileApi != null) profileApiProvider.overrideWithValue(profileApi),
     ],
   );
   addTearDown(container.dispose);
   return container;
+}
+
+class _FakeProfileApi implements ProfileApi {
+  _FakeProfileApi(this.profile);
+  Profile profile;
+
+  @override
+  Future<Profile> fetch() async => profile;
 }
 
 void main() {
@@ -478,6 +492,36 @@ void main() {
 
       expect(done, isTrue);
       expect(api.lastDisplayName, 'a' * 60);
+    });
+
+    test('reflects the new name into an already-loaded profileProvider — a '
+        'brand-new account\'s profile can load (with a null name) in the gap '
+        'between otp/verify and this step\'s own save (issue #80 '
+        'product-owner review)', () async {
+      final api = _FakeAuthApi();
+      final profileApi = _FakeProfileApi(
+        Profile(
+          displayName: null,
+          totals: const ContributionTotals(
+            updates: 0,
+            helps: 0,
+            catsAdded: 0,
+            distinctCats: 0,
+          ),
+          badges: const <BadgeStatus>[],
+          recentContributions: const [],
+        ),
+      );
+      final container = _containerWith(api, profileApi: profileApi);
+      await container.read(profileProvider.notifier).load();
+      expect(container.read(profileProvider).profile?.displayName, isNull);
+
+      final notifier = container.read(authProvider.notifier);
+      notifier.setName('Ayşe');
+      final done = await notifier.submitName();
+
+      expect(done, isTrue);
+      expect(container.read(profileProvider).profile?.displayName, 'Ayşe');
     });
 
     test('a valid name finishes the flow, trimmed', () async {

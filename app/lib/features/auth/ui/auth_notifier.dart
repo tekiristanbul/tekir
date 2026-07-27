@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/identity/device_identity.dart';
 import '../../../core/identity/session_identity.dart';
 import '../../../core/validation/display_name.dart';
+import '../../profile/ui/profile_notifier.dart';
 import '../data/auth_api.dart';
 
 /// The three prototype steps (prototype/app.js's login screen): phone
@@ -256,6 +257,12 @@ class AuthNotifier extends Notifier<AuthState> {
     state = state.copyWith(isSubmitting: true, clearError: true);
     try {
       await ref.read(authApiProvider).setDisplayName(trimmed);
+      // issue #80 product-owner review: profile is a persistent shell tab
+      // (app_shell.dart) that may have already loaded — with a null
+      // display name — in the gap between otp/verify succeeding and this
+      // step's own save completing. Reflect it immediately rather than
+      // leaving a stale "İsimsiz kullanıcı" until the next full reload.
+      ref.read(profileProvider.notifier).applyDisplayName(trimmed);
       state = const AuthState();
       return true;
     } on InvalidDisplayNameException {

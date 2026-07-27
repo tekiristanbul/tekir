@@ -99,6 +99,21 @@ class ProfileNotifier extends Notifier<ProfileState> {
   /// of only updating local state once the call actually succeeds.
   Future<void> updateDisplayName(String displayName) async {
     await ref.read(authApiProvider).setDisplayName(displayName);
+    applyDisplayName(displayName);
+  }
+
+  /// Reflects a display name already saved server-side into [state], if a
+  /// profile is currently loaded — a no-op local patch, no network call.
+  ///
+  /// Also called by [AuthNotifier.submitName] (issue #80 product-owner
+  /// review): a brand-new account's profile can load once, showing a null
+  /// display name, in the gap between `otp/verify` succeeding and the
+  /// signup name step's own `PATCH /v1/me` completing — this screen is a
+  /// persistent shell tab (app_shell.dart), so once loaded, nothing else
+  /// would ever tell it the name changed. Without this, the profile screen
+  /// keeps showing "İsimsiz kullanıcı" even though the name saved
+  /// correctly, until the next full reload.
+  void applyDisplayName(String displayName) {
     final current = state.profile;
     if (current != null) {
       state = state.copyWith(
