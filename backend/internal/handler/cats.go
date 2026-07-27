@@ -401,9 +401,19 @@ func (h *CatsHandler) CreateUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// issue #80 (product-owner review): an optional Idempotency-Key lets a
+	// retried request (a duplicate network retry, or a fast double-tap of
+	// the "Gördüm" shortcut before the first response returns) resolve to
+	// the original update instead of creating a second one — mirrors
+	// CatsHandler.Create's identical header handling.
+	var idempotencyKey *string
+	if v := strings.TrimSpace(r.Header.Get("Idempotency-Key")); v != "" {
+		idempotencyKey = &v
+	}
+
 	user := UserFromContext(r.Context())
 	device := DeviceFromContext(r.Context())
-	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, device.DeviceID, req.Statuses, req.Comment)
+	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, device.DeviceID, idempotencyKey, req.Statuses, req.Comment)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return

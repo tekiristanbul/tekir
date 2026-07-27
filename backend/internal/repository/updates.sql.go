@@ -85,7 +85,7 @@ func (q *Queries) CorrectOrdinaryUpdate(ctx context.Context, arg CorrectOrdinary
 }
 
 const createUpdate = `-- name: CreateUpdate :one
-insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id, author_user_id)
+insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id, author_user_id, idempotency_key)
 values (
   $1,
   $2,
@@ -95,7 +95,8 @@ values (
   $6,
   $7,
   $8,
-  $9
+  $9,
+  $10
 )
 on conflict (id) do update set
   kind = excluded.kind,
@@ -104,7 +105,8 @@ on conflict (id) do update set
   needs_help_category = excluded.needs_help_category,
   needs_help_expires_at = excluded.needs_help_expires_at,
   author_device_id = excluded.author_device_id,
-  author_user_id = excluded.author_user_id
+  author_user_id = excluded.author_user_id,
+  idempotency_key = excluded.idempotency_key
 returning id, seq
 `
 
@@ -118,6 +120,7 @@ type CreateUpdateParams struct {
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	AuthorDeviceID     pgtype.UUID        `json:"author_device_id"`
 	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	IdempotencyKey     pgtype.Text        `json:"idempotency_key"`
 }
 
 type CreateUpdateRow struct {
@@ -142,7 +145,9 @@ type CreateUpdateRow struct {
 // leave it null. author_user_id (issue #65) is likewise nullable and set
 // only from the caller's authenticated bearer session — the ordinary-update
 // write path always sets it now that the route requires bearer; nothing
-// else does.
+// else does. idempotency_key (issue #80) is nullable and only ever set on
+// the ordinary-update write path (mirrors cats.idempotency_key/
+// media.idempotency_key exactly) — needs-help and seed rows leave it null.
 func (q *Queries) CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error) {
 	row := q.db.QueryRow(ctx, createUpdate,
 		arg.ID,
@@ -154,6 +159,7 @@ func (q *Queries) CreateUpdate(ctx context.Context, arg CreateUpdateParams) (Cre
 		arg.NeedsHelpExpiresAt,
 		arg.AuthorDeviceID,
 		arg.AuthorUserID,
+		arg.IdempotencyKey,
 	)
 	var i CreateUpdateRow
 	err := row.Scan(&i.ID, &i.Seq)
@@ -214,6 +220,53 @@ func (q *Queries) DeleteOwnUpdate(ctx context.Context, arg DeleteOwnUpdateParams
 	)
 	var i DeleteOwnUpdateRow
 	err := row.Scan(&i.ID, &i.DeletedAt)
+	return i, err
+}
+
+const getUpdateByIdempotencyKey = `-- name: GetUpdateByIdempotencyKey :one
+select
+  u.id,
+  u.cat_id,
+  u.comment,
+  u.created_at,
+  coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
+from updates u
+left join update_statuses s on s.update_id = u.id
+where u.author_user_id = $1
+  and u.idempotency_key = $2
+  and u.kind = 'ordinary'
+group by u.id
+`
+
+type GetUpdateByIdempotencyKeyParams struct {
+	AuthorUserID   pgtype.UUID `json:"author_user_id"`
+	IdempotencyKey pgtype.Text `json:"idempotency_key"`
+}
+
+type GetUpdateByIdempotencyKeyRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	CatID     pgtype.UUID        `json:"cat_id"`
+	Comment   pgtype.Text        `json:"comment"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Statuses  []string           `json:"statuses"`
+}
+
+// issue #80: resolves a retried POST /v1/cats/{cat_id}/updates (same
+// Idempotency-Key, same account) to the update it already created,
+// checked before any new write — mirrors GetCatByIdempotencyKey exactly.
+// Scoped to kind = 'ordinary' to match the partial unique index; the
+// statuses aggregation mirrors ListCatUpdates so the retry response is
+// identical to the original create response.
+func (q *Queries) GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateByIdempotencyKeyParams) (GetUpdateByIdempotencyKeyRow, error) {
+	row := q.db.QueryRow(ctx, getUpdateByIdempotencyKey, arg.AuthorUserID, arg.IdempotencyKey)
+	var i GetUpdateByIdempotencyKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.CatID,
+		&i.Comment,
+		&i.CreatedAt,
+		&i.Statuses,
+	)
 	return i, err
 }
 

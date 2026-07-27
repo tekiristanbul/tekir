@@ -16,8 +16,10 @@
 -- leave it null. author_user_id (issue #65) is likewise nullable and set
 -- only from the caller's authenticated bearer session — the ordinary-update
 -- write path always sets it now that the route requires bearer; nothing
--- else does.
-insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id, author_user_id)
+-- else does. idempotency_key (issue #80) is nullable and only ever set on
+-- the ordinary-update write path (mirrors cats.idempotency_key/
+-- media.idempotency_key exactly) — needs-help and seed rows leave it null.
+insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id, author_user_id, idempotency_key)
 values (
   sqlc.arg(id),
   sqlc.arg(cat_id),
@@ -27,7 +29,8 @@ values (
   sqlc.arg(needs_help_category),
   sqlc.arg(needs_help_expires_at),
   sqlc.arg(author_device_id),
-  sqlc.arg(author_user_id)
+  sqlc.arg(author_user_id),
+  sqlc.arg(idempotency_key)
 )
 on conflict (id) do update set
   kind = excluded.kind,
@@ -36,8 +39,29 @@ on conflict (id) do update set
   needs_help_category = excluded.needs_help_category,
   needs_help_expires_at = excluded.needs_help_expires_at,
   author_device_id = excluded.author_device_id,
-  author_user_id = excluded.author_user_id
+  author_user_id = excluded.author_user_id,
+  idempotency_key = excluded.idempotency_key
 returning id, seq;
+
+-- name: GetUpdateByIdempotencyKey :one
+-- issue #80: resolves a retried POST /v1/cats/{cat_id}/updates (same
+-- Idempotency-Key, same account) to the update it already created,
+-- checked before any new write — mirrors GetCatByIdempotencyKey exactly.
+-- Scoped to kind = 'ordinary' to match the partial unique index; the
+-- statuses aggregation mirrors ListCatUpdates so the retry response is
+-- identical to the original create response.
+select
+  u.id,
+  u.cat_id,
+  u.comment,
+  u.created_at,
+  coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
+from updates u
+left join update_statuses s on s.update_id = u.id
+where u.author_user_id = sqlc.arg(author_user_id)
+  and u.idempotency_key = sqlc.arg(idempotency_key)
+  and u.kind = 'ordinary'
+group by u.id;
 
 -- name: BackfillUpdatesAuthorUserID :exec
 -- issue #65: called inside AuthService.linkDevice's transaction, once a

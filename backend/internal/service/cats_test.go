@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/tekiristanbul/tekir/backend/internal/repository"
@@ -41,6 +42,9 @@ type fakeCatsLister struct {
 
 	idempotencyRow repository.GetCatByIdempotencyKeyRow
 	idempotencyErr error
+
+	updateIdempotencyRow repository.GetUpdateByIdempotencyKeyRow
+	updateIdempotencyErr error
 
 	nearbyDuplicateRows []repository.ListNearbyCatsForDuplicateCheckRow
 	nearbyDuplicateErr  error
@@ -95,6 +99,10 @@ func (f fakeCatsLister) CreateNeedsHelpUpdate(ctx context.Context, arg repositor
 
 func (f fakeCatsLister) GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error) {
 	return f.idempotencyRow, f.idempotencyErr
+}
+
+func (f fakeCatsLister) GetUpdateByIdempotencyKey(ctx context.Context, arg repository.GetUpdateByIdempotencyKeyParams) (repository.GetUpdateByIdempotencyKeyRow, error) {
+	return f.updateIdempotencyRow, f.updateIdempotencyErr
 }
 
 func (f fakeCatsLister) ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error) {
@@ -556,7 +564,7 @@ func TestCatsService_CreateOrdinaryUpdate_Success(t *testing.T) {
 	}, WithClock(func() time.Time { return fixedNow }))
 
 	comment := "mama verildi, su tazelendi"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), userID.String(), deviceID.String(), []string{"water_provided", "fed"}, &comment)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), userID.String(), deviceID.String(), nil, []string{"water_provided", "fed"}, &comment)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -609,7 +617,7 @@ func TestCatsService_CreateOrdinaryUpdate_NoComment(t *testing.T) {
 	var captured repository.CreateOrdinaryUpdateParams
 	svc := NewCatsService(fakeCatsLister{exists: true, captured: &captured})
 
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -626,7 +634,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithoutDeviceToken_StillSucceeds(t *te
 	svc := NewCatsService(fakeCatsLister{exists: true, captured: &captured})
 
 	userID := uuid.New()
-	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), userID.String(), "", []string{"seen"}, nil); err != nil {
+	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), userID.String(), "", nil, []string{"seen"}, nil); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if captured.AuthorDeviceID.Valid {
@@ -639,7 +647,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithoutDeviceToken_StillSucceeds(t *te
 
 func TestCatsService_CreateOrdinaryUpdate_InvalidUserID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), "not-a-uuid", "", []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), "not-a-uuid", "", nil, []string{"seen"}, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid user id, got nil")
 	}
@@ -647,7 +655,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidUserID(t *testing.T) {
 
 func TestCatsService_CreateOrdinaryUpdate_InvalidDeviceID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "not-a-uuid", []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "not-a-uuid", nil, []string{"seen"}, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid device id, got nil")
 	}
@@ -669,7 +677,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidStatuses(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), c.statuses, nil); !errors.Is(err, ErrInvalidStatuses) {
+			if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, c.statuses, nil); !errors.Is(err, ErrInvalidStatuses) {
 				t.Fatalf("expected ErrInvalidStatuses, got %v", err)
 			}
 		})
@@ -679,7 +687,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidStatuses(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_InvalidCatID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), "not-a-uuid", uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), "not-a-uuid", uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
 	if !errors.Is(err, ErrInvalidCatID) {
 		t.Fatalf("expected ErrInvalidCatID, got %v", err)
 	}
@@ -688,7 +696,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidCatID(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_UnknownCat(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: false})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
 	if !errors.Is(err, ErrCatNotFound) {
 		t.Fatalf("expected ErrCatNotFound, got %v", err)
 	}
@@ -697,9 +705,110 @@ func TestCatsService_CreateOrdinaryUpdate_UnknownCat(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_RepositoryFailure(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true, createErr: errors.New("connection refused")})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_IdempotentRetryReturnsExistingWithoutWrite(t *testing.T) {
+	existingID := uuid.New()
+	existingComment := "already recorded"
+	var captured repository.CreateOrdinaryUpdateParams
+	svc := NewCatsService(fakeCatsLister{
+		exists: true,
+		updateIdempotencyRow: repository.GetUpdateByIdempotencyKeyRow{
+			ID:        pgtype.UUID{Bytes: existingID, Valid: true},
+			Statuses:  []string{"seen"},
+			Comment:   pgtype.Text{String: existingComment, Valid: true},
+			CreatedAt: pgtype.Timestamptz{Time: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC), Valid: true},
+		},
+		captured: &captured,
+	})
+
+	key := "seen-tap-key"
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if update.ID != existingID.String() {
+		t.Errorf("expected the existing update's id %s, got %s", existingID.String(), update.ID)
+	}
+	if update.Comment == nil || *update.Comment != existingComment {
+		t.Errorf("expected the existing update's comment %q, got %v", existingComment, update.Comment)
+	}
+	if captured.ID.Valid {
+		t.Error("expected CreateOrdinaryUpdate to never be called on an idempotent retry")
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_NoExistingKeyProceedsToCreate(t *testing.T) {
+	newID := uuid.New()
+	var captured repository.CreateOrdinaryUpdateParams
+	svc := NewCatsService(fakeCatsLister{
+		exists:               true,
+		updateIdempotencyErr: pgx.ErrNoRows,
+		createRow:            repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: newID, Valid: true}},
+		captured:             &captured,
+	})
+
+	key := "first-attempt-key"
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if update.ID != newID.String() {
+		t.Errorf("expected the freshly created update's id %s, got %s", newID.String(), update.ID)
+	}
+	if !captured.ID.Valid {
+		t.Error("expected CreateOrdinaryUpdate to be called when no existing key match was found")
+	}
+	if captured.IdempotencyKey.String != key {
+		t.Errorf("expected the idempotency key %q to be threaded through, got %q", key, captured.IdempotencyKey.String)
+	}
+}
+
+// statefulUpdateLister lets a test vary GetUpdateByIdempotencyKey's answer
+// across calls (first miss, then hit after a simulated concurrent winner),
+// mirroring statefulCatsLister above for CreateCatWithMedia's own race.
+type statefulUpdateLister struct {
+	fakeCatsLister
+	onGetIdempotency func() (repository.GetUpdateByIdempotencyKeyRow, error)
+}
+
+func (s statefulUpdateLister) GetUpdateByIdempotencyKey(_ context.Context, _ repository.GetUpdateByIdempotencyKeyParams) (repository.GetUpdateByIdempotencyKeyRow, error) {
+	return s.onGetIdempotency()
+}
+
+func TestCatsService_CreateOrdinaryUpdate_RaceOnIdempotencyKeyRecoversExisting(t *testing.T) {
+	existingID := uuid.New()
+	firstCall := true
+	lister := statefulUpdateLister{
+		fakeCatsLister: fakeCatsLister{
+			exists:    true,
+			createErr: &pgconn.PgError{Code: "23505"},
+		},
+		onGetIdempotency: func() (repository.GetUpdateByIdempotencyKeyRow, error) {
+			if firstCall {
+				firstCall = false
+				return repository.GetUpdateByIdempotencyKeyRow{}, pgx.ErrNoRows
+			}
+			return repository.GetUpdateByIdempotencyKeyRow{
+				ID:        pgtype.UUID{Bytes: existingID, Valid: true},
+				Statuses:  []string{"seen"},
+				CreatedAt: pgtype.Timestamptz{Time: time.Date(2026, 3, 1, 9, 5, 0, 0, time.UTC), Valid: true},
+			}, nil
+		},
+	}
+	svc := NewCatsService(lister)
+
+	key := "race-seen-key"
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if update.ID != existingID.String() {
+		t.Errorf("expected the concurrently-created update to be returned, got %s", update.ID)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -1236,5 +1237,116 @@ func TestStore_ListCatUpdates_ExcludesSoftDeleted(t *testing.T) {
 	}
 	if rows[0].Comment.String != "stays visible" {
 		t.Errorf("expected the non-deleted update to remain, got comment %q", rows[0].Comment.String)
+	}
+}
+
+// TestStore_CreateOrdinaryUpdate_DuplicateIdempotencyKeyRejected proves
+// migration 00021's partial unique index (author_user_id, idempotency_key)
+// where idempotency_key is not null and kind = 'ordinary' actually rejects a
+// second insert carrying the same key for the same account — the real
+// database-level backstop CatsService.CreateOrdinaryUpdate's race-recovery
+// (fetchIdempotentOrdinaryUpdate after isUniqueViolation) depends on, mirrors
+// TestStore_CreateOrdinaryUpdate_DuplicateEnqueueRollsBack's shape above.
+func TestStore_CreateOrdinaryUpdate_DuplicateIdempotencyKeyRejected(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "idempotency key target")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
+	key := pgtype.Text{String: "seen-tap-key", Valid: true}
+
+	first := repository.CreateOrdinaryUpdateParams{
+		ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:          catID,
+		AuthorUserID:   userID,
+		CreatedAt:      pgtype.Timestamptz{Time: createdAt, Valid: true},
+		Statuses:       []string{"seen"},
+		IdempotencyKey: key,
+	}
+	firstRow, err := store.CreateOrdinaryUpdate(ctx, first)
+	if err != nil {
+		t.Fatalf("first create ordinary update: %v", err)
+	}
+
+	// a retry with the same key (new update id, as a fresh POST would send)
+	// must hit the partial unique index, not silently succeed as a second row.
+	second := first
+	second.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	second.CreatedAt = pgtype.Timestamptz{Time: createdAt.Add(time.Minute), Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, second); !isUniqueViolation(err) {
+		t.Fatalf("expected a unique-constraint violation on duplicate idempotency key, got %v", err)
+	}
+
+	existing, err := store.GetUpdateByIdempotencyKey(ctx, repository.GetUpdateByIdempotencyKeyParams{
+		AuthorUserID:   userID,
+		IdempotencyKey: key,
+	})
+	if err != nil {
+		t.Fatalf("get update by idempotency key: %v", err)
+	}
+	if existing.ID != firstRow.ID {
+		t.Errorf("expected the lookup to resolve to the first insert %v, got %v", firstRow.ID, existing.ID)
+	}
+
+	// a different key for the same account is a genuinely new update.
+	third := first
+	third.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	third.CreatedAt = pgtype.Timestamptz{Time: createdAt.Add(2 * time.Minute), Valid: true}
+	third.IdempotencyKey = pgtype.Text{String: "seen-tap-key-2", Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, third); err != nil {
+		t.Errorf("expected a different idempotency key to create a second update, got error: %v", err)
+	}
+}
+
+// TestStore_CreateOrdinaryUpdate_ConcurrentSameIdempotencyKeyOnlyOneWins
+// mirrors TestStore_CreateFollow_ConcurrentDuplicate's shape: two goroutines
+// racing to insert the same (author_user_id, idempotency_key) pair must
+// leave exactly one row committed, with the loser observing a unique
+// violation it can recover from via GetUpdateByIdempotencyKey.
+func TestStore_CreateOrdinaryUpdate_ConcurrentSameIdempotencyKeyOnlyOneWins(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "concurrent idempotency key target")
+	userID := createTestUser(t, ctx, store)
+	key := pgtype.Text{String: "concurrent-seen-key", Valid: true}
+	createdAt := time.Date(2026, 3, 3, 9, 30, 0, 0, time.UTC)
+
+	const attempts = 5
+	var wg sync.WaitGroup
+	errs := make([]error, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+				ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CatID:          catID,
+				AuthorUserID:   userID,
+				CreatedAt:      pgtype.Timestamptz{Time: createdAt, Valid: true},
+				Statuses:       []string{"seen"},
+				IdempotencyKey: key,
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	var successes, violations int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case isUniqueViolation(err):
+			violations++
+		default:
+			t.Errorf("unexpected error from concurrent create: %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Errorf("expected exactly 1 successful insert, got %d successes and %d violations", successes, violations)
+	}
+	if successes+violations != attempts {
+		t.Errorf("expected every attempt to either succeed or hit the unique index, got %d successes and %d violations of %d attempts", successes, violations, attempts)
 	}
 }

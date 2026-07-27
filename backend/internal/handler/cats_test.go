@@ -73,6 +73,9 @@ type fakeCatsLister struct {
 	idempotencyRow repository.GetCatByIdempotencyKeyRow
 	idempotencyErr error
 
+	updateIdempotencyRow repository.GetUpdateByIdempotencyKeyRow
+	updateIdempotencyErr error
+
 	nearbyDuplicateRows []repository.ListNearbyCatsForDuplicateCheckRow
 	nearbyDuplicateErr  error
 
@@ -121,6 +124,10 @@ func (f fakeCatsLister) CreateNeedsHelpUpdate(ctx context.Context, arg repositor
 
 func (f fakeCatsLister) GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error) {
 	return f.idempotencyRow, f.idempotencyErr
+}
+
+func (f fakeCatsLister) GetUpdateByIdempotencyKey(ctx context.Context, arg repository.GetUpdateByIdempotencyKeyParams) (repository.GetUpdateByIdempotencyKeyRow, error) {
+	return f.updateIdempotencyRow, f.updateIdempotencyErr
 }
 
 func (f fakeCatsLister) ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error) {
@@ -715,6 +722,61 @@ func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
 	}
 	if len(captured.Statuses) != 1 || captured.Statuses[0] != "seen" {
 		t.Errorf("unexpected captured statuses: %v", captured.Statuses)
+	}
+}
+
+func TestCatsHandler_CreateUpdate_IdempotencyKeyHeaderPassedThrough(t *testing.T) {
+	catID := uuid.New()
+	returnedID := uuid.New()
+	var captured repository.CreateOrdinaryUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists:               true,
+		createRow:            repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		captured:             &captured,
+		updateIdempotencyErr: pgx.ErrNoRows,
+	}), testMaxUploadBytes)
+
+	r := routerForWithResolver(h,
+		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.New().String()}},
+		fakeAccessValidator{userID: uuid.New().String()},
+	)
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(catID.String(), `{"statuses":["seen"]}`)
+	req.Header.Set("Idempotency-Key", "seen-tap-key")
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !captured.IdempotencyKey.Valid || captured.IdempotencyKey.String != "seen-tap-key" {
+		t.Errorf("expected the Idempotency-Key header to be passed through, got %v", captured.IdempotencyKey)
+	}
+}
+
+func TestCatsHandler_CreateUpdate_BlankIdempotencyKeyHeaderIgnored(t *testing.T) {
+	catID := uuid.New()
+	returnedID := uuid.New()
+	var captured repository.CreateOrdinaryUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists:    true,
+		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		captured:  &captured,
+	}), testMaxUploadBytes)
+
+	r := routerForWithResolver(h,
+		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.New().String()}},
+		fakeAccessValidator{userID: uuid.New().String()},
+	)
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(catID.String(), `{"statuses":["seen"]}`)
+	req.Header.Set("Idempotency-Key", "   ")
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if captured.IdempotencyKey.Valid {
+		t.Errorf("expected a blank Idempotency-Key header to be ignored, got %v", captured.IdempotencyKey)
 	}
 }
 

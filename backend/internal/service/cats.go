@@ -313,6 +313,7 @@ type CatsStore interface {
 	CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOrdinaryUpdateRow, error)
 	DeleteOwnUpdate(ctx context.Context, arg repository.DeleteOwnUpdateParams) (repository.DeleteOwnUpdateRow, error)
 	GetUpdateForCorrectionCheck(ctx context.Context, arg repository.GetUpdateForCorrectionCheckParams) (repository.GetUpdateForCorrectionCheckRow, error)
+	GetUpdateByIdempotencyKey(ctx context.Context, arg repository.GetUpdateByIdempotencyKeyParams) (repository.GetUpdateByIdempotencyKeyRow, error)
 	GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error)
 	ListNearbyCatsForDuplicateCheck(ctx context.Context, arg repository.ListNearbyCatsForDuplicateCheckParams) ([]repository.ListNearbyCatsForDuplicateCheckRow, error)
 	CreateCatWithMedia(ctx context.Context, arg repository.CreateCatWithMediaParams) (repository.CreateCatWithMediaRow, error)
@@ -615,13 +616,18 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 // are server-derived, and the update row, its statuses, and the cat's
 // last_update_at commit as one transaction (see
 // repository.Store.CreateOrdinaryUpdate).
-func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, deviceID string, statuses []string, comment *string) (CatUpdate, error) {
+//
+// idempotencyKey (issue #80, product-owner review), when non-nil, makes a
+// retried call with the same key return the original update instead of
+// creating a second one — checked first, before status validation or any
+// write, mirroring CatsService.Create's own idempotency-key contract
+// exactly. A genuine race between two concurrent identical retries (both
+// miss the initial check) is resolved by falling back to the same lookup
+// after a unique-constraint violation on the insert, rather than
+// surfacing a raw database error to either caller.
+func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, deviceID string, idempotencyKey *string, statuses []string, comment *string) (CatUpdate, error) {
 	catID, err := parseCatID(id)
 	if err != nil {
-		return CatUpdate{}, err
-	}
-
-	if err := validateStatuses(statuses); err != nil {
 		return CatUpdate{}, err
 	}
 
@@ -629,11 +635,27 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 	// RequireBearer middleware places on the request — it is always a
 	// well-formed uuid the middleware itself resolved, never
 	// client-supplied input to re-validate against a sentinel error here.
-	// deviceID (from the optional device-token context) may be "".
 	authorUserID, err := uuid.Parse(userID)
 	if err != nil {
 		return CatUpdate{}, err
 	}
+
+	idemKey := nullableText(idempotencyKey)
+	if idemKey.Valid {
+		existing, err := s.fetchIdempotentOrdinaryUpdate(ctx, authorUserID, idemKey)
+		if err == nil {
+			return existing, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return CatUpdate{}, err
+		}
+	}
+
+	if err := validateStatuses(statuses); err != nil {
+		return CatUpdate{}, err
+	}
+
+	// deviceID (from the optional device-token context) may be "".
 	authorDeviceID, err := optionalUUID(deviceID)
 	if err != nil {
 		return CatUpdate{}, err
@@ -659,8 +681,14 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		Comment:        nullableText(comment),
 		CreatedAt:      pgtype.Timestamptz{Time: createdAt, Valid: true},
 		Statuses:       sorted,
+		IdempotencyKey: idemKey,
 	})
 	if err != nil {
+		if idemKey.Valid && isUniqueViolation(err) {
+			if existing, getErr := s.fetchIdempotentOrdinaryUpdate(ctx, authorUserID, idemKey); getErr == nil {
+				return existing, nil
+			}
+		}
 		return CatUpdate{}, err
 	}
 
@@ -676,6 +704,34 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		// (issue #80) — never left false/nil the way a zero-value CatUpdate
 		// would, which would otherwise hide the correction affordance from
 		// the client immediately after posting until the next full reload.
+		AuthorIsMe:          true,
+		CorrectionExpiresAt: &expiresAt,
+	}, nil
+}
+
+// fetchIdempotentOrdinaryUpdate resolves a presented Idempotency-Key to the
+// ordinary update it already created for authorUserID, if any — returns
+// pgx.ErrNoRows unchanged when no such update exists yet, so callers can
+// tell "no retry in progress" apart from a genuine lookup failure.
+// CorrectionExpiresAt is always createdAt + the fixed window, matching
+// ListCatUpdates' own convention of stating the fact and leaving "is it
+// still open" to CatUpdateEntry.isCorrectionOpen() on the client.
+func (s *CatsService) fetchIdempotentOrdinaryUpdate(ctx context.Context, authorUserID uuid.UUID, idemKey pgtype.Text) (CatUpdate, error) {
+	row, err := s.db.GetUpdateByIdempotencyKey(ctx, repository.GetUpdateByIdempotencyKeyParams{
+		AuthorUserID:   pgtype.UUID{Bytes: authorUserID, Valid: true},
+		IdempotencyKey: idemKey,
+	})
+	if err != nil {
+		return CatUpdate{}, err
+	}
+	createdAt := row.CreatedAt.Time
+	expiresAt := createdAt.Add(updateCorrectionWindow)
+	return CatUpdate{
+		ID:                  uuid.UUID(row.ID.Bytes).String(),
+		Kind:                "ordinary",
+		Statuses:            row.Statuses,
+		Comment:             textPtr(row.Comment),
+		CreatedAt:           createdAt,
 		AuthorIsMe:          true,
 		CorrectionExpiresAt: &expiresAt,
 	}, nil

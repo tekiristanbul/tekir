@@ -148,7 +148,9 @@ type Querier interface {
 	// leave it null. author_user_id (issue #65) is likewise nullable and set
 	// only from the caller's authenticated bearer session — the ordinary-update
 	// write path always sets it now that the route requires bearer; nothing
-	// else does.
+	// else does. idempotency_key (issue #80) is nullable and only ever set on
+	// the ordinary-update write path (mirrors cats.idempotency_key/
+	// media.idempotency_key exactly) — needs-help and seed rows leave it null.
 	CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error)
 	CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatusParams) error
 	// creates a new account for a normalized phone number. the unique
@@ -207,6 +209,13 @@ type Querier interface {
 	GetMediaByID(ctx context.Context, id pgtype.UUID) (Medium, error)
 	GetMediaByIdempotencyKey(ctx context.Context, arg GetMediaByIdempotencyKeyParams) (Medium, error)
 	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
+	// issue #80: resolves a retried POST /v1/cats/{cat_id}/updates (same
+	// Idempotency-Key, same account) to the update it already created,
+	// checked before any new write — mirrors GetCatByIdempotencyKey exactly.
+	// Scoped to kind = 'ordinary' to match the partial unique index; the
+	// statuses aggregation mirrors ListCatUpdates so the retry response is
+	// identical to the original create response.
+	GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateByIdempotencyKeyParams) (GetUpdateByIdempotencyKeyRow, error)
 	// called only when CorrectOrdinaryUpdate/DeleteOwnUpdate affects 0 rows, to
 	// disambiguate why: wrong cat_id/unknown id (404), someone else's update
 	// (403), a needs-help row (404 — not a correctable resource at all), an

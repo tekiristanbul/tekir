@@ -62,6 +62,10 @@ type CreateOrdinaryUpdateParams struct {
 	Comment        pgtype.Text
 	CreatedAt      pgtype.Timestamptz
 	Statuses       []string
+	// IdempotencyKey (issue #80) is nullable — set only when the caller
+	// presented an Idempotency-Key header, mirroring cats/media's own
+	// idempotency-key field exactly.
+	IdempotencyKey pgtype.Text
 }
 
 // CreateOrdinaryUpdate inserts an ordinary (kind = 'ordinary') update, its
@@ -131,6 +135,7 @@ func (s *Store) CreateOrdinaryUpdate(ctx context.Context, arg CreateOrdinaryUpda
 			CreatedAt:      arg.CreatedAt,
 			AuthorDeviceID: arg.AuthorDeviceID,
 			AuthorUserID:   arg.AuthorUserID,
+			IdempotencyKey: arg.IdempotencyKey,
 		})
 		if err != nil {
 			return err
