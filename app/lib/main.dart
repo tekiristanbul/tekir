@@ -10,6 +10,7 @@ import 'core/identity/device_identity.dart';
 import 'core/identity/session_identity.dart';
 import 'core/push/push_notifications.dart';
 import 'core/router/app_router.dart';
+import 'core/splash/splash_gate.dart';
 import 'core/theme/app_theme.dart';
 
 Future<void> main() async {
@@ -58,6 +59,11 @@ class CatsOfIstanbulApp extends ConsumerWidget {
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       routerConfig: appRouter,
+      // Splash overlays the router output until session restore settles
+      // (issue #85) — a builder wrapper, not a route, so deep links and
+      // the guest/restored-session destination logic stay untouched.
+      builder: (context, child) =>
+          SplashGate(child: child ?? const SizedBox.shrink()),
     );
   }
 }
