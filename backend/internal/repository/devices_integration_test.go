@@ -360,3 +360,89 @@ func TestStore_UnlinkDeviceFromUser_ConcurrentUnlinkAndRelink(t *testing.T) {
 		t.Errorf("expected the device to end up linked to account B, got %v", got.UserID)
 	}
 }
+
+func TestStore_SetDevicePushToken_MovesTokenBetweenRows(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	oldInstall := createTestDevice(t, ctx, store)
+	newInstall := createTestDevice(t, ctx, store)
+
+	token := pgtype.Text{String: "push-move-" + uuid.NewString(), Valid: true}
+
+	// the token first belongs to the old installation's row.
+	if err := store.SetDevicePushToken(ctx, repository.SetDevicePushTokenParams{DeviceID: oldInstall, PushToken: token}); err != nil {
+		t.Fatalf("set on old install: %v", err)
+	}
+	// the client lost its device credential, re-registered (new devices
+	// row), and registers the same fcm token again (issue #84) — the token
+	// must move, never exist on both rows at once, or one needs-help update
+	// would push the same physical device twice.
+	if err := store.SetDevicePushToken(ctx, repository.SetDevicePushTokenParams{DeviceID: newInstall, PushToken: token}); err != nil {
+		t.Fatalf("set on new install: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+	var holders int
+	if err := pool.QueryRow(ctx, "select count(*) from devices where push_token = $1", token.String).Scan(&holders); err != nil {
+		t.Fatalf("count holders: %v", err)
+	}
+	if holders != 1 {
+		t.Fatalf("expected exactly 1 device holding the token, got %d", holders)
+	}
+	var holder pgtype.UUID
+	if err := pool.QueryRow(ctx, "select id from devices where push_token = $1", token.String).Scan(&holder); err != nil {
+		t.Fatalf("find holder: %v", err)
+	}
+	if holder != newInstall {
+		t.Fatalf("expected the new installation to hold the token")
+	}
+}
+
+func TestStore_ClearDevicePushToken_TokenMatchedOnly(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	device := createTestDevice(t, ctx, store)
+	stale := pgtype.Text{String: "push-stale-" + uuid.NewString(), Valid: true}
+	fresh := pgtype.Text{String: "push-fresh-" + uuid.NewString(), Valid: true}
+
+	if err := store.SetDevicePushToken(ctx, repository.SetDevicePushTokenParams{DeviceID: device, PushToken: fresh}); err != nil {
+		t.Fatalf("set fresh token: %v", err)
+	}
+
+	// retirement carries the token the send attempt used — if the client
+	// refreshed to a new token in the meantime, the clear must not destroy
+	// the fresh registration (issue #84's concurrent-refresh guard).
+	if err := store.ClearDevicePushToken(ctx, repository.ClearDevicePushTokenParams{DeviceID: device, PushToken: stale}); err != nil {
+		t.Fatalf("clear with stale token: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+	var current *string
+	if err := pool.QueryRow(ctx, "select push_token from devices where id = $1", device).Scan(&current); err != nil {
+		t.Fatalf("read token: %v", err)
+	}
+	if current == nil || *current != fresh.String {
+		t.Fatalf("fresh token must survive a stale retirement, got %v", current)
+	}
+
+	// a matching retirement clears it.
+	if err := store.ClearDevicePushToken(ctx, repository.ClearDevicePushTokenParams{DeviceID: device, PushToken: fresh}); err != nil {
+		t.Fatalf("clear with matching token: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "select push_token from devices where id = $1", device).Scan(&current); err != nil {
+		t.Fatalf("read token: %v", err)
+	}
+	if current != nil {
+		t.Fatalf("expected token cleared, got %q", *current)
+	}
+}

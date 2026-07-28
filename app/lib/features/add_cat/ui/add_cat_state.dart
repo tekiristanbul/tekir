@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/analytics/analytics.dart';
 import '../../map/data/location_service.dart';
 import '../data/add_cat_api.dart';
 
@@ -267,6 +268,9 @@ class AddCatNotifier extends Notifier<AddCatState> {
       // leaving `saving: true` here would strand the ui in a disabled/
       // loading state if navigation away were ever delayed or skipped.
       state = const AddCatState();
+      // cat_created (issue #84): deliberately parameterless — no name, no
+      // location, no id.
+      ref.read(analyticsProvider).log(const AnalyticsEvent.catCreated());
       return cat.id;
     } on AddCatDuplicateCandidatesException catch (e) {
       // A race: a matching cat was created between the location step's own

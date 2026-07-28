@@ -22,6 +22,9 @@ type fakeDevicesStore struct {
 
 	deviceRow repository.GetDeviceByTokenHashRow
 	getErr    error
+
+	setPushTokenCalls []repository.SetDevicePushTokenParams
+	setPushTokenErr   error
 }
 
 func (f *fakeDevicesStore) CreateDevice(_ context.Context, arg repository.CreateDeviceParams) (repository.CreateDeviceRow, error) {
@@ -37,6 +40,11 @@ func (f *fakeDevicesStore) CreateDevice(_ context.Context, arg repository.Create
 
 func (f *fakeDevicesStore) GetDeviceByTokenHash(_ context.Context, _ string) (repository.GetDeviceByTokenHashRow, error) {
 	return f.deviceRow, f.getErr
+}
+
+func (f *fakeDevicesStore) SetDevicePushToken(_ context.Context, arg repository.SetDevicePushTokenParams) error {
+	f.setPushTokenCalls = append(f.setPushTokenCalls, arg)
+	return f.setPushTokenErr
 }
 
 // ── token generation ─────────────────────────────────────────────────────────
@@ -250,5 +258,58 @@ func TestHashDeviceToken_OnlyLowerHex(t *testing.T) {
 		if !strings.ContainsRune("0123456789abcdef", ch) {
 			t.Errorf("hash contains non-lower-hex character: %q", ch)
 		}
+	}
+}
+
+// ── push token registration (issue #84) ──────────────────────────────────────
+
+func TestSetPushToken_StoresTrimmedToken(t *testing.T) {
+	db := &fakeDevicesStore{}
+	svc := service.NewDevicesService(db)
+	deviceID := uuid.New()
+
+	if err := svc.SetPushToken(context.Background(), deviceID.String(), "  fcm-token-value  "); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(db.setPushTokenCalls) != 1 {
+		t.Fatalf("expected 1 store call, got %d", len(db.setPushTokenCalls))
+	}
+	call := db.setPushTokenCalls[0]
+	if !call.PushToken.Valid || call.PushToken.String != "fcm-token-value" {
+		t.Errorf("expected trimmed token stored, got %+v", call.PushToken)
+	}
+	if uuid.UUID(call.DeviceID.Bytes) != deviceID {
+		t.Errorf("expected device id %s, got %s", deviceID, uuid.UUID(call.DeviceID.Bytes))
+	}
+}
+
+func TestSetPushToken_RejectsEmptyAndOversized(t *testing.T) {
+	db := &fakeDevicesStore{}
+	svc := service.NewDevicesService(db)
+
+	for name, token := range map[string]string{
+		"empty":      "",
+		"whitespace": "   ",
+		"oversized":  strings.Repeat("x", 5000),
+	} {
+		if err := svc.SetPushToken(context.Background(), uuid.NewString(), token); !errors.Is(err, service.ErrInvalidPushToken) {
+			t.Errorf("%s: expected ErrInvalidPushToken, got %v", name, err)
+		}
+	}
+	if len(db.setPushTokenCalls) != 0 {
+		t.Errorf("store must not be called for rejected tokens: %d calls", len(db.setPushTokenCalls))
+	}
+}
+
+func TestSetPushToken_RejectsMalformedDeviceID(t *testing.T) {
+	db := &fakeDevicesStore{}
+	svc := service.NewDevicesService(db)
+
+	if err := svc.SetPushToken(context.Background(), "not-a-uuid", "fcm-token-value"); !errors.Is(err, service.ErrDeviceNotFound) {
+		t.Errorf("expected ErrDeviceNotFound, got %v", err)
+	}
+	if len(db.setPushTokenCalls) != 0 {
+		t.Errorf("store must not be called for a malformed device id")
 	}
 }

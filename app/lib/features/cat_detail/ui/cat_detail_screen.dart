@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/analytics/analytics.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../../auth/ui/auth_gate.dart';
@@ -39,9 +40,14 @@ const _statusLabelsTr = {
 /// prototype/app.js's renderDetail visual hierarchy; never shows raw
 /// lat/lng, and every user-facing string is Turkish.
 class CatDetailScreen extends ConsumerStatefulWidget {
-  const CatDetailScreen({super.key, required this.catId});
+  const CatDetailScreen({super.key, required this.catId, this.openSource});
 
   final String catId;
+
+  /// Which vocabulary surface this detail was opened from (issue #84's
+  /// cat_opened source). Null — no cat_opened event at all — for openings
+  /// outside the vocabulary (deep link, post-creation navigation).
+  final AnalyticsSource? openSource;
 
   @override
   ConsumerState<CatDetailScreen> createState() => _CatDetailScreenState();
@@ -51,6 +57,10 @@ class _CatDetailScreenState extends ConsumerState<CatDetailScreen> {
   @override
   void initState() {
     super.initState();
+    final source = widget.openSource;
+    if (source != null) {
+      ref.read(analyticsProvider).log(AnalyticsEvent.catOpened(source));
+    }
     Future.microtask(
       () => ref.read(catDetailProvider(widget.catId).notifier).load(),
     );
@@ -86,15 +96,24 @@ class _CatDetailScreenState extends ConsumerState<CatDetailScreen> {
     if (detail == null) {
       return const _MessageScreen(loading: true);
     }
-    return _CatDetailBody(detail: detail, state: state);
+    return _CatDetailBody(
+      detail: detail,
+      state: state,
+      openSource: widget.openSource,
+    );
   }
 }
 
 class _CatDetailBody extends ConsumerWidget {
-  const _CatDetailBody({required this.detail, required this.state});
+  const _CatDetailBody({
+    required this.detail,
+    required this.state,
+    this.openSource,
+  });
 
   final CatDetail detail;
   final CatDetailState state;
+  final AnalyticsSource? openSource;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -122,7 +141,7 @@ class _CatDetailBody extends ConsumerWidget {
               ],
               Align(
                 alignment: Alignment.centerLeft,
-                child: FollowButton(catId: detail.id),
+                child: FollowButton(catId: detail.id, source: openSource),
               ),
               const SizedBox(height: AppSpacing.s4),
               _UpdateActionsRow(catId: detail.id),
@@ -515,6 +534,7 @@ class _UpdateActionsRow extends ConsumerWidget {
       context,
       ref,
       contextText: 'Güncelleme paylaşmak için giriş yap',
+      intent: AnalyticsAuthIntent.ordinaryUpdate,
       onAuthenticated: () => unawaited(_submitSeen(context, ref)),
     );
   }
@@ -524,6 +544,7 @@ class _UpdateActionsRow extends ConsumerWidget {
       context,
       ref,
       contextText: 'Güncelleme paylaşmak için giriş yap',
+      intent: AnalyticsAuthIntent.ordinaryUpdate,
       onAuthenticated: () => unawaited(_openComposer(context)),
     );
   }
@@ -614,6 +635,7 @@ class _NeedsHelpCallout extends StatelessWidget {
       context,
       ref,
       contextText: 'Yardım bildirimi oluşturmak için giriş yap',
+      intent: AnalyticsAuthIntent.needsHelp,
       onAuthenticated: () => unawaited(
         openNeedsHelpSheet(
           context,

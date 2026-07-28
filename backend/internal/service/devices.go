@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -23,6 +24,16 @@ var ErrDeviceNotFound = errors.New("device not found")
 
 // ErrDeviceRevoked means the device credential has been revoked.
 var ErrDeviceRevoked = errors.New("device revoked")
+
+// ErrInvalidPushToken means the presented push token is empty or
+// implausibly large.
+var ErrInvalidPushToken = errors.New("invalid push token")
+
+// maxPushTokenLength bounds an fcm registration token (issue #84) before
+// it's ever stored — real tokens are a few hundred bytes; anything near
+// this limit is garbage, and an unbounded value would let one request
+// bloat the devices row arbitrarily.
+const maxPushTokenLength = 4096
 
 // allowedPlatforms is the closed set of accepted platform values (see
 // docs/architecture/api.md). 'web' is required because the flutter
@@ -62,6 +73,7 @@ type DeviceIdentity struct {
 type DevicesStore interface {
 	CreateDevice(ctx context.Context, arg repository.CreateDeviceParams) (repository.CreateDeviceRow, error)
 	GetDeviceByTokenHash(ctx context.Context, tokenHash string) (repository.GetDeviceByTokenHashRow, error)
+	SetDevicePushToken(ctx context.Context, arg repository.SetDevicePushTokenParams) error
 }
 
 // DevicesService handles device registration and credential resolution.
@@ -105,6 +117,27 @@ func (s *DevicesService) Register(ctx context.Context, platform string, pushToke
 		DeviceID:    uuid.UUID(row.ID.Bytes).String(),
 		DeviceToken: rawToken,
 	}, nil
+}
+
+// SetPushToken registers or refreshes the caller installation's fcm token
+// (issue #84). In-place on the caller's own device row — rotation never
+// creates a second row — and the underlying query clears the same token
+// off any other row, so a re-registered installation can't be pushed
+// twice. The token is a delivery credential: it is never logged here or
+// anywhere downstream.
+func (s *DevicesService) SetPushToken(ctx context.Context, deviceID, pushToken string) error {
+	pushToken = strings.TrimSpace(pushToken)
+	if pushToken == "" || len(pushToken) > maxPushTokenLength {
+		return ErrInvalidPushToken
+	}
+	id, err := uuid.Parse(deviceID)
+	if err != nil {
+		return ErrDeviceNotFound
+	}
+	return s.db.SetDevicePushToken(ctx, repository.SetDevicePushTokenParams{
+		PushToken: pgtype.Text{String: pushToken, Valid: true},
+		DeviceID:  pgtype.UUID{Bytes: id, Valid: true},
+	})
 }
 
 // ResolveToken hashes the presented raw token and resolves it to a

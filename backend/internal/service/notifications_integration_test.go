@@ -92,6 +92,10 @@ func notifCreateTestDevice(t *testing.T, ctx context.Context, store *repository.
 	if _, err := store.CreateDevice(ctx, repository.CreateDeviceParams{
 		ID:        id,
 		TokenHash: service.HashDeviceToken("notif-test-token-" + uuid.New().String()),
+		// a push token by default: dispatch only calls the sender for
+		// devices that registered one (issue #84), and most tests here
+		// assert on what the sender saw.
+		PushToken: pgtype.Text{String: "notif-test-push-" + uuid.New().String(), Valid: true},
 		Platform:  "web",
 	}); err != nil {
 		t.Fatalf("create device: %v", err)
@@ -210,7 +214,7 @@ func TestNotificationService_DispatchPending_NeedsHelpFansOutExcludingAuthorAndR
 	// own updateID/device rather than a global count.
 	dispatchUntilProcessed(t, ctx, pool, notifications, updateID)
 
-	var sentToFollower []service.FakeSentNotification
+	var sentToFollower []service.PushMessage
 	for _, s := range sender.Sent() {
 		if s.UpdateID == uuid.UUID(updateID.Bytes).String() {
 			sentToFollower = append(sentToFollower, s)
@@ -428,5 +432,153 @@ func TestNotificationService_DispatchPending_ConcurrentDispatchNoDuplicateSends(
 		if count != 1 {
 			t.Errorf("expected device %s notified exactly once, got %d", device, count)
 		}
+	}
+}
+
+// invalidTokenSender is a NotificationSender that records every send and
+// reports each one as a permanent token rejection — the fcm "unregistered
+// installation" outcome (issue #84) — so tests can observe the dispatch
+// loop's token retirement without a real provider.
+type invalidTokenSender struct {
+	mu   sync.Mutex
+	sent []service.PushMessage
+}
+
+func (s *invalidTokenSender) Send(_ context.Context, msg service.PushMessage) error {
+	s.mu.Lock()
+	s.sent = append(s.sent, msg)
+	s.mu.Unlock()
+	return service.ErrPushTokenInvalid
+}
+
+func TestNotificationService_DispatchPending_NoPushTokenSkipsSendButKeepsRecord(t *testing.T) {
+	store := newNotificationTestStore(t)
+	ctx := context.Background()
+	drainPending(t, ctx, store)
+
+	catID := notifUpsertTestCat(t, ctx, store, "tokenless follower cat")
+	author := notifCreateTestUser(t, ctx, store)
+	authorDevice := notifCreateTestDevice(t, ctx, store, author)
+
+	follower := notifCreateTestUser(t, ctx, store)
+	followerDevice := notifCreateTestDevice(t, ctx, store, follower)
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{UserID: follower, CatID: catID}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+	// this follower's installation never registered a push token (opt-in
+	// declined) — issue #84: the in-app record must still be created, the
+	// sender must never be called for it.
+	if _, err := pool.Exec(ctx, "update devices set push_token = null where id = $1", followerDevice); err != nil {
+		t.Fatalf("clear push token: %v", err)
+	}
+
+	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	createdAt := time.Now().UTC()
+	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+		ID:                 updateID,
+		CatID:              catID,
+		AuthorUserID:       author,
+		AuthorDeviceID:     authorDevice,
+		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
+		NeedsHelpCategory:  "injured_or_sick",
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
+	}); err != nil {
+		t.Fatalf("create needs-help update: %v", err)
+	}
+
+	sender := service.NewFakeNotificationSender()
+	notifications := service.NewNotificationService(store, sender)
+	dispatchUntilProcessed(t, ctx, pool, notifications, updateID)
+
+	for _, s := range sender.Sent() {
+		if s.UpdateID == uuid.UUID(updateID.Bytes).String() {
+			t.Fatalf("sender was called for a device with no push token: %+v", s)
+		}
+	}
+
+	var notifCount int
+	if err := pool.QueryRow(ctx, "select count(*) from notifications where update_id = $1 and device_id = $2", updateID, followerDevice).Scan(&notifCount); err != nil {
+		t.Fatalf("count notifications: %v", err)
+	}
+	if notifCount != 1 {
+		t.Fatalf("expected 1 in-app notification record despite missing push token, got %d", notifCount)
+	}
+}
+
+func TestNotificationService_DispatchPending_InvalidTokenRetired(t *testing.T) {
+	store := newNotificationTestStore(t)
+	ctx := context.Background()
+	drainPending(t, ctx, store)
+
+	catID := notifUpsertTestCat(t, ctx, store, "invalid token cat")
+	author := notifCreateTestUser(t, ctx, store)
+	authorDevice := notifCreateTestDevice(t, ctx, store, author)
+
+	follower := notifCreateTestUser(t, ctx, store)
+	followerDevice := notifCreateTestDevice(t, ctx, store, follower)
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{UserID: follower, CatID: catID}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+
+	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	createdAt := time.Now().UTC()
+	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+		ID:                 updateID,
+		CatID:              catID,
+		AuthorUserID:       author,
+		AuthorDeviceID:     authorDevice,
+		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
+		NeedsHelpCategory:  "trapped",
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
+	}); err != nil {
+		t.Fatalf("create needs-help update: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	sender := &invalidTokenSender{}
+	notifications := service.NewNotificationService(store, sender)
+	dispatchUntilProcessed(t, ctx, pool, notifications, updateID)
+
+	sender.mu.Lock()
+	sentCount := 0
+	for _, s := range sender.sent {
+		if s.UpdateID == uuid.UUID(updateID.Bytes).String() {
+			sentCount++
+		}
+	}
+	sender.mu.Unlock()
+	if sentCount != 1 {
+		t.Fatalf("expected exactly 1 send attempt, got %d", sentCount)
+	}
+
+	// the permanently rejected token was retired (issue #84) — the device
+	// row survives, only its delivery address is cleared.
+	var pushToken *string
+	if err := pool.QueryRow(ctx, "select push_token from devices where id = $1", followerDevice).Scan(&pushToken); err != nil {
+		t.Fatalf("query push token: %v", err)
+	}
+	if pushToken != nil {
+		t.Fatalf("expected push token retired to null, still set")
+	}
+
+	// the in-app record is unaffected by push failure — it stays the
+	// source of truth (issue #84).
+	var notifCount int
+	if err := pool.QueryRow(ctx, "select count(*) from notifications where update_id = $1 and device_id = $2", updateID, followerDevice).Scan(&notifCount); err != nil {
+		t.Fatalf("count notifications: %v", err)
+	}
+	if notifCount != 1 {
+		t.Fatalf("expected 1 in-app notification record, got %d", notifCount)
 	}
 }

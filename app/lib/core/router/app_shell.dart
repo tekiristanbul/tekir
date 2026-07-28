@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../analytics/analytics.dart';
 import '../../features/auth/ui/auth_gate.dart';
 import '../theme/app_theme.dart';
 
@@ -183,6 +184,7 @@ class _AddCatFab extends ConsumerWidget {
         context,
         ref,
         contextText: 'Kedi eklemek için giriş yap',
+        intent: AnalyticsAuthIntent.addCat,
         onAuthenticated: () => context.push('/add-cat'),
       ),
     );

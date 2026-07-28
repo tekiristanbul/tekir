@@ -97,7 +97,11 @@ where device_id = sqlc.arg(device_id) and user_id is null;
 -- query shouldn't rely on. never joins on device_id — only account
 -- ownership (user_id) determines who follows a cat, per [[community]]'s
 -- private-following contract; devices are purely the push-delivery target.
-select distinct d.id as device_id
+-- push_token rides along (issue #84) so the worker can hand the fcm
+-- sender a real delivery address; a null push_token device still gets its
+-- in-app notifications row (the source of truth independent of push —
+-- issue #84), it just isn't pushed to.
+select distinct d.id as device_id, d.push_token
 from follows f
 join devices d on d.user_id = f.user_id
 where f.cat_id = sqlc.arg(cat_id)

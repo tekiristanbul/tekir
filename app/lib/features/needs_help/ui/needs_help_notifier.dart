@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/device_identity.dart';
 import '../../../core/identity/session_identity.dart';
 import '../../cat_detail/data/cat_detail_api.dart' show CatNotFoundException;
@@ -156,6 +157,15 @@ class NeedsHelpNotifier extends Notifier<NeedsHelpState> {
             comment: trimmedComment.isEmpty ? null : trimmedComment,
           );
       ref.read(catDetailProvider(catId).notifier).applyNeedsHelpUpdate(entry);
+      // needs_help_created (issue #84): the fixed category vocabulary
+      // only — the optional comment never leaves the api call above.
+      ref
+          .read(analyticsProvider)
+          .log(
+            AnalyticsEvent.needsHelpCreated(
+              AnalyticsNeedsHelpCategory.fromId(category),
+            ),
+          );
       state = const NeedsHelpState();
       return true;
     } on NeedsHelpValidationException {

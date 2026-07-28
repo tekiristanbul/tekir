@@ -9,6 +9,7 @@ import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/auth/data/auth_api.dart';
+import 'package:app/core/analytics/analytics.dart';
 import 'package:app/features/auth/ui/auth_gate.dart';
 import 'package:app/features/auth/ui/login_screen.dart';
 
@@ -87,6 +88,7 @@ Widget _appWith(
                   context,
                   ref,
                   contextText: 'Bir kediyi takip etmek için giriş yap',
+                  intent: AnalyticsAuthIntent.follow,
                   onAuthenticated: onAuthenticated,
                 ),
                 child: const Text('follow'),

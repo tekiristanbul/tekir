@@ -32,6 +32,31 @@ where id = sqlc.arg(id);
 -- installation can later link to a different account.
 update devices set user_id = sqlc.arg(user_id) where id = sqlc.arg(id);
 
+-- name: SetDevicePushToken :exec
+-- issue #84: registers/refreshes the fcm token for one installation. The
+-- cte clears the same token off any *other* device row first: a client
+-- that lost its device credential re-registers (new devices row) but the
+-- installation's fcm token stays the same, and without this clear both
+-- rows would carry the token and one needs-help update would push the
+-- same physical device twice. In-place update on rotation — the device
+-- row is the installation identity, so a refreshed token never creates a
+-- second row (issue #84's no-duplicate-installations constraint).
+with cleared as (
+  update devices d set push_token = null
+  where d.push_token = sqlc.arg(push_token) and d.id != sqlc.arg(device_id)
+)
+update devices set push_token = sqlc.arg(push_token)
+where devices.id = sqlc.arg(device_id);
+
+-- name: ClearDevicePushToken :exec
+-- issue #84: retires a token fcm permanently rejected (unregistered/
+-- invalid). The `and push_token = sqlc.arg(push_token)` guard makes the
+-- retirement safe against a concurrent refresh: if the client registered
+-- a newer token between the send attempt and this clear, zero rows match
+-- and the fresh token survives.
+update devices set push_token = null
+where id = sqlc.arg(device_id) and push_token = sqlc.arg(push_token);
+
 -- name: UnlinkDeviceFromUser :exec
 -- issue #80 (product-owner review): clears a device's account link on
 -- logout, so the same installation can sign into a *different* account

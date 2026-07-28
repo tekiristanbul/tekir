@@ -18,6 +18,7 @@ make it clear which information is public, which information remains private, an
 - account deletion removes or anonymizes personal account information. public cat history and contributions remain, but are no longer associated with the deleted user's public identity.
 - moderation and legal obligations may require retaining limited internal records for a defined operational period; such records are not public.
 - notification permission is requested only after a user chooses to follow a cat or otherwise opts into notifications, not on first launch.
+- product analytics ([[analytics]]) collects only anonymous, bounded behavioral events: no phone numbers, names, free text, cat names, precise location, tokens, or raw record ids are ever sent to the analytics provider, no analytics user id is set, and no advertising identifiers, audiences, or session replay are used.
 
 ## open questions
 

@@ -17,7 +17,7 @@ a client-generated identifier is not sufficient identity on its own — anything
 
 ```
 POST /v1/devices                        { push_token?, platform }               → 201 { device_id, device_token }  (implemented — issue #32)
-PUT  /v1/devices/me       (X-Device-Token) { push_token }                        → 204   (not yet — issue #32 scope)
+PUT  /v1/devices/me       (X-Device-Token) { push_token }                        → 204   (implemented — issue #84: registers/refreshes the caller installation's fcm token in place; the same token is cleared off any other device row so a re-registered installation is never pushed twice; the token is never echoed back or logged)
 POST /v1/auth/otp/request               { phone }                                → 202                                       (implemented — issue #58)
 POST /v1/auth/otp/verify  (X-Device-Token) { phone, code }                       → 200 { access_token, refresh_token, user_id, is_new_account } (implemented — issue #58)
 POST /v1/auth/refresh                   { refresh_token }                       → 200 { access_token, refresh_token }        (implemented — issue #58)

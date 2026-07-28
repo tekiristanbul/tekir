@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/device_identity.dart';
 import '../../../core/identity/session_identity.dart';
 import '../data/cat_detail_api.dart';
@@ -148,6 +149,21 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
             idempotencyKey: _idempotencyKey,
           );
       ref.read(catDetailProvider(catId).notifier).prependUpdate(entry);
+      // ordinary_update_created (issue #84): bounded status vocabulary
+      // only — the comment text never leaves the api call above.
+      ref
+          .read(analyticsProvider)
+          .log(
+            AnalyticsEvent.ordinaryUpdateCreated(
+              statuses.length > 1
+                  ? AnalyticsUpdateStatus.multiple
+                  : switch (statuses.single) {
+                      'fed' => AnalyticsUpdateStatus.fed,
+                      'water_provided' => AnalyticsUpdateStatus.waterProvided,
+                      _ => AnalyticsUpdateStatus.seen,
+                    },
+            ),
+          );
       state = const CatUpdateComposerState();
       _idempotencyKey = _generateIdempotencyKey();
       return true;

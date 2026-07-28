@@ -59,6 +59,10 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.Get("/v1/media/objects/{key}", mediaServe.ServeObject)
 
 	r.Post("/v1/devices", devices.Register)
+	// device-authenticated, deliberately not bearer-gated (issue #84): the
+	// push token is installation state, like the device credential itself —
+	// account linkage only decides notification *eligibility* server-side.
+	r.With(handler.RequireDeviceToken(deviceTokens)).Put("/v1/devices/me", devices.UpdatePushToken)
 
 	r.Post("/v1/auth/otp/request", auth.RequestOTP)
 	r.With(handler.RequireDeviceToken(deviceTokens)).Post("/v1/auth/otp/verify", auth.VerifyOTP)

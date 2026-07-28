@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/session_identity.dart';
 import '../../../core/models/active_alert.dart';
 import '../../../core/theme/app_theme.dart';
@@ -306,6 +307,9 @@ class _LocationTabBody extends ConsumerWidget {
           activeAlert: cat.activeAlert,
           lastUpdateAt: cat.lastUpdateAt,
           distanceMeters: cat.distanceMeters,
+          source: tab == DiscoverTab.nearby
+              ? AnalyticsSource.discoverNearby
+              : AnalyticsSource.discoverNeedsHelp,
         );
       },
     );
@@ -471,6 +475,7 @@ class _FollowingTabBody extends ConsumerWidget {
           activeAlert: cat.activeAlert,
           lastUpdateAt: cat.lastUpdateAt,
           distanceMeters: null,
+          source: AnalyticsSource.discoverFollowing,
         );
       },
     );
@@ -491,6 +496,7 @@ class _DiscoverCatRow extends StatelessWidget {
     required this.activeAlert,
     required this.lastUpdateAt,
     required this.distanceMeters,
+    required this.source,
   });
 
   final String id;
@@ -501,12 +507,16 @@ class _DiscoverCatRow extends StatelessWidget {
   final DateTime? lastUpdateAt;
   final double? distanceMeters;
 
+  /// The tab this row lives in, as the bounded cat_opened source
+  /// (issue #84).
+  final AnalyticsSource source;
+
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () => context.push('/cats/$id'),
+        onTap: () => context.push('/cats/$id', extra: source),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: AppSpacing.s3),
           child: Row(
@@ -678,6 +688,7 @@ class _GuestFollowingBody extends ConsumerWidget {
       context,
       ref,
       contextText: 'Takip ettiğin kedileri görmek için giriş yap',
+      intent: AnalyticsAuthIntent.follow,
       onAuthenticated: () =>
           ref.read(discoverProvider.notifier).loadFollowing(),
     );

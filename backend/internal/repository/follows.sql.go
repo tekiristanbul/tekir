@@ -189,7 +189,7 @@ func (q *Queries) ListFollowedCats(ctx context.Context, userID pgtype.UUID) ([]L
 }
 
 const listNeedsHelpRecipientDevices = `-- name: ListNeedsHelpRecipientDevices :many
-select distinct d.id as device_id
+select distinct d.id as device_id, d.push_token
 from follows f
 join devices d on d.user_id = f.user_id
 where f.cat_id = $1
@@ -203,6 +203,11 @@ type ListNeedsHelpRecipientDevicesParams struct {
 	AuthorUserID pgtype.UUID `json:"author_user_id"`
 }
 
+type ListNeedsHelpRecipientDevicesRow struct {
+	DeviceID  pgtype.UUID `json:"device_id"`
+	PushToken pgtype.Text `json:"push_token"`
+}
+
 // issue #78: the notification worker's recipient-resolution step for one
 // needs-help update. Joins account-owned follows (never device-owned ones
 // — following, like the update itself, is account state) to that
@@ -214,19 +219,23 @@ type ListNeedsHelpRecipientDevicesParams struct {
 // query shouldn't rely on. never joins on device_id — only account
 // ownership (user_id) determines who follows a cat, per [[community]]'s
 // private-following contract; devices are purely the push-delivery target.
-func (q *Queries) ListNeedsHelpRecipientDevices(ctx context.Context, arg ListNeedsHelpRecipientDevicesParams) ([]pgtype.UUID, error) {
+// push_token rides along (issue #84) so the worker can hand the fcm
+// sender a real delivery address; a null push_token device still gets its
+// in-app notifications row (the source of truth independent of push —
+// issue #84), it just isn't pushed to.
+func (q *Queries) ListNeedsHelpRecipientDevices(ctx context.Context, arg ListNeedsHelpRecipientDevicesParams) ([]ListNeedsHelpRecipientDevicesRow, error) {
 	rows, err := q.db.Query(ctx, listNeedsHelpRecipientDevices, arg.CatID, arg.AuthorUserID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []pgtype.UUID
+	var items []ListNeedsHelpRecipientDevicesRow
 	for rows.Next() {
-		var device_id pgtype.UUID
-		if err := rows.Scan(&device_id); err != nil {
+		var i ListNeedsHelpRecipientDevicesRow
+		if err := rows.Scan(&i.DeviceID, &i.PushToken); err != nil {
 			return nil, err
 		}
-		items = append(items, device_id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
