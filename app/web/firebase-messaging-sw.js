@@ -19,12 +19,12 @@ importScripts(
 );
 
 firebase.initializeApp({
-  apiKey: '__FIREBASE_WEB_API_KEY__',
-  authDomain: '__FIREBASE_AUTH_DOMAIN__',
-  projectId: '__FIREBASE_PROJECT_ID__',
-  storageBucket: '__FIREBASE_STORAGE_BUCKET__',
-  messagingSenderId: '__FIREBASE_MESSAGING_SENDER_ID__',
-  appId: '__FIREBASE_WEB_APP_ID__',
+  apiKey: 'AIzaSyCLXKND6OkamSuHO_98kprJjM08lxqtTtc',
+  authDomain: 'tekir-28c02.firebaseapp.com',
+  projectId: 'tekir-28c02',
+  storageBucket: 'tekir-28c02.firebasestorage.app',
+  messagingSenderId: '643225965073',
+  appId: '1:643225965073:web:7a3cf7e52398095b2c17b0',
 });
 
 /*
