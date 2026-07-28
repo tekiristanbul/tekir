@@ -26,6 +26,10 @@ services:
       # database; production sets its own JWT_SIGNING_KEY as a deployment
       # secret.
       JWT_SIGNING_KEY: local-dev-only-not-a-secret
+      # development is what allows OTP_PROVIDER=fake at all — outside an
+      # explicit development environment the api only accepts twilio
+      # (issue #59).
+      APP_ENV: development
       OTP_PROVIDER: fake
     ports:
       - "${API_PORT:-8080}:8080"

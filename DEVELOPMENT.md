@@ -119,6 +119,37 @@ curl http://localhost:8080/readyz
 
 `goose`, `sqlc`, and `golangci-lint` are invoked through go tool dependencies; do not install unrelated global versions to work around a repository failure.
 
+## otp providers
+
+`OTP_PROVIDER` selects how login codes are delivered and checked:
+
+- `fake` (local default): deterministic, no network. the code is logged by the api process; no twilio account needed. this is what `make run`, docker compose, and the automated tests use.
+- `twilio`: real sms through twilio verify. requires `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_VERIFY_SERVICE_SID`. `TWILIO_NUMBER` is not used.
+
+the `fake` default only applies under an explicit `APP_ENV=development` (`backend/Makefile` and `docker-compose.yml` set it). any other environment — including unset — fails startup unless `OTP_PROVIDER=twilio` is fully configured; there is no fallback from a selected `twilio` provider to `fake`.
+
+### production setup
+
+set `APP_ENV=production`, `OTP_PROVIDER=twilio`, and the three twilio values as deployment secrets. `fake`, unset, and unknown providers are rejected at startup. to rotate the auth token, update the deployment secret and restart; to roll back, redeploy with the previous secret. during a twilio outage, logins fail with retryable internal errors while the rest of the api keeps working.
+
+### local twilio smoke test
+
+keep real values only in `.env.local` (gitignored — copy [`.env.example`](.env.example)); never commit them or paste them into logs, issues, or pr evidence.
+
+1. in the [twilio console](https://console.twilio.com), create or select a verify service and put its sid in `.env.local` as `TWILIO_VERIFY_SERVICE_SID`, alongside `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`.
+2. run the backend with the twilio provider, loading secrets without echoing them:
+
+   ```text
+   cd backend
+   set -a; . ../.env.local; set +a
+   OTP_PROVIDER=twilio make run
+   ```
+
+3. request a code from the flutter login flow (or the api directly), confirm a real sms arrives, verify the code, and complete login.
+4. test a wrong code (rejected as invalid) and an expired code (rejected as expired).
+5. unset one required value (e.g. `TWILIO_AUTH_TOKEN=""`) and confirm startup fails instead of falling back to the fake provider.
+6. drop `OTP_PROVIDER=twilio` and confirm the deterministic fake flow still works for normal local development.
+
 ## flutter development
 
 install flutter dependencies:

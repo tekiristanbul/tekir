@@ -15,8 +15,10 @@ func TestNewNotificationSender_Fake(t *testing.T) {
 // TestNewNotificationSender_FailsClosed proves an unset or unrecognized
 // NOTIFICATION_PROVIDER fails startup rather than silently running the
 // fake provider (issue #78's explicit fail-closed constraint) — unlike
-// cmd/api's newSmsSender/newObjectStore, which do default an empty
-// provider to "fake" via config.Load()'s own fallback.
+// cmd/api's newObjectStore, which does default an empty provider to
+// "fake" via config.Load()'s own fallback. OTP_PROVIDER stopped
+// defaulting unconditionally in issue #59: config.ResolveOTPProvider only
+// defaults it to "fake" under an explicit APP_ENV=development.
 func TestNewNotificationSender_FailsClosed(t *testing.T) {
 	for _, provider := range []string{"", "fcm", "twilio-push", "FAKE"} {
 		t.Run(provider, func(t *testing.T) {

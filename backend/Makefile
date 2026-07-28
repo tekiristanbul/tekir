@@ -8,6 +8,11 @@ export DATABASE_URL
 JWT_SIGNING_KEY ?= local-dev-only-not-a-secret
 export JWT_SIGNING_KEY
 
+# unlocks the fake otp provider default (issue #59). a real deployment
+# sets APP_ENV=production, which requires an explicit OTP_PROVIDER=twilio.
+APP_ENV ?= development
+export APP_ENV
+
 run:
 	go run ./cmd/api
 

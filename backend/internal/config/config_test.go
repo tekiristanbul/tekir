@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,8 +62,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.OTPResendCooldown != 60*time.Second {
 		t.Errorf("expected default otp resend cooldown 60s, got %v", cfg.OTPResendCooldown)
 	}
-	if cfg.OTPProvider != "fake" {
-		t.Errorf("expected default otp provider fake, got %q", cfg.OTPProvider)
+	if cfg.OTPProvider != "" {
+		t.Errorf("expected no raw otp provider default, got %q", cfg.OTPProvider)
 	}
 }
 
@@ -99,6 +100,93 @@ func TestLoad_NotificationProviderOverride(t *testing.T) {
 	}
 	if cfg.NotificationProvider != "fake" {
 		t.Errorf("expected notification provider fake, got %q", cfg.NotificationProvider)
+	}
+}
+
+// TestResolveOTPProvider covers issue #59's fail-closed provider
+// selection: fake is only reachable under an explicit APP_ENV=development,
+// every non-development environment (production, unset, unrecognized)
+// accepts twilio exclusively, and twilio always requires its three
+// settings. No case ever resolves an unavailable/misconfigured twilio to
+// fake.
+func TestResolveOTPProvider(t *testing.T) {
+	twilio := Config{
+		TwilioAccountSID:       "sid-placeholder",
+		TwilioAuthToken:        "token-placeholder",
+		TwilioVerifyServiceSID: "verify-sid-placeholder",
+	}
+
+	cases := []struct {
+		name     string
+		cfg      Config
+		want     string
+		wantErr  bool
+		errNames []string // substrings the error must mention
+	}{
+		{name: "development defaults to fake when unset", cfg: Config{AppEnv: AppEnvDevelopment}, want: OTPProviderFake},
+		{name: "development explicit fake", cfg: Config{AppEnv: AppEnvDevelopment, OTPProvider: OTPProviderFake}, want: OTPProviderFake},
+		{name: "development twilio with full settings", cfg: func() Config { c := twilio; c.AppEnv = AppEnvDevelopment; c.OTPProvider = OTPProviderTwilio; return c }(), want: OTPProviderTwilio},
+		{name: "development unknown provider rejected", cfg: Config{AppEnv: AppEnvDevelopment, OTPProvider: "carrier-pigeon"}, wantErr: true},
+		{name: "production twilio with full settings", cfg: func() Config { c := twilio; c.AppEnv = AppEnvProduction; c.OTPProvider = OTPProviderTwilio; return c }(), want: OTPProviderTwilio},
+		{name: "production rejects fake", cfg: Config{AppEnv: AppEnvProduction, OTPProvider: OTPProviderFake}, wantErr: true},
+		{name: "production rejects unset", cfg: Config{AppEnv: AppEnvProduction}, wantErr: true},
+		{name: "production rejects unknown", cfg: Config{AppEnv: AppEnvProduction, OTPProvider: "carrier-pigeon"}, wantErr: true},
+		{name: "unset environment behaves as production for fake", cfg: Config{OTPProvider: OTPProviderFake}, wantErr: true},
+		{name: "unset environment behaves as production for unset provider", cfg: Config{}, wantErr: true},
+		{name: "unset environment still accepts configured twilio", cfg: func() Config { c := twilio; c.OTPProvider = OTPProviderTwilio; return c }(), want: OTPProviderTwilio},
+		{name: "unrecognized environment behaves as production", cfg: Config{AppEnv: "staging", OTPProvider: OTPProviderFake}, wantErr: true},
+		{name: "twilio missing account sid", cfg: func() Config {
+			c := twilio
+			c.AppEnv = AppEnvDevelopment
+			c.OTPProvider = OTPProviderTwilio
+			c.TwilioAccountSID = ""
+			return c
+		}(), wantErr: true, errNames: []string{"TWILIO_ACCOUNT_SID"}},
+		{name: "twilio missing auth token", cfg: func() Config {
+			c := twilio
+			c.AppEnv = AppEnvDevelopment
+			c.OTPProvider = OTPProviderTwilio
+			c.TwilioAuthToken = ""
+			return c
+		}(), wantErr: true, errNames: []string{"TWILIO_AUTH_TOKEN"}},
+		{name: "twilio missing verify service sid", cfg: func() Config {
+			c := twilio
+			c.AppEnv = AppEnvProduction
+			c.OTPProvider = OTPProviderTwilio
+			c.TwilioVerifyServiceSID = ""
+			return c
+		}(), wantErr: true, errNames: []string{"TWILIO_VERIFY_SERVICE_SID"}},
+		{name: "twilio missing everything names all three", cfg: Config{AppEnv: AppEnvProduction, OTPProvider: OTPProviderTwilio}, wantErr: true, errNames: []string{"TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SERVICE_SID"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.cfg.ResolveOTPProvider()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got provider %q", got)
+				}
+				for _, name := range tc.errNames {
+					if !strings.Contains(err.Error(), name) {
+						t.Errorf("expected error to mention %s, got %q", name, err)
+					}
+				}
+				// configured values are secrets — an error may name the
+				// variable but must never echo its value.
+				for _, secret := range []string{tc.cfg.TwilioAccountSID, tc.cfg.TwilioAuthToken, tc.cfg.TwilioVerifyServiceSID} {
+					if secret != "" && strings.Contains(err.Error(), secret) {
+						t.Errorf("error leaks a configured value: %q", err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("expected provider %q, got %q", tc.want, got)
+			}
+		})
 	}
 }
 

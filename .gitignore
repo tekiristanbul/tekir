@@ -1,6 +1,9 @@
 .tokensave/
 .claude/settings.local.json
 
+# local secrets (see .env.example) — never committed
+.env.local
+
 # backend build output
 backend/bin/
 

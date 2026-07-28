@@ -32,6 +32,15 @@ func run() error {
 		return err
 	}
 
+	// resolved before anything else so a misconfigured otp provider —
+	// production with fake/unset/unknown, or twilio with missing settings —
+	// stops startup here, before a database connection is even attempted
+	// (issue #59). There is no fallback path from this error.
+	otpProvider, err := cfg.ResolveOTPProvider()
+	if err != nil {
+		return err
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: logLevel(cfg.LogLevel),
 	}))
@@ -54,11 +63,6 @@ func run() error {
 	followsSvc := service.NewFollowsService(store)
 	followsHandler := handler.NewFollowsHandler(followsSvc)
 
-	sms, err := newSmsSender(cfg.OTPProvider)
-	if err != nil {
-		return err
-	}
-
 	objectStore, err := newObjectStore(cfg.ObjectStorageProvider, cfg.MediaLocalDir, cfg.MediaPublicBaseURL)
 	if err != nil {
 		return err
@@ -74,7 +78,27 @@ func run() error {
 	mediaServeHandler := handler.NewMediaServeHandler(objectStore.(*service.FakeObjectStore))
 
 	sessionsSvc := service.NewSessionService(store, []byte(cfg.JWTSigningKey), cfg.AccessTokenTTL, cfg.RefreshTokenTTL, service.WithSessionTxRunner(store))
-	authSvc := service.NewAuthService(store, sms, sessionsSvc, cfg.OTPCodeTTL, cfg.OTPMaxAttempts, cfg.OTPResendCooldown, service.WithAuthTxRunner(store))
+
+	// otpProvider was already validated by cfg.ResolveOTPProvider above —
+	// this switch is exhaustive over its possible returns. With twilio,
+	// the SmsSender stays nil (never called — see WithExternalOTPProvider)
+	// and a failing provider surfaces its mapped error rather than ever
+	// degrading to the fake flow.
+	authOpts := []service.AuthServiceOption{service.WithAuthTxRunner(store)}
+	var sms service.SmsSender
+	switch otpProvider {
+	case config.OTPProviderFake:
+		sms = service.NewFakeSmsSender()
+	case config.OTPProviderTwilio:
+		twilio, err := service.NewTwilioVerifier(cfg.TwilioAccountSID, cfg.TwilioAuthToken, cfg.TwilioVerifyServiceSID)
+		if err != nil {
+			return err
+		}
+		authOpts = append(authOpts, service.WithExternalOTPProvider(twilio))
+	default:
+		return fmt.Errorf("unsupported resolved otp provider %q", otpProvider)
+	}
+	authSvc := service.NewAuthService(store, sms, sessionsSvc, cfg.OTPCodeTTL, cfg.OTPMaxAttempts, cfg.OTPResendCooldown, authOpts...)
 	authHandler := handler.NewAuthHandler(authSvc, authSvc, sessionsSvc, sessionsSvc, authSvc, authSvc)
 
 	// the api process only ever reads/acks notifications on an account's
@@ -123,25 +147,11 @@ func run() error {
 	return nil
 }
 
-// newSmsSender selects the SmsSender implementation named by provider.
-// Only "fake" (the deterministic, log-only, no-network dev/test provider —
-// see docs/architecture/backend.md) is implemented as of issue #58; an
-// unrecognized value fails loudly at startup rather than silently
-// defaulting to a provider the operator didn't ask for.
-func newSmsSender(provider string) (service.SmsSender, error) {
-	switch provider {
-	case "fake":
-		return service.NewFakeSmsSender(), nil
-	default:
-		return nil, fmt.Errorf("unsupported OTP_PROVIDER %q (only \"fake\" is implemented)", provider)
-	}
-}
-
 // newObjectStore selects the ObjectStore implementation named by provider.
 // Only "fake" (the deterministic, local-disk dev/test provider — see
-// docs/architecture/backend.md) is implemented as of issue #70, mirroring
-// newSmsSender: an unrecognized value fails loudly at startup rather than
-// silently defaulting to a provider the operator didn't ask for.
+// docs/architecture/backend.md) is implemented as of issue #70: an
+// unrecognized value fails loudly at startup rather than silently
+// defaulting to a provider the operator didn't ask for.
 func newObjectStore(provider, localDir, publicBaseURL string) (service.ObjectStore, error) {
 	switch provider {
 	case "fake":
