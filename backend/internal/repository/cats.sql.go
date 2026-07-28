@@ -221,6 +221,225 @@ func (q *Queries) GetCatByIdempotencyKey(ctx context.Context, arg GetCatByIdempo
 	return i, err
 }
 
+const listActiveNeedsHelpCatsByDistance = `-- name: ListActiveNeedsHelpCatsByDistance :many
+with candidates as (
+  select
+    c.id,
+    c.name,
+    coalesce(c.photo_url, m.url, '') as photo_url,
+    c.area_label,
+    c.last_update_at,
+    nh.needs_help_category,
+    nh.created_at as needs_help_created_at,
+    nh.needs_help_expires_at,
+    st_distance(c.area, st_setsrid(st_makepoint($5::float8, $6::float8), 4326)::geography)::float8 as distance_m
+  from cats c
+  left join media m on m.id = c.primary_photo_id
+  left join lateral (
+    select u.needs_help_category, u.created_at, u.needs_help_expires_at
+    from updates u
+    where u.cat_id = c.id and u.kind = 'needs_help'
+    order by u.created_at desc, u.seq desc
+    limit 1
+  ) nh on true
+  where c.status = 'active'
+)
+select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_created_at, needs_help_expires_at, distance_m
+from candidates
+where needs_help_expires_at is not null
+  and needs_help_expires_at > $1::timestamptz
+  and (
+    $2::float8 is null
+    or distance_m > $2::float8
+    or (distance_m = $2::float8 and id > $3::uuid)
+  )
+order by distance_m asc, id asc
+limit $4
+`
+
+type ListActiveNeedsHelpCatsByDistanceParams struct {
+	Now            pgtype.Timestamptz `json:"now"`
+	AfterDistanceM pgtype.Float8      `json:"after_distance_m"`
+	AfterID        pgtype.UUID        `json:"after_id"`
+	RowLimit       int32              `json:"row_limit"`
+	Lng            float64            `json:"lng"`
+	Lat            float64            `json:"lat"`
+}
+
+type ListActiveNeedsHelpCatsByDistanceRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	Name               pgtype.Text        `json:"name"`
+	PhotoUrl           string             `json:"photo_url"`
+	AreaLabel          pgtype.Text        `json:"area_label"`
+	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
+	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
+	NeedsHelpCreatedAt pgtype.Timestamptz `json:"needs_help_created_at"`
+	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
+	DistanceM          float64            `json:"distance_m"`
+}
+
+// issue #82: powers GET /v1/cats/discover?filter=needs_help — the same
+// nearest-first, keyset-paginated shape as ListCatsByDistance above, plus
+// one more predicate: only a cat whose latest needs-help update is both
+// present and not yet expired, decided by comparing needs_help_expires_at
+// against sqlc.arg(now) rather than the database's own now(). now is
+// CatsService's injected clock (the same one deriveActiveAlert already
+// compares every other active-alert decision against) — passed down
+// explicitly so this query's filtering and CatsService's response-shaping
+// of the identical row always agree on what "active" meant at the same
+// instant, and so a test can hold that instant fixed at an exact expiry
+// boundary the way cats_test.go already does for deriveActiveAlert. An
+// expired needs-help update is never deleted or rewritten (see db.md) — it
+// simply stops matching this filter, exactly like it stops being anyone's
+// "latest active" alert on the map/cat-detail read paths.
+func (q *Queries) ListActiveNeedsHelpCatsByDistance(ctx context.Context, arg ListActiveNeedsHelpCatsByDistanceParams) ([]ListActiveNeedsHelpCatsByDistanceRow, error) {
+	rows, err := q.db.Query(ctx, listActiveNeedsHelpCatsByDistance,
+		arg.Now,
+		arg.AfterDistanceM,
+		arg.AfterID,
+		arg.RowLimit,
+		arg.Lng,
+		arg.Lat,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveNeedsHelpCatsByDistanceRow
+	for rows.Next() {
+		var i ListActiveNeedsHelpCatsByDistanceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.PhotoUrl,
+			&i.AreaLabel,
+			&i.LastUpdateAt,
+			&i.NeedsHelpCategory,
+			&i.NeedsHelpCreatedAt,
+			&i.NeedsHelpExpiresAt,
+			&i.DistanceM,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCatsByDistance = `-- name: ListCatsByDistance :many
+with candidates as (
+  select
+    c.id,
+    c.name,
+    coalesce(c.photo_url, m.url, '') as photo_url,
+    c.area_label,
+    c.last_update_at,
+    nh.needs_help_category,
+    nh.created_at as needs_help_created_at,
+    nh.needs_help_expires_at,
+    st_distance(c.area, st_setsrid(st_makepoint($4::float8, $5::float8), 4326)::geography)::float8 as distance_m
+  from cats c
+  left join media m on m.id = c.primary_photo_id
+  left join lateral (
+    select u.needs_help_category, u.created_at, u.needs_help_expires_at
+    from updates u
+    where u.cat_id = c.id and u.kind = 'needs_help'
+    order by u.created_at desc, u.seq desc
+    limit 1
+  ) nh on true
+  where c.status = 'active'
+)
+select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_created_at, needs_help_expires_at, distance_m
+from candidates
+where $1::float8 is null
+  or distance_m > $1::float8
+  or (distance_m = $1::float8 and id > $2::uuid)
+order by distance_m asc, id asc
+limit $3
+`
+
+type ListCatsByDistanceParams struct {
+	AfterDistanceM pgtype.Float8 `json:"after_distance_m"`
+	AfterID        pgtype.UUID   `json:"after_id"`
+	RowLimit       int32         `json:"row_limit"`
+	Lng            float64       `json:"lng"`
+	Lat            float64       `json:"lat"`
+}
+
+type ListCatsByDistanceRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	Name               pgtype.Text        `json:"name"`
+	PhotoUrl           string             `json:"photo_url"`
+	AreaLabel          pgtype.Text        `json:"area_label"`
+	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
+	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
+	NeedsHelpCreatedAt pgtype.Timestamptz `json:"needs_help_created_at"`
+	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
+	DistanceM          float64            `json:"distance_m"`
+}
+
+// issue #82: powers GET /v1/cats/discover?filter=nearby — every active cat,
+// nearest-first from the caller's own (lat, lng), keyset-paginated on
+// (distance_m, id) rather than offset/limit (an inserted or deleted cat
+// between two page requests must never reshuffle an already-served page,
+// and a large offset would force postgres to walk and discard every row
+// before it). The candidates CTE computes distance_m once so both the
+// keyset predicate and the order by reference the same plain column — a
+// WHERE clause can't see a SELECT list's own alias, and repeating the full
+// st_distance(...) expression three times (as ListNearbyCatsForDuplicateCheck
+// above tolerates once, for order by only) would get hard to keep in sync
+// once a keyset predicate needs it too. distance_m uses the same
+// st_distance(geography, geography) as that query, so both are backed by
+// cats_area_gix (the gist index on cats.area) the same way. photo_url
+// coalesce and the unfiltered-by-expiry needs-help lateral join mirror
+// ListCatsInBounds/GetCatByID/ListFollowedCats exactly — CatsService is the
+// one place that decides active-vs-expired, against its own injected clock.
+// after_distance_m/after_id are both null on the first page (sqlc.narg);
+// the row-comparison-shaped OR chain is the same pattern ListCatUpdates
+// already uses for its (before_created_at, before_seq) keyset, just
+// ascending instead of descending. id is an arbitrary but deterministic
+// tie-breaker for the (rare, but real once two cats share a distance)
+// equal-distance case — issue #82 requires "stable deterministic ordering
+// for equal distances".
+func (q *Queries) ListCatsByDistance(ctx context.Context, arg ListCatsByDistanceParams) ([]ListCatsByDistanceRow, error) {
+	rows, err := q.db.Query(ctx, listCatsByDistance,
+		arg.AfterDistanceM,
+		arg.AfterID,
+		arg.RowLimit,
+		arg.Lng,
+		arg.Lat,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCatsByDistanceRow
+	for rows.Next() {
+		var i ListCatsByDistanceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.PhotoUrl,
+			&i.AreaLabel,
+			&i.LastUpdateAt,
+			&i.NeedsHelpCategory,
+			&i.NeedsHelpCreatedAt,
+			&i.NeedsHelpExpiresAt,
+			&i.DistanceM,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCatsInBounds = `-- name: ListCatsInBounds :many
 select
   c.id,

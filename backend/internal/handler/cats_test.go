@@ -90,6 +90,12 @@ type fakeCatsLister struct {
 
 	correctionCheckRow repository.GetUpdateForCorrectionCheckRow
 	correctionCheckErr error
+
+	distanceRows []repository.ListCatsByDistanceRow
+	distanceErr  error
+
+	needsHelpDistanceRows []repository.ListActiveNeedsHelpCatsByDistanceRow
+	needsHelpDistanceErr  error
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
@@ -148,6 +154,14 @@ func (f fakeCatsLister) DeleteOwnUpdate(ctx context.Context, arg repository.Dele
 
 func (f fakeCatsLister) GetUpdateForCorrectionCheck(ctx context.Context, arg repository.GetUpdateForCorrectionCheckParams) (repository.GetUpdateForCorrectionCheckRow, error) {
 	return f.correctionCheckRow, f.correctionCheckErr
+}
+
+func (f fakeCatsLister) ListCatsByDistance(ctx context.Context, arg repository.ListCatsByDistanceParams) ([]repository.ListCatsByDistanceRow, error) {
+	return f.distanceRows, f.distanceErr
+}
+
+func (f fakeCatsLister) ListActiveNeedsHelpCatsByDistance(ctx context.Context, arg repository.ListActiveNeedsHelpCatsByDistanceParams) ([]repository.ListActiveNeedsHelpCatsByDistanceRow, error) {
+	return f.needsHelpDistanceRows, f.needsHelpDistanceErr
 }
 
 // fakeDeviceResolver stands in for service.DevicesService in tests that
@@ -1614,6 +1628,155 @@ func TestCatsHandler_NearbyDuplicates_MissingLatLng(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestCatsHandler_Discover_NearbySuccess(t *testing.T) {
+	id := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		distanceRows: []repository.ListCatsByDistanceRow{
+			{
+				ID:        id,
+				Name:      pgtype.Text{String: "tekir", Valid: true},
+				PhotoUrl:  "https://placecats.com/millie/300/200",
+				AreaLabel: pgtype.Text{String: "Galata Kulesi çevresi, Beyoğlu", Valid: true},
+				DistanceM: 123.4,
+			},
+		},
+	}), testMaxUploadBytes)
+
+	// no Authorization header at all — issue #82 requires nearby/needs_help
+	// to be public, guest-readable exactly like GET /v1/cats' bbox mode.
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/discover?lat=41.0256&lng=28.9744&filter=nearby", nil)
+	rec := httptest.NewRecorder()
+	h.Discover(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body discoverPageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(body.Items))
+	}
+	item := body.Items[0]
+	if item.ID != uuid.UUID(id.Bytes).String() {
+		t.Errorf("unexpected id: %q", item.ID)
+	}
+	if item.DistanceMeters != 123.4 {
+		t.Errorf("unexpected distance_meters: %v", item.DistanceMeters)
+	}
+	if item.AreaLabel == nil || *item.AreaLabel != "Galata Kulesi çevresi, Beyoğlu" {
+		t.Errorf("unexpected area_label: %v", item.AreaLabel)
+	}
+	if item.ActiveAlert != nil {
+		t.Errorf("expected no active alert, got %+v", item.ActiveAlert)
+	}
+	if body.NextCursor != nil {
+		t.Errorf("expected no next_cursor for a single-row result, got %v", body.NextCursor)
+	}
+}
+
+func TestCatsHandler_Discover_NeedsHelpSuccess(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
+	id := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		needsHelpDistanceRows: []repository.ListActiveNeedsHelpCatsByDistanceRow{
+			{
+				ID:                 id,
+				Name:               pgtype.Text{String: "boncuk", Valid: true},
+				PhotoUrl:           "https://placecats.com/boncuk/300/200",
+				NeedsHelpCategory:  pgtype.Text{String: "food_needed", Valid: true},
+				NeedsHelpCreatedAt: pgtype.Timestamptz{Time: fixedNow.Add(-time.Hour), Valid: true},
+				NeedsHelpExpiresAt: pgtype.Timestamptz{Time: fixedNow.Add(time.Hour), Valid: true},
+				DistanceM:          50,
+			},
+		},
+	}, service.WithClock(func() time.Time { return fixedNow })), testMaxUploadBytes)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/discover?lat=41.0256&lng=28.9744&filter=needs_help", nil)
+	rec := httptest.NewRecorder()
+	h.Discover(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body discoverPageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(body.Items))
+	}
+	alert := body.Items[0].ActiveAlert
+	if alert == nil {
+		t.Fatal("expected an active alert")
+	}
+	if alert.Category != "food_needed" {
+		t.Errorf("unexpected category: %q", alert.Category)
+	}
+}
+
+func TestCatsHandler_Discover_MissingLatLng(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/discover?filter=nearby", nil)
+	rec := httptest.NewRecorder()
+	h.Discover(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestCatsHandler_Discover_InvalidFilter(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/discover?lat=41.0256&lng=28.9744&filter=popular", nil)
+	rec := httptest.NewRecorder()
+	h.Discover(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Discover_InvalidArea(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+
+	// well outside istanbulBounds (e.g. ankara).
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/discover?lat=39.93&lng=32.85&filter=nearby", nil)
+	rec := httptest.NewRecorder()
+	h.Discover(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Discover_InvalidCursor(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/discover?lat=41.0256&lng=28.9744&filter=nearby&cursor=not-valid!!", nil)
+	rec := httptest.NewRecorder()
+	h.Discover(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Discover_InvalidLimit(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/discover?lat=41.0256&lng=28.9744&filter=nearby&limit=not-a-number", nil)
+	rec := httptest.NewRecorder()
+	h.Discover(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

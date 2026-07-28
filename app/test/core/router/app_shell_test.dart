@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/core/identity/session_identity.dart';
 import 'package:app/core/router/app_router.dart';
+import 'package:app/features/discover/data/discover_location_service.dart';
 import 'package:app/features/map/data/location_service.dart';
 import 'package:app/features/map/ui/cats_map_notifier.dart';
 import 'package:app/features/map/ui/map_screen.dart';
@@ -12,6 +13,17 @@ import 'package:app/features/profile/ui/profile_screen.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_screen.dart';
+
+// Discover's nearby tab resolves location and fetches on mount (issue #82);
+// these shell-navigation tests only care about the shell's own chrome, so a
+// permission-denied stub keeps them off the real Geolocator platform
+// channel and off a real network call entirely (resolve() failing
+// short-circuits before any fetch is ever attempted).
+class _DeniedDiscoverLocationService extends DiscoverLocationService {
+  @override
+  Future<DiscoverLocationOutcome> resolve() async =>
+      const DiscoverLocationPermissionDenied();
+}
 
 const _catId = '00000000-0000-4000-8000-000000000010';
 
@@ -65,6 +77,9 @@ Future<void> _pumpShell(WidgetTester tester) async {
         catsMapProvider.overrideWith(_EmptyCatsMapNotifier.new),
         sessionIdentityServiceProvider.overrideWithValue(
           _GuestSessionIdentityService(),
+        ),
+        discoverLocationServiceProvider.overrideWithValue(
+          _DeniedDiscoverLocationService(),
         ),
         catDetailProvider(_catId).overrideWith(
           () => _FixedCatDetailNotifier(

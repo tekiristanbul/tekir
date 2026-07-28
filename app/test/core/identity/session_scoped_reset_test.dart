@@ -265,13 +265,13 @@ void main() {
       addTearDown(container.dispose);
       await container.read(sessionProvider.future);
 
-      await container.read(discoverProvider.notifier).load();
-      expect(container.read(discoverProvider).cats, isNotEmpty);
+      await container.read(discoverProvider.notifier).loadFollowing();
+      expect(container.read(discoverProvider).following.cats, isNotEmpty);
 
       await container.read(sessionProvider.notifier).logout();
 
-      expect(container.read(discoverProvider).cats, isEmpty);
-      expect(container.read(discoverProvider).hasLoadedOnce, isFalse);
+      expect(container.read(discoverProvider).following.cats, isEmpty);
+      expect(container.read(discoverProvider).following.hasLoadedOnce, isFalse);
     });
 
     test(
@@ -294,13 +294,16 @@ void main() {
         addTearDown(container.dispose);
         await container.read(sessionProvider.future);
 
-        await container.read(discoverProvider.notifier).load();
-        expect(container.read(discoverProvider).cats, isNotEmpty);
+        await container.read(discoverProvider.notifier).loadFollowing();
+        expect(container.read(discoverProvider).following.cats, isNotEmpty);
 
         await container.read(sessionProvider.notifier).save(_sessionB);
 
-        expect(container.read(discoverProvider).cats, isEmpty);
-        expect(container.read(discoverProvider).hasLoadedOnce, isFalse);
+        expect(container.read(discoverProvider).following.cats, isEmpty);
+        expect(
+          container.read(discoverProvider).following.hasLoadedOnce,
+          isFalse,
+        );
       },
     );
   });
