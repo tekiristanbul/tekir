@@ -730,6 +730,19 @@ func newTestExternalAuthService(t *testing.T, store *fakeAuthStore, external ser
 	return service.NewAuthService(store, &panicSms{t: t}, sessions, 5*time.Minute, 5, time.Minute, service.WithExternalOTPProvider(external))
 }
 
+// TestNewAuthService_NilSmsWithoutExternalPanics proves the documented
+// invariant is enforced at construction time (pr #86 review): a nil
+// SmsSender is only legal alongside WithExternalOTPProvider.
+func TestNewAuthService_NilSmsWithoutExternalPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected NewAuthService to panic for nil sms without an external provider")
+		}
+	}()
+	sessions := service.NewSessionService(newFakeSessionStore(), []byte("k"), time.Hour, 24*time.Hour)
+	service.NewAuthService(newFakeAuthStore(), nil, sessions, 5*time.Minute, 5, time.Minute)
+}
+
 func TestAuthService_External_RequestOTP_StartsVerification(t *testing.T) {
 	store := newFakeAuthStore()
 	external := &fakeExternalOTPProvider{}

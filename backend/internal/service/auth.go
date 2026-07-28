@@ -137,7 +137,10 @@ func WithExternalOTPProvider(p OTPVerificationProvider) AuthServiceOption {
 
 // NewAuthService builds the phone-otp auth service. sms may be nil only
 // when WithExternalOTPProvider is also passed — the external provider then
-// replaces the local generate-store-send flow entirely.
+// replaces the local generate-store-send flow entirely. That invariant is
+// enforced here: a nil sms without an external provider panics at
+// construction (wiring) time rather than surfacing later as a nil
+// dereference on the first RequestOTP.
 func NewAuthService(db AuthStore, sms SmsSender, sessions *SessionService, otpTTL time.Duration, otpMaxAttempts int32, resendCooldown time.Duration, opts ...AuthServiceOption) *AuthService {
 	s := &AuthService{
 		db:             db,
@@ -150,6 +153,9 @@ func NewAuthService(db AuthStore, sms SmsSender, sessions *SessionService, otpTT
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	if s.sms == nil && s.external == nil {
+		panic("service: NewAuthService requires an SmsSender unless WithExternalOTPProvider is configured")
 	}
 	return s
 }
