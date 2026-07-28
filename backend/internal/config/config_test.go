@@ -190,6 +190,71 @@ func TestResolveOTPProvider(t *testing.T) {
 	}
 }
 
+func TestResolveNotificationProvider(t *testing.T) {
+	fcm := Config{FCMCredentialsFile: "/secrets/fcm-service-account.json"}
+
+	cases := []struct {
+		name     string
+		cfg      Config
+		want     string
+		wantErr  bool
+		errNames []string // substrings the error must mention
+	}{
+		{name: "development defaults to fake when unset", cfg: Config{AppEnv: AppEnvDevelopment}, want: NotificationProviderFake},
+		{name: "development explicit fake", cfg: Config{AppEnv: AppEnvDevelopment, NotificationProvider: NotificationProviderFake}, want: NotificationProviderFake},
+		{name: "development fcm with credentials", cfg: func() Config {
+			c := fcm
+			c.AppEnv = AppEnvDevelopment
+			c.NotificationProvider = NotificationProviderFCM
+			return c
+		}(), want: NotificationProviderFCM},
+		{name: "development unknown provider rejected", cfg: Config{AppEnv: AppEnvDevelopment, NotificationProvider: "carrier-pigeon"}, wantErr: true},
+		{name: "production fcm with credentials", cfg: func() Config {
+			c := fcm
+			c.AppEnv = AppEnvProduction
+			c.NotificationProvider = NotificationProviderFCM
+			return c
+		}(), want: NotificationProviderFCM},
+		{name: "production rejects fake", cfg: Config{AppEnv: AppEnvProduction, NotificationProvider: NotificationProviderFake}, wantErr: true},
+		{name: "production rejects unset", cfg: Config{AppEnv: AppEnvProduction}, wantErr: true},
+		{name: "production rejects unknown", cfg: Config{AppEnv: AppEnvProduction, NotificationProvider: "carrier-pigeon"}, wantErr: true},
+		{name: "unset environment behaves as production for fake", cfg: Config{NotificationProvider: NotificationProviderFake}, wantErr: true},
+		{name: "unset environment behaves as production for unset provider", cfg: Config{}, wantErr: true},
+		{name: "unset environment still accepts configured fcm", cfg: func() Config { c := fcm; c.NotificationProvider = NotificationProviderFCM; return c }(), want: NotificationProviderFCM},
+		{name: "unrecognized environment behaves as production", cfg: Config{AppEnv: "staging", NotificationProvider: NotificationProviderFake}, wantErr: true},
+		{name: "fcm missing credentials file in development", cfg: Config{AppEnv: AppEnvDevelopment, NotificationProvider: NotificationProviderFCM}, wantErr: true, errNames: []string{"FCM_CREDENTIALS_FILE"}},
+		{name: "fcm missing credentials file in production", cfg: Config{AppEnv: AppEnvProduction, NotificationProvider: NotificationProviderFCM}, wantErr: true, errNames: []string{"FCM_CREDENTIALS_FILE"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.cfg.ResolveNotificationProvider()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got provider %q", got)
+				}
+				for _, name := range tc.errNames {
+					if !strings.Contains(err.Error(), name) {
+						t.Errorf("expected error to mention %s, got %q", name, err)
+					}
+				}
+				// the credentials path points into deployment secrets — an
+				// error may name the variable but must never echo the path.
+				if tc.cfg.FCMCredentialsFile != "" && strings.Contains(err.Error(), tc.cfg.FCMCredentialsFile) {
+					t.Errorf("error leaks the credentials path: %q", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("expected provider %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestLoad_OverridesTTLsAndProvider(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("JWT_SIGNING_KEY", "test-signing-key")

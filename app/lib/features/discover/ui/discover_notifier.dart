@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/session_identity.dart';
 import '../../follow/data/follows_api.dart';
 import '../../map/data/cat_marker.dart';
@@ -146,6 +147,17 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
   }
 
   void selectTab(DiscoverTab tab) {
+    if (tab != state.selectedTab) {
+      ref
+          .read(analyticsProvider)
+          .log(
+            AnalyticsEvent.discoverViewSelected(switch (tab) {
+              DiscoverTab.nearby => AnalyticsDiscoverView.nearby,
+              DiscoverTab.needsHelp => AnalyticsDiscoverView.needsHelp,
+              DiscoverTab.following => AnalyticsDiscoverView.following,
+            }),
+          );
+    }
     state = state.copyWith(selectedTab: tab);
   }
 
@@ -184,6 +196,21 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
     );
 
     final outcome = await ref.read(discoverLocationServiceProvider).resolve();
+    // location_permission_result (issue #84): the bounded outcome of this
+    // resolve — never the position itself; coordinates are never part of
+    // any analytics event.
+    ref
+        .read(analyticsProvider)
+        .log(
+          AnalyticsEvent.locationPermissionResult(switch (outcome) {
+            DiscoverLocationResolved() => AnalyticsResult.success,
+            DiscoverLocationPermissionDenied() ||
+            DiscoverLocationPermissionDeniedForever() =>
+              AnalyticsResult.permissionDenied,
+            DiscoverLocationServiceDisabled() ||
+            DiscoverLocationUnavailable() => AnalyticsResult.offline,
+          }),
+        );
     if (outcome is! DiscoverLocationResolved) {
       _setTab(
         filter,

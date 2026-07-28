@@ -45,7 +45,11 @@ func run() error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel(cfg.LogLevel)}))
 	slog.SetDefault(logger)
 
-	sender, err := newNotificationSender(cfg.NotificationProvider)
+	provider, err := cfg.ResolveNotificationProvider()
+	if err != nil {
+		return err
+	}
+	sender, err := newNotificationSender(provider, cfg)
 	if err != nil {
 		return err
 	}
@@ -62,7 +66,7 @@ func run() error {
 	store := repository.NewStore(pool)
 	notifications := service.NewNotificationService(store, sender)
 
-	logger.Info("starting notifier", "provider", cfg.NotificationProvider)
+	logger.Info("starting notifier", "provider", provider)
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -88,23 +92,25 @@ func run() error {
 	}
 }
 
-// newNotificationSender selects the NotificationSender implementation
-// named by provider. Only "fake" (the deterministic, log-only, no-network
-// dev/test provider — see docs/architecture/backend.md) is implemented as
-// of issue #78. Unlike newObjectStore in cmd/api, an empty provider is
-// rejected too, not defaulted to "fake" — a production deployment that
-// never set NOTIFICATION_PROVIDER must fail to start rather than silently
-// run the dev/test provider (issue #78's explicit fail-closed constraint;
-// OTP_PROVIDER gained the same production posture in issue #59 via
-// config.ResolveOTPProvider).
-func newNotificationSender(provider string) (service.NotificationSender, error) {
+// newNotificationSender constructs the NotificationSender for an already
+// resolved provider — config.ResolveNotificationProvider (issue #84) owns
+// the environment-aware defaulting and fail-closed validation (the same
+// split as cmd/api's otp wiring, issue #59), so by the time this runs the
+// provider is one of the known values. "fake" is the deterministic,
+// log-only, no-network dev/test provider (issue #78); "fcm" is firebase
+// cloud messaging over http v1 (issue #84), whose constructor separately
+// fails startup on unreadable or incomplete credentials rather than ever
+// degrading to fake.
+func newNotificationSender(provider string, cfg config.Config) (service.NotificationSender, error) {
 	switch provider {
-	case "fake":
+	case config.NotificationProviderFake:
 		return service.NewFakeNotificationSender(), nil
-	case "":
-		return nil, fmt.Errorf("NOTIFICATION_PROVIDER is required (only \"fake\" is implemented)")
+	case config.NotificationProviderFCM:
+		return service.NewFCMNotificationSender(cfg.FCMCredentialsFile)
 	default:
-		return nil, fmt.Errorf("unsupported NOTIFICATION_PROVIDER %q (only \"fake\" is implemented)", provider)
+		// unreachable after ResolveNotificationProvider, kept fail-closed
+		// anyway.
+		return nil, fmt.Errorf("unsupported NOTIFICATION_PROVIDER %q", provider)
 	}
 }
 

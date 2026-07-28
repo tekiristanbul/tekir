@@ -11,6 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearDevicePushToken = `-- name: ClearDevicePushToken :exec
+update devices set push_token = null
+where id = $1 and push_token = $2
+`
+
+type ClearDevicePushTokenParams struct {
+	DeviceID  pgtype.UUID `json:"device_id"`
+	PushToken pgtype.Text `json:"push_token"`
+}
+
+// issue #84: retires a token fcm permanently rejected (unregistered/
+// invalid). The `and push_token = sqlc.arg(push_token)` guard makes the
+// retirement safe against a concurrent refresh: if the client registered
+// a newer token between the send attempt and this clear, zero rows match
+// and the fresh token survives.
+func (q *Queries) ClearDevicePushToken(ctx context.Context, arg ClearDevicePushTokenParams) error {
+	_, err := q.db.Exec(ctx, clearDevicePushToken, arg.DeviceID, arg.PushToken)
+	return err
+}
+
 const createDevice = `-- name: CreateDevice :one
 insert into devices (id, token_hash, push_token, platform)
 values ($1, $2, $3, $4)
@@ -106,6 +126,33 @@ type LinkDeviceToUserParams struct {
 // installation can later link to a different account.
 func (q *Queries) LinkDeviceToUser(ctx context.Context, arg LinkDeviceToUserParams) error {
 	_, err := q.db.Exec(ctx, linkDeviceToUser, arg.UserID, arg.ID)
+	return err
+}
+
+const setDevicePushToken = `-- name: SetDevicePushToken :exec
+with cleared as (
+  update devices d set push_token = null
+  where d.push_token = $1 and d.id != $2
+)
+update devices set push_token = $1
+where devices.id = $2
+`
+
+type SetDevicePushTokenParams struct {
+	PushToken pgtype.Text `json:"push_token"`
+	DeviceID  pgtype.UUID `json:"device_id"`
+}
+
+// issue #84: registers/refreshes the fcm token for one installation. The
+// cte clears the same token off any *other* device row first: a client
+// that lost its device credential re-registers (new devices row) but the
+// installation's fcm token stays the same, and without this clear both
+// rows would carry the token and one needs-help update would push the
+// same physical device twice. In-place update on rotation — the device
+// row is the installation identity, so a refreshed token never creates a
+// second row (issue #84's no-duplicate-installations constraint).
+func (q *Queries) SetDevicePushToken(ctx context.Context, arg SetDevicePushTokenParams) error {
+	_, err := q.db.Exec(ctx, setDevicePushToken, arg.PushToken, arg.DeviceID)
 	return err
 }
 

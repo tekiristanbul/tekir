@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/session_identity.dart';
 import '../../../core/theme/app_theme.dart';
 
@@ -23,16 +24,27 @@ class AuthGate {
   /// `#authSheet`); if the user chooses to continue, pushes the full login
   /// screen and runs [onAuthenticated] only once that flow completes
   /// successfully — never on cancel, back, or a failed attempt.
+  ///
+  /// [intent] is the bounded auth_intent vocabulary value for the gate's
+  /// analytics events (issue #84): auth_gate_shown when a guest actually
+  /// sees the prompt (never for an already-authenticated fall-through),
+  /// then exactly one of auth_completed / auth_failed for how the gate
+  /// resolved — the core "do guests cross the gate when they intend to
+  /// contribute" funnel.
   static Future<void> require(
     BuildContext context,
     WidgetRef ref, {
     required String contextText,
+    required AnalyticsAuthIntent intent,
     required VoidCallback onAuthenticated,
   }) async {
     if (ref.read(sessionIdentityServiceProvider).cached != null) {
       onAuthenticated();
       return;
     }
+
+    final analytics = ref.read(analyticsProvider);
+    analytics.log(AnalyticsEvent.authGateShown(intent));
 
     final proceed = await showModalBottomSheet<bool>(
       context: context,
@@ -44,10 +56,25 @@ class AuthGate {
       useRootNavigator: true,
       builder: (_) => _AuthPromptSheet(contextText: contextText),
     );
-    if (proceed != true || !context.mounted) return;
+    if (proceed != true || !context.mounted) {
+      analytics.log(
+        AnalyticsEvent.authFailed(intent, AnalyticsResult.cancelled),
+      );
+      return;
+    }
 
     final success = await context.push<bool>('/login', extra: contextText);
-    if (success == true) onAuthenticated();
+    if (success == true) {
+      analytics.log(AnalyticsEvent.authCompleted(intent));
+      onAuthenticated();
+    } else {
+      // backed out of or abandoned the login screen — per-attempt server
+      // failures are the login screen's own ui concern; the funnel only
+      // records that this gate crossing didn't complete.
+      analytics.log(
+        AnalyticsEvent.authFailed(intent, AnalyticsResult.cancelled),
+      );
+    }
   }
 }
 

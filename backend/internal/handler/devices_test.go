@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/tekiristanbul/tekir/backend/internal/handler"
@@ -18,10 +19,26 @@ import (
 type fakeDevicesRegistrar struct {
 	reg service.DeviceRegistration
 	err error
+
+	pushErr error
+	// pointer so the value-typed fake can still record calls.
+	pushCalls *[]pushTokenCall
+}
+
+type pushTokenCall struct {
+	deviceID  string
+	pushToken string
 }
 
 func (f fakeDevicesRegistrar) Register(_ context.Context, _ string, _ *string) (service.DeviceRegistration, error) {
 	return f.reg, f.err
+}
+
+func (f fakeDevicesRegistrar) SetPushToken(_ context.Context, deviceID, pushToken string) error {
+	if f.pushCalls != nil {
+		*f.pushCalls = append(*f.pushCalls, pushTokenCall{deviceID: deviceID, pushToken: pushToken})
+	}
+	return f.pushErr
 }
 
 // ── POST /v1/devices tests ────────────────────────────────────────────────────
@@ -322,5 +339,97 @@ func TestRequireDeviceToken_DBError(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// ── PUT /v1/devices/me tests ──────────────────────────────────────
+
+// newPushTokenServer wires UpdatePushToken behind RequireDeviceToken with a
+// resolver that answers the given identity, mirroring the real router's
+// middleware wiring (issue #84).
+func newPushTokenServer(reg fakeDevicesRegistrar, identity service.DeviceIdentity) http.Handler {
+	h := handler.NewDevicesHandler(reg)
+	return handler.RequireDeviceToken(fakeResolver{identity: identity})(http.HandlerFunc(h.UpdatePushToken))
+}
+
+func TestDevicesHandler_UpdatePushToken_Success(t *testing.T) {
+	var calls []pushTokenCall
+	srv := newPushTokenServer(fakeDevicesRegistrar{pushCalls: &calls}, service.DeviceIdentity{DeviceID: "device-abc"})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/v1/devices/me", bytes.NewBufferString(`{"push_token":"fcm-token-1"}`))
+	req.Header.Set("X-Device-Token", "raw-device-token")
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("expected empty body — the push token must never be echoed, got %s", rec.Body.String())
+	}
+	if len(calls) != 1 || calls[0].deviceID != "device-abc" || calls[0].pushToken != "fcm-token-1" {
+		t.Errorf("unexpected service call: %+v", calls)
+	}
+}
+
+func TestDevicesHandler_UpdatePushToken_InvalidBody(t *testing.T) {
+	var calls []pushTokenCall
+	srv := newPushTokenServer(fakeDevicesRegistrar{pushCalls: &calls}, service.DeviceIdentity{DeviceID: "device-abc"})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/v1/devices/me", bytes.NewBufferString(`not json`))
+	req.Header.Set("X-Device-Token", "raw-device-token")
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if len(calls) != 0 {
+		t.Errorf("service must not be called on a malformed body: %+v", calls)
+	}
+}
+
+func TestDevicesHandler_UpdatePushToken_InvalidToken(t *testing.T) {
+	srv := newPushTokenServer(fakeDevicesRegistrar{pushErr: service.ErrInvalidPushToken}, service.DeviceIdentity{DeviceID: "device-abc"})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/v1/devices/me", bytes.NewBufferString(`{"push_token":""}`))
+	req.Header.Set("X-Device-Token", "raw-device-token")
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDevicesHandler_UpdatePushToken_MissingDeviceToken(t *testing.T) {
+	var calls []pushTokenCall
+	srv := newPushTokenServer(fakeDevicesRegistrar{pushCalls: &calls}, service.DeviceIdentity{DeviceID: "device-abc"})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/v1/devices/me", bytes.NewBufferString(`{"push_token":"fcm-token-1"}`))
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without a device credential, got %d", rec.Code)
+	}
+	if len(calls) != 0 {
+		t.Errorf("service must not be called without a device credential: %+v", calls)
+	}
+}
+
+func TestDevicesHandler_UpdatePushToken_InternalError(t *testing.T) {
+	srv := newPushTokenServer(fakeDevicesRegistrar{pushErr: errors.New("db down")}, service.DeviceIdentity{DeviceID: "device-abc"})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/v1/devices/me", bytes.NewBufferString(`{"push_token":"fcm-token-1"}`))
+	req.Header.Set("X-Device-Token", "raw-device-token")
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "db down") {
+		t.Errorf("internal error detail leaked to the client: %s", rec.Body.String())
 	}
 }

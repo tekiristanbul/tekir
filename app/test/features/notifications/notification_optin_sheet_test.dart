@@ -4,8 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:app/core/analytics/analytics.dart';
 import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
+import 'package:app/core/push/push_messaging_backend.dart';
+import 'package:app/core/push/push_notifications.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/auth/data/auth_api.dart';
 import 'package:app/features/follow/data/follows_api.dart';
@@ -193,5 +196,108 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Bu kedi için bildirim almak ister misin?'), findsNothing);
+  });
+  optInPermissionTests();
+}
+
+// ── issue #84: the opt-in sheet is the approved permission point ─────────────
+
+class _PermissionCountingBackend implements PushMessagingBackend {
+  int requestPermissionCalls = 0;
+
+  @override
+  Future<PushPermissionStatus> requestPermission() async {
+    requestPermissionCalls++;
+    return PushPermissionStatus.granted;
+  }
+
+  @override
+  Future<PushPermissionStatus> currentPermission() async =>
+      PushPermissionStatus.notRequested;
+
+  @override
+  Future<String?> getToken({String? vapidKey}) async => null;
+
+  @override
+  Stream<String> get onTokenRefresh => const Stream.empty();
+
+  @override
+  Stream<PushMessage> get onForegroundMessage => const Stream.empty();
+
+  @override
+  Stream<PushMessage> get onMessageOpened => const Stream.empty();
+
+  @override
+  Future<PushMessage?> takeInitialMessage() async => null;
+}
+
+Future<_PermissionCountingBackend> _pumpWithPush(WidgetTester tester) async {
+  final backend = _PermissionCountingBackend();
+  final pushService = PushNotificationsService(
+    backend: backend,
+    analytics: const NoopAnalyticsService(),
+    dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080')),
+    openCatDetail: (_) {},
+  );
+  final router = GoRouter(
+    routes: [
+      GoRoute(
+        path: '/',
+        builder: (context, state) => const Scaffold(
+          body: Center(child: FollowButton(catId: _catId)),
+        ),
+      ),
+    ],
+  );
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        sessionIdentityServiceProvider.overrideWithValue(
+          _FakeSessionIdentityService(initial: _authenticatedSession),
+        ),
+        followsApiProvider.overrideWithValue(_FakeFollowsApi()),
+        authApiProvider.overrideWithValue(_FakeAuthApi()),
+        deviceIdentityServiceProvider.overrideWithValue(
+          DeviceIdentityService(
+            storage: _FakeStorage(),
+            dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080')),
+          ),
+        ),
+        pushNotificationsServiceProvider.overrideWithValue(pushService),
+      ],
+      child: MaterialApp.router(theme: AppTheme.light, routerConfig: router),
+    ),
+  );
+  await tester.pump();
+  return backend;
+}
+
+void optInPermissionTests() {
+  testWidgets('"İzin ver" is the only trigger for a real permission request', (
+    tester,
+  ) async {
+    final backend = await _pumpWithPush(tester);
+
+    // first launch / merely following: no request yet.
+    expect(backend.requestPermissionCalls, 0);
+
+    await tester.tap(find.text('Takip et'));
+    await tester.pumpAndSettle();
+    expect(backend.requestPermissionCalls, 0);
+
+    await tester.tap(find.text('İzin ver'));
+    await tester.pumpAndSettle();
+    expect(backend.requestPermissionCalls, 1);
+  });
+
+  testWidgets('"Şimdi değil" never requests permission', (tester) async {
+    final backend = await _pumpWithPush(tester);
+
+    await tester.tap(find.text('Takip et'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Şimdi değil'));
+    await tester.pumpAndSettle();
+
+    expect(backend.requestPermissionCalls, 0);
   });
 }

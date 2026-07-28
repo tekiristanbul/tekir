@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../analytics/analytics.dart';
 import '../../features/account/ui/account_screen.dart';
 import '../../features/add_cat/ui/add_cat_screen.dart';
 import '../../features/auth/ui/login_screen.dart';
@@ -59,8 +60,15 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: '/cats/:id',
-      builder: (context, state) =>
-          CatDetailScreen(catId: state.pathParameters['id']!),
+      // extra optionally carries the bounded cat_opened source (issue #84)
+      // from the pushing surface; anything else — including a deep link's
+      // absent extra — degrades to "no source", never a guessed one.
+      builder: (context, state) => CatDetailScreen(
+        catId: state.pathParameters['id']!,
+        openSource: state.extra is AnalyticsSource
+            ? state.extra as AnalyticsSource
+            : null,
+      ),
     ),
     GoRoute(
       path: '/login',

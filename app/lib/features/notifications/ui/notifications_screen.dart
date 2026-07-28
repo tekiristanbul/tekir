@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/analytics/analytics.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../data/notification.dart';
@@ -71,7 +72,10 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           notification: item,
           onTap: () {
             ref.read(notificationsProvider.notifier).markRead(item.id);
-            context.push('/cats/${item.catId}');
+            context.push(
+              '/cats/${item.catId}',
+              extra: AnalyticsSource.notification,
+            );
           },
         );
       },

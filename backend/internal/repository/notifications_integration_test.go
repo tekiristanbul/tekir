@@ -190,7 +190,7 @@ func TestStore_ListNeedsHelpRecipientDevices_ExcludesAuthorRevokedAndNonFollower
 	if err != nil {
 		t.Fatalf("list recipient devices: %v", err)
 	}
-	if len(devices) != 1 || devices[0] != followerDevice {
+	if len(devices) != 1 || devices[0].DeviceID != followerDevice {
 		t.Fatalf("expected exactly [followerDevice], got %v", devices)
 	}
 }

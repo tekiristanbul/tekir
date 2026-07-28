@@ -23,6 +23,12 @@ const (
 	OTPProviderTwilio = "twilio"
 )
 
+// NotificationProvider values ResolveNotificationProvider can return.
+const (
+	NotificationProviderFake = "fake"
+	NotificationProviderFCM  = "fcm"
+)
+
 type Config struct {
 	Port            string
 	DatabaseURL     string
@@ -88,13 +94,25 @@ type Config struct {
 	MediaMaxBytes int
 
 	// NotificationProvider selects the NotificationSender implementation
-	// cmd/notifier uses (issue #78). Only "fake" (the deterministic,
-	// log-only, no-network dev/test provider — see docs/architecture/
-	// backend.md) is wired; a real push vendor is future work, mirroring
-	// OTPProvider's "fake"-only status. Deliberately has no default that
-	// silently falls back to "fake" in production — see
-	// cmd/notifier/main.go's newNotificationSender.
+	// cmd/notifier uses: "fake" (the deterministic, log-only, no-network
+	// dev/test provider — issue #78) or "fcm" (firebase cloud messaging
+	// http v1 — issue #84). Raw environment value; the environment-aware
+	// defaulting and validation live in ResolveNotificationProvider, which
+	// cmd/notifier calls at startup — exactly the OTPProvider/
+	// ResolveOTPProvider split (issue #59). Like OTP_PROVIDER, "fake" is
+	// only ever a default under an explicit APP_ENV=development; production
+	// fails closed on unset/unknown/incomplete configuration.
 	NotificationProvider string
+
+	// FCMCredentialsFile (FCM_CREDENTIALS_FILE) is the path to the Google
+	// service-account json the fcm sender authenticates with (fcm http v1
+	// — issue #84; legacy server keys are deliberately unsupported).
+	// Required when NotificationProvider is "fcm". A path, never inline
+	// json: the file lives in deployment secrets and its contents are
+	// never logged or echoed in errors. The firebase project id comes from
+	// the file's project_id field, so no separate project-id variable
+	// exists to drift out of sync with the credentials.
+	FCMCredentialsFile string
 }
 
 func Load() (Config, error) {
@@ -125,12 +143,12 @@ func Load() (Config, error) {
 		MediaLocalDir:         getEnv("MEDIA_LOCAL_DIR", "./data/media"),
 		MediaMaxBytes:         getEnvInt("MEDIA_MAX_BYTES", 8*1024*1024),
 
-		// no fallback default, unlike OTPProvider/ObjectStorageProvider
-		// above: issue #78 requires notification delivery to fail closed
-		// rather than silently run the fake provider when an operator
-		// simply forgot to set this — cmd/notifier's newNotificationSender
-		// rejects both an empty value and anything other than "fake".
+		// raw values only — ResolveNotificationProvider applies the
+		// environment-aware default and validation (issue #84), keeping
+		// issue #78's fail-closed posture: production never silently runs
+		// the fake provider because an operator forgot to set this.
 		NotificationProvider: os.Getenv("NOTIFICATION_PROVIDER"),
+		FCMCredentialsFile:   os.Getenv("FCM_CREDENTIALS_FILE"),
 	}
 	cfg.MediaPublicBaseURL = getEnv("MEDIA_PUBLIC_BASE_URL", "http://localhost:"+cfg.Port)
 
@@ -192,6 +210,49 @@ func (c Config) ResolveOTPProvider() (string, error) {
 		return "", fmt.Errorf("OTP_PROVIDER is required (set APP_ENV=%s for the local %q default, or OTP_PROVIDER=%s)", AppEnvDevelopment, OTPProviderFake, OTPProviderTwilio)
 	default:
 		return "", fmt.Errorf("unsupported OTP_PROVIDER %q (%q with APP_ENV=%s, or %q)", provider, OTPProviderFake, AppEnvDevelopment, OTPProviderTwilio)
+	}
+}
+
+// ResolveNotificationProvider decides which notification provider
+// cmd/notifier runs with (issue #84) and validates the selection is
+// complete — the same fail-closed shape as ResolveOTPProvider (issue #59):
+//
+//   - "fake" is only reachable under an explicit APP_ENV=development —
+//     as the default when NOTIFICATION_PROVIDER is unset, or when set
+//     explicitly.
+//   - any other environment (production, unset, or unrecognized) rejects
+//     fake, unset, and unknown providers outright; only "fcm" is accepted
+//     there.
+//   - "fcm" additionally requires FCM_CREDENTIALS_FILE in every
+//     environment; a missing value fails resolution, naming the variable
+//     but never echoing a configured value.
+//
+// There is intentionally no path that degrades a selected or required fcm
+// provider to fake — misconfiguration stops startup instead (issue #84's
+// no-silent-fallback constraint, inherited from issue #78).
+func (c Config) ResolveNotificationProvider() (string, error) {
+	dev := c.AppEnv == AppEnvDevelopment
+
+	provider := c.NotificationProvider
+	if provider == "" && dev {
+		provider = NotificationProviderFake
+	}
+
+	switch provider {
+	case NotificationProviderFake:
+		if !dev {
+			return "", fmt.Errorf("NOTIFICATION_PROVIDER %q is only allowed with APP_ENV=%s (production requires NOTIFICATION_PROVIDER=%s)", provider, AppEnvDevelopment, NotificationProviderFCM)
+		}
+		return NotificationProviderFake, nil
+	case NotificationProviderFCM:
+		if c.FCMCredentialsFile == "" {
+			return "", fmt.Errorf("NOTIFICATION_PROVIDER=%s requires FCM_CREDENTIALS_FILE", NotificationProviderFCM)
+		}
+		return NotificationProviderFCM, nil
+	case "":
+		return "", fmt.Errorf("NOTIFICATION_PROVIDER is required (set APP_ENV=%s for the local %q default, or NOTIFICATION_PROVIDER=%s)", AppEnvDevelopment, NotificationProviderFake, NotificationProviderFCM)
+	default:
+		return "", fmt.Errorf("unsupported NOTIFICATION_PROVIDER %q (%q with APP_ENV=%s, or %q)", provider, NotificationProviderFake, AppEnvDevelopment, NotificationProviderFCM)
 	}
 }
 

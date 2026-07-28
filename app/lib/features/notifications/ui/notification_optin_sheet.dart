@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/push/push_notifications.dart';
 import '../../../core/theme/app_theme.dart';
 
 /// Whether the notification opt-in prompt has already been shown this app
 /// session — mirrors the approved prototype's `state.notifPermAsked`
 /// (prototype/app.js:930-932): asked once, ever, per session, never on
-/// every follow. This mvp slice has no real push transport (see
-/// service.NotificationSender's backend doc comment) and no backend field
-/// to persist a per-account notification preference in yet, so "asked"
-/// deliberately lives only in memory — it resets on a cold app start,
-/// which is the only place [maybeShowNotificationOptInSheet] can be called
-/// again without an explicit "reset" action, keeping this a local-only, no
-/// backend, no invented persistence prompt.
+/// every follow. "asked" deliberately lives only in memory — it resets on
+/// a cold app start, which is the only place
+/// [maybeShowNotificationOptInSheet] can be called again without an
+/// explicit "reset" action, keeping this a local-only, no invented
+/// persistence prompt. Under `NOTIFICATION_PROVIDER=fcm` the system
+/// permission state is the durable truth anyway: once granted (or
+/// permanently denied), re-showing this sheet costs one tap at most.
 class _NotificationOptInAskedNotifier extends Notifier<bool> {
   @override
   bool build() => false;
@@ -29,11 +30,11 @@ final notificationOptInAskedProvider =
 /// only when [FollowButton] calls this after a cat was just followed —
 /// per docs/product/notifications.md, permission is asked only after
 /// following, never at first launch and never on unfollow or any other
-/// action. Both choices ("Şimdi değil" / "İzin ver") are local ui state
-/// only: this mvp slice does not register a real push provider, so there
-/// is nothing to actually request permission for yet (see
-/// docs/architecture/backend.md's NOTIFICATION_PROVIDER — only a fake,
-/// dev/test sender is wired).
+/// action. This sheet is the *approved opt-in point* (issue #84): "İzin
+/// ver" is the only place the real system notification permission is ever
+/// requested — and only under `NOTIFICATION_PROVIDER=fcm`; under the local
+/// `fake` default [PushNotificationsService] is disabled and both choices
+/// remain local ui state, exactly the pre-#84 behavior.
 Future<void> maybeShowNotificationOptInSheet(
   BuildContext context,
   WidgetRef ref,
@@ -47,11 +48,11 @@ Future<void> maybeShowNotificationOptInSheet(
   );
 }
 
-class _NotificationOptInSheet extends StatelessWidget {
+class _NotificationOptInSheet extends ConsumerWidget {
   const _NotificationOptInSheet();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Container(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.s5,
@@ -99,7 +100,16 @@ class _NotificationOptInSheet extends StatelessWidget {
               height: kTapMin,
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () {
+                  // fire-and-forget: the sheet closes immediately; the
+                  // system permission dialog (fcm only) takes over from
+                  // here, and registration failures are silently retried
+                  // on later app starts (PushNotificationsService.start).
+                  ref
+                      .read(pushNotificationsServiceProvider)
+                      .requestPermissionAndRegister();
+                  Navigator.of(context).pop();
+                },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: AppColors.primaryInk,

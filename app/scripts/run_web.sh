@@ -43,9 +43,19 @@ sed -i.bak "s|key=[^\"]*|key=${GOOGLE_MAPS_API_KEY}|" "$index_html" && rm -f "${
 # and you open it yourself in whatever browser is already running on
 # windows. use chrome or edge, not firefox — the debug/hot-reload bridge
 # (dwds) only supports chromium-based browsers.
+# forward optional provider settings from the environment/.env.local as
+# --dart-define flags (issue #84). unset values keep the in-app defaults
+# (ANALYTICS_PROVIDER=none, NOTIFICATION_PROVIDER=fake).
+dart_defines=()
+for var in API_BASE_URL ANALYTICS_PROVIDER NOTIFICATION_PROVIDER FCM_VAPID_KEY; do
+  if [ -n "${!var:-}" ]; then
+    dart_defines+=(--dart-define "${var}=${!var}")
+  fi
+done
+
 if grep -qi microsoft /proc/version 2>/dev/null; then
   echo "wsl detected: running as web-server — open http://localhost:5050 in chrome or edge yourself." >&2
-  flutter run -d web-server --web-port 5050 "$@"
+  flutter run -d web-server --web-port 5050 ${dart_defines[@]+"${dart_defines[@]}"} "$@"
 else
-  flutter run -d chrome --web-port 5050 "$@"
+  flutter run -d chrome --web-port 5050 ${dart_defines[@]+"${dart_defines[@]}"} "$@"
 fi

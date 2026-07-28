@@ -39,6 +39,12 @@ type Querier interface {
 	// only notifies for needs-help), so the caller marks it processed with no
 	// recipients rather than skipping it here.
 	ClaimNotificationOutboxBatch(ctx context.Context, rowLimit int32) ([]ClaimNotificationOutboxBatchRow, error)
+	// issue #84: retires a token fcm permanently rejected (unregistered/
+	// invalid). The `and push_token = sqlc.arg(push_token)` guard makes the
+	// retirement safe against a concurrent refresh: if the client registered
+	// a newer token between the send attempt and this clear, zero rows match
+	// and the fresh token survives.
+	ClearDevicePushToken(ctx context.Context, arg ClearDevicePushTokenParams) error
 	// atomic compare-and-set (code review fix, issue #58): the previous
 	// read-then-unconditional-update let two concurrent verifications of the
 	// same code both pass validation in application code before either wrote
@@ -350,7 +356,11 @@ type Querier interface {
 	// query shouldn't rely on. never joins on device_id — only account
 	// ownership (user_id) determines who follows a cat, per [[community]]'s
 	// private-following contract; devices are purely the push-delivery target.
-	ListNeedsHelpRecipientDevices(ctx context.Context, arg ListNeedsHelpRecipientDevicesParams) ([]pgtype.UUID, error)
+	// push_token rides along (issue #84) so the worker can hand the fcm
+	// sender a real delivery address; a null push_token device still gets its
+	// in-app notifications row (the source of truth independent of push —
+	// issue #84), it just isn't pushed to.
+	ListNeedsHelpRecipientDevices(ctx context.Context, arg ListNeedsHelpRecipientDevicesParams) ([]ListNeedsHelpRecipientDevicesRow, error)
 	// a created cat counts toward cats_of_istanbul the same way a media/update
 	// contribution does (docs/product/badges.md's cats_of_istanbul condition).
 	ListUserCreatedCatsForBadges(ctx context.Context, createdByUserID pgtype.UUID) ([]ListUserCreatedCatsForBadgesRow, error)
@@ -405,6 +415,15 @@ type Querier interface {
 	// after the winner's and matches zero rows, since revoked_at is no longer
 	// null by then.
 	RevokeRefreshTokenIfActive(ctx context.Context, arg RevokeRefreshTokenIfActiveParams) (pgtype.UUID, error)
+	// issue #84: registers/refreshes the fcm token for one installation. The
+	// cte clears the same token off any *other* device row first: a client
+	// that lost its device credential re-registers (new devices row) but the
+	// installation's fcm token stays the same, and without this clear both
+	// rows would carry the token and one needs-help update would push the
+	// same physical device twice. In-place update on rotation — the device
+	// row is the installation identity, so a refreshed token never creates a
+	// second row (issue #84's no-duplicate-installations constraint).
+	SetDevicePushToken(ctx context.Context, arg SetDevicePushTokenParams) error
 	// issue #80 (product-owner review): clears a device's account link on
 	// logout, so the same installation can sign into a *different* account
 	// afterward without linkDevice's "already linked to a different account"

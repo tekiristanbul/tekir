@@ -98,7 +98,7 @@ func (s *NotificationService) DispatchPending(ctx context.Context) (int, error) 
 }
 
 func (s *NotificationService) dispatchNeedsHelp(ctx context.Context, q *repository.Queries, row repository.ClaimNotificationOutboxBatchRow) error {
-	deviceIDs, err := q.ListNeedsHelpRecipientDevices(ctx, repository.ListNeedsHelpRecipientDevicesParams{
+	recipients, err := q.ListNeedsHelpRecipientDevices(ctx, repository.ListNeedsHelpRecipientDevicesParams{
 		CatID:        row.CatID,
 		AuthorUserID: row.AuthorUserID,
 	})
@@ -110,10 +110,10 @@ func (s *NotificationService) dispatchNeedsHelp(ctx context.Context, q *reposito
 	updateIDStr := uuid.UUID(row.UpdateID.Bytes).String()
 	category := row.NeedsHelpCategory.String
 
-	for _, deviceID := range deviceIDs {
+	for _, rec := range recipients {
 		_, err := q.CreateNotification(ctx, repository.CreateNotificationParams{
 			ID:       pgtype.UUID{Bytes: uuid.New(), Valid: true},
-			DeviceID: deviceID,
+			DeviceID: rec.DeviceID,
 			CatID:    row.CatID,
 			UpdateID: row.UpdateID,
 		})
@@ -128,8 +128,33 @@ func (s *NotificationService) dispatchNeedsHelp(ctx context.Context, q *reposito
 			return err
 		}
 
-		deviceIDStr := uuid.UUID(deviceID.Bytes).String()
-		if err := s.sender.Send(ctx, deviceIDStr, catIDStr, updateIDStr, category); err != nil {
+		// the in-app notifications row above is the source of truth and was
+		// created unconditionally — push is additive on top of it (issue
+		// #84). A device that never registered a push token (opt-in
+		// declined, web without permission) simply isn't pushed to.
+		if !rec.PushToken.Valid || rec.PushToken.String == "" {
+			continue
+		}
+
+		deviceIDStr := uuid.UUID(rec.DeviceID.Bytes).String()
+		if err := s.sender.Send(ctx, PushMessage{
+			DeviceID:  deviceIDStr,
+			PushToken: rec.PushToken.String,
+			CatID:     catIDStr,
+			UpdateID:  updateIDStr,
+			Category:  category,
+		}); err != nil {
+			if errors.Is(err, ErrPushTokenInvalid) {
+				// permanent rejection (unregistered/invalid token — issue
+				// #84): retire the token so this device stops being pushed
+				// to until the client registers a fresh one. Token-matched
+				// in the query, so a concurrently refreshed token survives.
+				if clearErr := q.ClearDevicePushToken(ctx, repository.ClearDevicePushTokenParams(rec)); clearErr != nil {
+					return clearErr
+				}
+				slog.Info("retired invalid push token", "device_id", deviceIDStr)
+				continue
+			}
 			slog.Warn("needs-help notification send failed (delivery is at-most-once for mvp — not retried)",
 				"device_id", deviceIDStr, "update_id", updateIDStr, "error", err)
 		}

@@ -13,6 +13,7 @@ import (
 // interface so the handler is testable without a real database connection.
 type DevicesRegistrar interface {
 	Register(ctx context.Context, platform string, pushToken *string) (service.DeviceRegistration, error)
+	SetPushToken(ctx context.Context, deviceID, pushToken string) error
 }
 
 // DevicesHandler handles the device identity registration endpoint.
@@ -69,4 +70,39 @@ func (h *DevicesHandler) Register(w http.ResponseWriter, r *http.Request) {
 		DeviceID:    reg.DeviceID,
 		DeviceToken: reg.DeviceToken,
 	})
+}
+
+// updatePushTokenRequest is the parsed body of PUT /v1/devices/me.
+type updatePushTokenRequest struct {
+	PushToken string `json:"push_token"`
+}
+
+// UpdatePushToken handles PUT /v1/devices/me (issue #84): the
+// device-authenticated caller registers or refreshes its own installation's
+// fcm token. The device is always the one resolved from X-Device-Token —
+// there is no device id in the path or body, so one installation can never
+// write another's delivery address. Responds 204: the token is a write-only
+// credential and is never echoed back.
+func (h *DevicesHandler) UpdatePushToken(w http.ResponseWriter, r *http.Request) {
+	var req updatePushTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	identity := DeviceFromContext(r.Context())
+	if err := h.devices.SetPushToken(r.Context(), identity.DeviceID, req.PushToken); err != nil {
+		if errors.Is(err, service.ErrInvalidPushToken) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid push token"})
+			return
+		}
+		if errors.Is(err, service.ErrDeviceNotFound) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid device token"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

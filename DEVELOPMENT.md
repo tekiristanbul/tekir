@@ -134,7 +134,7 @@ set `APP_ENV=production`, `OTP_PROVIDER=twilio`, and the three twilio values as 
 
 ### local twilio smoke test
 
-keep real values only in a repo-root `.env.local` (gitignored — copy [`.env.example`](.env.example)); never commit them or paste them into logs, issues, or pr evidence. backend secrets live here, not in `app/.env.local` — that file only carries the flutter maps key.
+keep real values only in a repo-root `.env.local` (gitignored — copy [`.env.example`](.env.example)); never commit them or paste them into logs, issues, or pr evidence. backend secrets live here, not in `app/.env.local` — that file only carries flutter-side, non-secret local settings (maps key, provider selection — see [`app/.env.local.example`](app/.env.local.example)).
 
 1. in the [twilio console](https://console.twilio.com), create or select a verify service (use the **live** account credentials, not the test ones — twilio verify rejects test credentials) and put its `VA...` sid in `.env.local` as `TWILIO_VERIFY_SERVICE_SID`, alongside `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`.
 2. run the backend with the twilio provider, loading secrets without echoing them:
@@ -149,6 +149,65 @@ keep real values only in a repo-root `.env.local` (gitignored — copy [`.env.ex
 4. test a wrong code (rejected as invalid) and an expired code (rejected as expired).
 5. unset one required value (e.g. `TWILIO_AUTH_TOKEN=""`) and confirm startup fails instead of falling back to the fake provider.
 6. drop `OTP_PROVIDER=twilio` and confirm the deterministic fake flow still works for normal local development.
+
+## firebase (push + analytics, issue #84)
+
+one firebase project backs both integrations, each behind an app-owned abstraction:
+
+- `NOTIFICATION_PROVIDER` — backend notifier **and** flutter app: `fake` (local default: log-only sender, opt-in sheet stays local ui) or `fcm` (real push via fcm http v1 + firebase messaging in the app).
+- `ANALYTICS_PROVIDER` — flutter app only: `none` (local default: nothing leaves the device) or `firebase` (google analytics for firebase).
+
+the local defaults need no firebase project at all. the backend's `fake` default only applies under an explicit `APP_ENV=development`; any other environment fails `cmd/notifier` startup unless `NOTIFICATION_PROVIDER=fcm` is fully configured — there is no fallback from a selected `fcm` to `fake` (same posture as `OTP_PROVIDER`).
+
+### one-time firebase project setup
+
+1. create the firebase project (a separate non-production project for local validation) and register the flutter targets: `dart pub global activate flutterfire_cli`, then `flutterfire configure` inside `app/` — this overwrites the placeholder `app/lib/firebase_options.dart` with committable public client configuration.
+2. for the backend notifier, create a service account with the *firebase cloud messaging api* role and download its json key. keep the file outside the repository; only its path goes into the environment. legacy server keys are not supported.
+3. for the web target, create a web push certificate (vapid key pair) in the firebase console's cloud messaging settings, and fill the real values into `app/web/firebase-messaging-sw.js` (background/terminated web push only; foreground web works without it).
+
+secrets: the service-account json, its path in `.env.local`, and apns keys are secrets and never committed. `firebase_options.dart` and other flutterfire-generated platform config are public client configuration and are committable.
+
+### backend variables (repo-root `.env.local`)
+
+```text
+NOTIFICATION_PROVIDER=fcm
+FCM_CREDENTIALS_FILE=/absolute/path/to/firebase-service-account.json
+```
+
+### flutter variables (`app/.env.local`, forwarded by scripts/run_web.sh)
+
+```text
+ANALYTICS_PROVIDER=firebase
+NOTIFICATION_PROVIDER=fcm
+FCM_VAPID_KEY=... # web target only
+```
+
+for non-web targets, pass the same values as `--dart-define` flags to `flutter run`/`flutter build`.
+
+### local push smoke test
+
+1. `flutterfire configure` has been run and the app builds with the generated options.
+2. run the api normally; run the notifier with the fcm provider:
+
+   ```text
+   cd backend
+   set -a; . ../.env.local; set +a
+   make run-notifier
+   ```
+
+3. in the app (built with `NOTIFICATION_PROVIDER=fcm`), sign in, follow a cat, and accept the opt-in sheet — permission is requested only there, never on first launch.
+4. from a second account, create an active needs-help update for that cat; confirm the push arrives and opening it lands on the cat detail, with exactly one in-app notification record.
+5. confirm misconfiguration fails closed: unset `FCM_CREDENTIALS_FILE` and check the notifier refuses to start.
+
+### analytics validation
+
+build with `ANALYTICS_PROVIDER=firebase` against the non-production project and use firebase DebugView (`--dart-define` builds on android need `adb shell setprop debug.firebase.analytics.app <package>`; web logs events with debug mode query param). verify the required events and parameters from [docs/product/analytics.md](docs/product/analytics.md) appear, and that no event ever carries names, free text, coordinates, tokens, or raw ids. local development and ci stay on `ANALYTICS_PROVIDER=none`, so production data streams only ever contain production builds.
+
+### release targets (0.1)
+
+- **web**: supported for foreground push and analytics out of the box; background/terminated web push additionally requires the configured `firebase-messaging-sw.js` and `FCM_VAPID_KEY`.
+- **android**: not present in this repository yet — add the Flutter Android target + Firebase configuration before treating it as release-supported.
+- **ios**: not present in this repository yet — add the Flutter iOS target + APNs setup before treating it as release-supported.
 
 ## flutter development
 

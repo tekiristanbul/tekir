@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/session_identity.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
@@ -355,7 +356,10 @@ class _ContributionRow extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.md),
-        onTap: () => context.push('/cats/${contribution.catId}'),
+        onTap: () => context.push(
+          '/cats/${contribution.catId}',
+          extra: AnalyticsSource.profile,
+        ),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: AppSpacing.s2),
           child: Row(

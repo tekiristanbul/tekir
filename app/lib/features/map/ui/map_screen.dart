@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
+import '../../../core/analytics/analytics.dart';
 import '../../../core/geo/istanbul_bounds.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/ui/auth_gate.dart';
@@ -121,7 +122,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           cat: cat,
           onOpenDetail: () {
             Navigator.of(sheetContext).pop();
-            context.push('/cats/${cat.id}');
+            context.push('/cats/${cat.id}', extra: AnalyticsSource.map);
           },
         ),
       ),
@@ -373,6 +374,7 @@ class _NotificationsButton extends ConsumerWidget {
         context,
         ref,
         contextText: 'Bildirimlerini görmek için giriş yap',
+        intent: AnalyticsAuthIntent.profile,
         onAuthenticated: () => context.push('/notifications'),
       ),
     );
