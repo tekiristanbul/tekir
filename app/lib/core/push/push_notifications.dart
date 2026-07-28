@@ -167,7 +167,12 @@ class PushNotificationsService {
   }
 
   void _debugLog(Object error) {
-    if (kDebugMode) debugPrint('[push] $error');
+    if (!kDebugMode) return;
+    if (error is DioException) {
+      debugPrint('[push] dio:${error.type}');
+      return;
+    }
+    debugPrint('[push] ${error.runtimeType}');
   }
 }
 
