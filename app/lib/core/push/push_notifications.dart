@@ -154,11 +154,11 @@ class PushNotificationsService {
 
   void _handleOpen(PushMessage message, AnalyticsNotificationState state) {
     final catId = message.data['cat_id'];
-    final key =
-        message.messageId ?? '${message.data['update_id']}:${catId ?? ''}';
-    if (key == _lastOpenedKey) return;
-    _lastOpenedKey = key;
-
+    final key = message.messageId ?? message.data['update_id'];
+    if (key != null) {
+      if (key == _lastOpenedKey) return;
+      _lastOpenedKey = key;
+    }
     _analytics!.log(AnalyticsEvent.notificationOpened(state));
 
     if (catId != null && _uuidPattern.hasMatch(catId)) {
