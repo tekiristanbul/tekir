@@ -205,9 +205,9 @@ build with `ANALYTICS_PROVIDER=firebase` against the non-production project and 
 
 ### release targets (0.1)
 
-- **android**: release-supported — fcm push (foreground/background/terminated) and analytics.
 - **web**: supported for foreground push and analytics out of the box; background/terminated web push additionally requires the configured `firebase-messaging-sw.js` and `FCM_VAPID_KEY`.
-- **ios**: requires an apple developer account, an apns key uploaded to firebase, and real-device testing — not release-supported until that setup and walkthrough happen.
+- **android**: not present in this repository yet — add the Flutter Android target + Firebase configuration before treating it as release-supported.
+- **ios**: not present in this repository yet — add the Flutter iOS target + APNs setup before treating it as release-supported.
 
 ## flutter development
 
