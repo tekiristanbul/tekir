@@ -144,15 +144,15 @@ func NewFCMNotificationSender(credentialsFile string, opts ...FCMOption) (*FCMNo
 		// never propagate it verbatim.
 		return nil, errors.New("fcm: FCM_CREDENTIALS_FILE is not a valid service-account json")
 	}
-	jwtConfig, err := google.JWTConfigFromJSON(data, fcmScope)
-	if err != nil {
-		return nil, errors.New("fcm: FCM_CREDENTIALS_FILE is not a valid service-account json")
-	}
 	if meta.ProjectID == "" {
 		return nil, errors.New("fcm: credentials json has no project_id")
 	}
 	f.projectID = meta.ProjectID
 	if f.tokenSource == nil {
+		jwtConfig, err := google.JWTConfigFromJSON(data, fcmScope)
+		if err != nil {
+			return nil, errors.New("fcm: FCM_CREDENTIALS_FILE is not a valid service-account json")
+		}
 		// context.Background deliberately: the token source outlives any
 		// single send and caches/refreshes tokens across calls; per-send
 		// deadlines still bound the message request itself. The
