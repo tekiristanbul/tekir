@@ -134,14 +134,14 @@ set `APP_ENV=production`, `OTP_PROVIDER=twilio`, and the three twilio values as 
 
 ### local twilio smoke test
 
-keep real values only in [`app/.env.local`](app/.env.local.example) (gitignored — variable names in [`.env.example`](.env.example)); never commit them or paste them into logs, issues, or pr evidence.
+keep real values only in a repo-root `.env.local` (gitignored — copy [`.env.example`](.env.example)); never commit them or paste them into logs, issues, or pr evidence. backend secrets live here, not in `app/.env.local` — that file only carries the flutter maps key.
 
-1. in the [twilio console](https://console.twilio.com), create or select a verify service and put its sid in `app/.env.local` as `TWILIO_VERIFY_SERVICE_SID`, alongside `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`.
+1. in the [twilio console](https://console.twilio.com), create or select a verify service (use the **live** account credentials, not the test ones — twilio verify rejects test credentials) and put its `VA...` sid in `.env.local` as `TWILIO_VERIFY_SERVICE_SID`, alongside `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`.
 2. run the backend with the twilio provider, loading secrets without echoing them:
 
    ```text
    cd backend
-   set -a; . ../app/.env.local; set +a
+   set -a; . ../.env.local; set +a
    OTP_PROVIDER=twilio make run
    ```
 
