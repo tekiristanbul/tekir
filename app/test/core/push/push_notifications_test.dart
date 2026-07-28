@@ -143,29 +143,37 @@ void main() {
     expect(t.adapter.requests, isEmpty);
   });
 
-  test('start syncs the token only when permission was already granted', () async {
-    final t = _build();
-    t.backend.permission = PushPermissionStatus.granted;
-    await t.service.start();
-    expect(t.adapter.requests, hasLength(1));
+  test(
+    'start syncs the token only when permission was already granted',
+    () async {
+      final t = _build();
+      t.backend.permission = PushPermissionStatus.granted;
+      await t.service.start();
+      expect(t.adapter.requests, hasLength(1));
 
-    final u = _build();
-    u.backend.permission = PushPermissionStatus.notRequested;
-    await u.service.start();
-    expect(u.adapter.requests, isEmpty);
-  });
+      final u = _build();
+      u.backend.permission = PushPermissionStatus.notRequested;
+      await u.service.start();
+      expect(u.adapter.requests, isEmpty);
+    },
+  );
 
-  test('a token refresh re-registers without duplicate device rows client-side', () async {
-    final t = _build();
-    await t.service.start();
-    t.backend.tokenRefreshController.add('fcm-token-rotated');
-    // dio's request pipeline spans several event-loop turns — a single
-    // zero-delay flush isn't enough for the PUT to reach the adapter.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+  test(
+    'a token refresh re-registers without duplicate device rows client-side',
+    () async {
+      final t = _build();
+      await t.service.start();
+      t.backend.tokenRefreshController.add('fcm-token-rotated');
+      // dio's request pipeline spans several event-loop turns — a single
+      // zero-delay flush isn't enough for the PUT to reach the adapter.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    expect(t.adapter.requests, hasLength(1));
-    expect(t.adapter.requests.single.data, {'push_token': 'fcm-token-rotated'});
-  });
+      expect(t.adapter.requests, hasLength(1));
+      expect(t.adapter.requests.single.data, {
+        'push_token': 'fcm-token-rotated',
+      });
+    },
+  );
 
   test('a failed registration is swallowed, never thrown', () async {
     final t = _build();
@@ -173,20 +181,23 @@ void main() {
     expect(await t.service.requestPermissionAndRegister(), isTrue);
   });
 
-  test('a foreground message logs notification_received and nothing else', () async {
-    final t = _build();
-    await t.service.start();
-    t.backend.foregroundController.add(
-      const PushMessage(messageId: 'm1', data: {'cat_id': _catId}),
-    );
-    await Future<void>.delayed(Duration.zero);
+  test(
+    'a foreground message logs notification_received and nothing else',
+    () async {
+      final t = _build();
+      await t.service.start();
+      t.backend.foregroundController.add(
+        const PushMessage(messageId: 'm1', data: {'cat_id': _catId}),
+      );
+      await Future<void>.delayed(Duration.zero);
 
-    expect(t.analytics.names(), ['notification_received']);
-    expect(t.analytics.events.single.params, {
-      'notification_state': 'foreground',
-    });
-    expect(t.openedCats, isEmpty);
-  });
+      expect(t.analytics.names(), ['notification_received']);
+      expect(t.analytics.events.single.params, {
+        'notification_state': 'foreground',
+      });
+      expect(t.openedCats, isEmpty);
+    },
+  );
 
   test('a background open navigates to the cat and logs the open', () async {
     final t = _build();
@@ -264,9 +275,6 @@ void main() {
 
     expect(t.openedCats, isEmpty);
     // the opens themselves are still counted.
-    expect(t.analytics.names(), [
-      'notification_opened',
-      'notification_opened',
-    ]);
+    expect(t.analytics.names(), ['notification_opened', 'notification_opened']);
   });
 }

@@ -83,8 +83,7 @@ class PushNotificationsService {
       // notifications surface covers it (docs/product/notifications.md).
     }, onError: _debugLog);
     _backend.onMessageOpened.listen(
-      (message) =>
-          _handleOpen(message, AnalyticsNotificationState.background),
+      (message) => _handleOpen(message, AnalyticsNotificationState.background),
       onError: _debugLog,
     );
 
@@ -145,10 +144,7 @@ class PushNotificationsService {
 
   Future<void> _registerToken(String token) async {
     try {
-      await _dio!.put<void>(
-        '/v1/devices/me',
-        data: {'push_token': token},
-      );
+      await _dio!.put<void>('/v1/devices/me', data: {'push_token': token});
     } catch (error) {
       // best-effort: the next start()/refresh retries. The token itself is
       // never logged (issue #84's redaction constraint).

@@ -243,8 +243,9 @@ Future<_PermissionCountingBackend> _pumpWithPush(WidgetTester tester) async {
     routes: [
       GoRoute(
         path: '/',
-        builder: (context, state) =>
-            const Scaffold(body: Center(child: FollowButton(catId: _catId))),
+        builder: (context, state) => const Scaffold(
+          body: Center(child: FollowButton(catId: _catId)),
+        ),
       ),
     ],
   );

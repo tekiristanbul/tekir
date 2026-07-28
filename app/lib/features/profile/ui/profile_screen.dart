@@ -356,7 +356,10 @@ class _ContributionRow extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.md),
-        onTap: () => context.push('/cats/${contribution.catId}', extra: AnalyticsSource.profile),
+        onTap: () => context.push(
+          '/cats/${contribution.catId}',
+          extra: AnalyticsSource.profile,
+        ),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: AppSpacing.s2),
           child: Row(

@@ -33,7 +33,10 @@ List<AnalyticsEvent> allEvents() => [
   AnalyticsEvent.catOpened(AnalyticsSource.discoverNeedsHelp),
   AnalyticsEvent.authGateShown(AnalyticsAuthIntent.ordinaryUpdate),
   AnalyticsEvent.authCompleted(AnalyticsAuthIntent.follow),
-  AnalyticsEvent.authFailed(AnalyticsAuthIntent.addCat, AnalyticsResult.cancelled),
+  AnalyticsEvent.authFailed(
+    AnalyticsAuthIntent.addCat,
+    AnalyticsResult.cancelled,
+  ),
   AnalyticsEvent.followCreated(AnalyticsSource.map),
   AnalyticsEvent.followRemoved(null),
   AnalyticsEvent.ordinaryUpdateCreated(AnalyticsUpdateStatus.waterProvided),

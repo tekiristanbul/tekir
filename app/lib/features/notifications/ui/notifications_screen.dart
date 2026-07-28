@@ -72,7 +72,10 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           notification: item,
           onTap: () {
             ref.read(notificationsProvider.notifier).markRead(item.id);
-            context.push('/cats/${item.catId}', extra: AnalyticsSource.notification);
+            context.push(
+              '/cats/${item.catId}',
+              extra: AnalyticsSource.notification,
+            );
           },
         );
       },

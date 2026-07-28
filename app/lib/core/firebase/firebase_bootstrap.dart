@@ -19,11 +19,14 @@ final firebaseReadyProvider = Provider<bool>((_) => false);
 /// has been run — is logged in debug and reported as not-ready, never
 /// thrown: the product must keep working without Firebase.
 Future<bool> bootstrapFirebase() async {
-  if (Env.analyticsProvider != 'firebase' && Env.notificationProvider != 'fcm') {
+  if (Env.analyticsProvider != 'firebase' &&
+      Env.notificationProvider != 'fcm') {
     return false;
   }
   try {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
     return true;
   } catch (error) {
     if (kDebugMode) {

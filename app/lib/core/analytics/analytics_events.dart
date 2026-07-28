@@ -159,7 +159,10 @@ class AnalyticsEvent {
     : this._('auth_completed', {'auth_intent': intent.wire});
 
   AnalyticsEvent.authFailed(AnalyticsAuthIntent intent, AnalyticsResult result)
-    : this._('auth_failed', {'auth_intent': intent.wire, 'result': result.wire});
+    : this._('auth_failed', {
+        'auth_intent': intent.wire,
+        'result': result.wire,
+      });
 
   /// [source] is null when the surface the follow happened on wasn't
   /// reached through a vocabulary source (e.g. a direct deep link) — the
