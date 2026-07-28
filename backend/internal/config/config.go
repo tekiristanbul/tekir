@@ -9,12 +9,32 @@ import (
 	"time"
 )
 
+// AppEnv values ResolveOTPProvider recognizes. Anything else — including
+// unset — is treated as production, so a deployment that forgets APP_ENV
+// fails closed instead of silently unlocking development conveniences.
+const (
+	AppEnvDevelopment = "development"
+	AppEnvProduction  = "production"
+)
+
+// OTPProvider values ResolveOTPProvider can return.
+const (
+	OTPProviderFake   = "fake"
+	OTPProviderTwilio = "twilio"
+)
+
 type Config struct {
 	Port            string
 	DatabaseURL     string
 	LogLevel        string
 	ShutdownTimeout time.Duration
 	CORSOrigins     []string
+
+	// AppEnv (APP_ENV) declares which environment this process runs in.
+	// Only the OTP provider selection consumes it today (issue #59): the
+	// fake provider default is unlocked exclusively by an explicit
+	// "development". No default — see the AppEnv* constants.
+	AppEnv string
 
 	// JWTSigningKey signs and validates access-token JWTs (issue #58).
 	// Required: an empty or default key would let anyone forge a session.
@@ -29,10 +49,23 @@ type Config struct {
 	OTPCodeTTL        time.Duration
 	OTPMaxAttempts    int32
 	OTPResendCooldown time.Duration
-	// OTPProvider selects the SmsSender implementation. Only "fake" (the
-	// deterministic, no-network, log-only provider) is wired as of issue
-	// #58 — see docs/architecture/backend.md.
+	// OTPProvider selects the otp implementation: "fake" (the
+	// deterministic, no-network, log-only provider — issue #58) or
+	// "twilio" (twilio verify — issue #59). Raw environment value; the
+	// environment-aware defaulting and validation live in
+	// ResolveOTPProvider, which cmd/api calls at startup. Deliberately no
+	// unconditional "fake" default anymore: fake is only ever a default
+	// under an explicit APP_ENV=development.
 	OTPProvider string
+
+	// TwilioAccountSID/TwilioAuthToken/TwilioVerifyServiceSID configure
+	// the twilio verify adapter and are required when OTPProvider is
+	// "twilio" (issue #59). Deployment secrets — values are never logged
+	// or echoed in errors. TWILIO_NUMBER is deliberately not read: twilio
+	// verify addresses a verify service sid, not a sender number.
+	TwilioAccountSID       string
+	TwilioAuthToken        string
+	TwilioVerifyServiceSID string
 
 	// ObjectStorageProvider selects the ObjectStore implementation for
 	// media uploads (issue #70). Only "fake" (a deterministic, local-disk
@@ -78,7 +111,15 @@ func Load() (Config, error) {
 		OTPCodeTTL:        getEnvDuration("OTP_CODE_TTL", 5*time.Minute),
 		OTPMaxAttempts:    getEnvInt32("OTP_MAX_ATTEMPTS", 5),
 		OTPResendCooldown: getEnvDuration("OTP_RESEND_COOLDOWN", 60*time.Second),
-		OTPProvider:       getEnv("OTP_PROVIDER", "fake"),
+		// raw values only — ResolveOTPProvider applies the
+		// environment-aware default and validation (issue #59), and only
+		// cmd/api calls it, so cmd/notifier keeps starting without any
+		// otp configuration.
+		AppEnv:                 os.Getenv("APP_ENV"),
+		OTPProvider:            os.Getenv("OTP_PROVIDER"),
+		TwilioAccountSID:       os.Getenv("TWILIO_ACCOUNT_SID"),
+		TwilioAuthToken:        os.Getenv("TWILIO_AUTH_TOKEN"),
+		TwilioVerifyServiceSID: os.Getenv("TWILIO_VERIFY_SERVICE_SID"),
 
 		ObjectStorageProvider: getEnv("OBJECT_STORAGE_PROVIDER", "fake"),
 		MediaLocalDir:         getEnv("MEDIA_LOCAL_DIR", "./data/media"),
@@ -101,6 +142,57 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// ResolveOTPProvider decides which otp provider cmd/api runs with (issue
+// #59) and validates the selection is complete. The rules are fail-closed:
+//
+//   - "fake" is only reachable under an explicit APP_ENV=development —
+//     as the default when OTP_PROVIDER is unset, or when set explicitly.
+//   - any other environment (production, unset, or unrecognized) rejects
+//     fake, unset, and unknown providers outright; only "twilio" is
+//     accepted there.
+//   - "twilio" additionally requires TWILIO_ACCOUNT_SID,
+//     TWILIO_AUTH_TOKEN, and TWILIO_VERIFY_SERVICE_SID in every
+//     environment; any missing one fails resolution, naming the missing
+//     variables but never echoing a configured value.
+//
+// There is intentionally no path that degrades a selected or required
+// twilio provider to fake — misconfiguration stops startup instead.
+func (c Config) ResolveOTPProvider() (string, error) {
+	dev := c.AppEnv == AppEnvDevelopment
+
+	provider := c.OTPProvider
+	if provider == "" && dev {
+		provider = OTPProviderFake
+	}
+
+	switch provider {
+	case OTPProviderFake:
+		if !dev {
+			return "", fmt.Errorf("OTP_PROVIDER %q is only allowed with APP_ENV=%s (production requires OTP_PROVIDER=%s)", provider, AppEnvDevelopment, OTPProviderTwilio)
+		}
+		return OTPProviderFake, nil
+	case OTPProviderTwilio:
+		var missing []string
+		if c.TwilioAccountSID == "" {
+			missing = append(missing, "TWILIO_ACCOUNT_SID")
+		}
+		if c.TwilioAuthToken == "" {
+			missing = append(missing, "TWILIO_AUTH_TOKEN")
+		}
+		if c.TwilioVerifyServiceSID == "" {
+			missing = append(missing, "TWILIO_VERIFY_SERVICE_SID")
+		}
+		if len(missing) > 0 {
+			return "", fmt.Errorf("OTP_PROVIDER=%s requires %s", OTPProviderTwilio, strings.Join(missing, ", "))
+		}
+		return OTPProviderTwilio, nil
+	case "":
+		return "", fmt.Errorf("OTP_PROVIDER is required (set APP_ENV=%s for the local %q default, or OTP_PROVIDER=%s)", AppEnvDevelopment, OTPProviderFake, OTPProviderTwilio)
+	default:
+		return "", fmt.Errorf("unsupported OTP_PROVIDER %q (%q with APP_ENV=%s, or %q)", provider, OTPProviderFake, AppEnvDevelopment, OTPProviderTwilio)
+	}
 }
 
 func getEnv(key, fallback string) string {

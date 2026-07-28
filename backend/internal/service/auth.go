@@ -91,6 +91,7 @@ type AuthStore interface {
 type AuthService struct {
 	db             AuthStore
 	sms            SmsSender
+	external       OTPVerificationProvider
 	sessions       *SessionService
 	txRunner       TxRunner
 	otpTTL         time.Duration
@@ -119,6 +120,27 @@ func WithAuthTxRunner(tx TxRunner) AuthServiceOption {
 	return func(s *AuthService) { s.txRunner = tx }
 }
 
+// WithExternalOTPProvider routes RequestOTP and VerifyOTP's code issuance
+// and checking through an external verification provider (issue #59,
+// twilio verify) instead of the local otp_codes flow. The provider owns
+// code generation, delivery, expiry, resend cadence, and guess limiting
+// end to end, so none of the local otp_codes machinery (cooldown check,
+// code hashing, atomic consumption, attempt counting) runs — account
+// resolution, device linking, and session issuance are unchanged and still
+// commit atomically when a TxRunner is configured. With this option set,
+// the SmsSender passed to NewAuthService is never called and may be nil;
+// there is deliberately no code path from a failing external provider back
+// onto the local/fake flow.
+func WithExternalOTPProvider(p OTPVerificationProvider) AuthServiceOption {
+	return func(s *AuthService) { s.external = p }
+}
+
+// NewAuthService builds the phone-otp auth service. sms may be nil only
+// when WithExternalOTPProvider is also passed — the external provider then
+// replaces the local generate-store-send flow entirely. That invariant is
+// enforced here: a nil sms without an external provider panics at
+// construction (wiring) time rather than surfacing later as a nil
+// dereference on the first RequestOTP.
 func NewAuthService(db AuthStore, sms SmsSender, sessions *SessionService, otpTTL time.Duration, otpMaxAttempts int32, resendCooldown time.Duration, opts ...AuthServiceOption) *AuthService {
 	s := &AuthService{
 		db:             db,
@@ -132,6 +154,9 @@ func NewAuthService(db AuthStore, sms SmsSender, sessions *SessionService, otpTT
 	for _, opt := range opts {
 		opt(s)
 	}
+	if s.sms == nil && s.external == nil {
+		panic("service: NewAuthService requires an SmsSender unless WithExternalOTPProvider is configured")
+	}
 	return s
 }
 
@@ -144,6 +169,14 @@ func (s *AuthService) RequestOTP(ctx context.Context, rawPhone string) error {
 	phone, err := NormalizePhone(rawPhone)
 	if err != nil {
 		return err
+	}
+
+	if s.external != nil {
+		// The provider owns generation, delivery, and resend cadence
+		// (issue #59) — no otp_codes row is written and the local cooldown
+		// doesn't apply; a provider-side send limit comes back as
+		// ErrOTPResendTooSoon through the same error contract.
+		return s.external.StartVerification(ctx, phone)
 	}
 
 	latest, err := s.db.GetLatestOtpCode(ctx, phone)
@@ -200,6 +233,16 @@ func (s *AuthService) VerifyOTP(ctx context.Context, rawPhone, code, deviceID st
 	did, err := uuid.Parse(deviceID)
 	if err != nil {
 		return Session{}, err
+	}
+
+	if s.external != nil {
+		// The provider checked, expired, or attempt-limited the code
+		// itself (issue #59) — a failure returns here with the mapped
+		// error, never falling back onto the local otp_codes flow.
+		if err := s.external.CheckVerification(ctx, phone, code); err != nil {
+			return Session{}, err
+		}
+		return s.sessionForVerifiedPhone(ctx, phone, did, s.clock())
 	}
 
 	row, err := s.db.GetLatestOtpCode(ctx, phone)
@@ -285,6 +328,53 @@ func (s *AuthService) VerifyOTP(ctx context.Context, rawPhone, code, deviceID st
 		return Session{}, err
 	}
 
+	session, err := s.sessions.Issue(ctx, uuid.UUID(user.ID.Bytes))
+	if err != nil {
+		return Session{}, err
+	}
+	session.IsNewAccount = isNew
+	return session, nil
+}
+
+// sessionForVerifiedPhone runs VerifyOTP's post-verification tail for the
+// external-provider path (issue #59): resolve-or-create the account for an
+// already-verified phone, link the device, and issue a session — all in
+// one transaction when a TxRunner is configured, exactly like the local
+// path. It has no consumption step of its own because the provider already
+// consumed the verification atomically on its side; the local path keeps
+// its ConsumeOtpCodeIfValid inside its own transaction and doesn't reuse
+// this helper for that reason.
+func (s *AuthService) sessionForVerifiedPhone(ctx context.Context, phone string, did uuid.UUID, now time.Time) (Session, error) {
+	if s.txRunner != nil {
+		var session Session
+		err := s.txRunner.WithinTx(ctx, func(q *repository.Queries) error {
+			user, isNew, err := s.resolveOrCreateUser(ctx, q, phone, now)
+			if err != nil {
+				return err
+			}
+			if err := s.linkDevice(ctx, q, did, uuid.UUID(user.ID.Bytes)); err != nil {
+				return err
+			}
+			session, err = s.sessions.IssueTx(ctx, q, uuid.UUID(user.ID.Bytes))
+			if err != nil {
+				return err
+			}
+			session.IsNewAccount = isNew
+			return nil
+		})
+		if err != nil {
+			return Session{}, err
+		}
+		return session, nil
+	}
+
+	user, isNew, err := s.resolveOrCreateUser(ctx, s.db, phone, now)
+	if err != nil {
+		return Session{}, err
+	}
+	if err := s.linkDevice(ctx, s.db, did, uuid.UUID(user.ID.Bytes)); err != nil {
+		return Session{}, err
+	}
 	session, err := s.sessions.Issue(ctx, uuid.UUID(user.ID.Bytes))
 	if err != nil {
 		return Session{}, err

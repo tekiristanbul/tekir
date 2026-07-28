@@ -91,11 +91,12 @@ func run() error {
 // newNotificationSender selects the NotificationSender implementation
 // named by provider. Only "fake" (the deterministic, log-only, no-network
 // dev/test provider — see docs/architecture/backend.md) is implemented as
-// of issue #78. Unlike newSmsSender/newObjectStore in cmd/api, an empty
-// provider is rejected too, not defaulted to "fake" — a production
-// deployment that never set NOTIFICATION_PROVIDER must fail to start
-// rather than silently run the dev/test provider (issue #78's explicit
-// fail-closed constraint).
+// of issue #78. Unlike newObjectStore in cmd/api, an empty provider is
+// rejected too, not defaulted to "fake" — a production deployment that
+// never set NOTIFICATION_PROVIDER must fail to start rather than silently
+// run the dev/test provider (issue #78's explicit fail-closed constraint;
+// OTP_PROVIDER gained the same production posture in issue #59 via
+// config.ResolveOTPProvider).
 func newNotificationSender(provider string) (service.NotificationSender, error) {
 	switch provider {
 	case "fake":

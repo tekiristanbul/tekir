@@ -694,6 +694,178 @@ func TestAuthService_UnlinkDevice_StillLinkedDeviceKeepsRejectingOtherAccount(t 
 	}
 }
 
+// fakeExternalOTPProvider is an in-process OTPVerificationProvider stub
+// (issue #59): it records every start/check call and answers with the
+// configured errors.
+type fakeExternalOTPProvider struct {
+	startCalls []string
+	checkCalls []struct{ phone, code string }
+	startErr   error
+	checkErr   error
+}
+
+func (f *fakeExternalOTPProvider) StartVerification(_ context.Context, phone string) error {
+	f.startCalls = append(f.startCalls, phone)
+	return f.startErr
+}
+
+func (f *fakeExternalOTPProvider) CheckVerification(_ context.Context, phone, code string) error {
+	f.checkCalls = append(f.checkCalls, struct{ phone, code string }{phone, code})
+	return f.checkErr
+}
+
+// panicSms fails the test if the local delivery path is ever reached while
+// an external provider is configured — the "never falls back to fake"
+// proof issue #59 requires.
+type panicSms struct{ t *testing.T }
+
+func (p *panicSms) Send(context.Context, string, string) error {
+	p.t.Fatal("SmsSender must never be called when an external otp provider is configured")
+	return nil
+}
+
+func newTestExternalAuthService(t *testing.T, store *fakeAuthStore, external service.OTPVerificationProvider) *service.AuthService {
+	t.Helper()
+	sessions := service.NewSessionService(newFakeSessionStore(), []byte("k"), time.Hour, 24*time.Hour)
+	return service.NewAuthService(store, &panicSms{t: t}, sessions, 5*time.Minute, 5, time.Minute, service.WithExternalOTPProvider(external))
+}
+
+// TestNewAuthService_NilSmsWithoutExternalPanics proves the documented
+// invariant is enforced at construction time (pr #86 review): a nil
+// SmsSender is only legal alongside WithExternalOTPProvider.
+func TestNewAuthService_NilSmsWithoutExternalPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected NewAuthService to panic for nil sms without an external provider")
+		}
+	}()
+	sessions := service.NewSessionService(newFakeSessionStore(), []byte("k"), time.Hour, 24*time.Hour)
+	service.NewAuthService(newFakeAuthStore(), nil, sessions, 5*time.Minute, 5, time.Minute)
+}
+
+func TestAuthService_External_RequestOTP_StartsVerification(t *testing.T) {
+	store := newFakeAuthStore()
+	external := &fakeExternalOTPProvider{}
+	svc := newTestExternalAuthService(t, store, external)
+
+	if err := svc.RequestOTP(context.Background(), "532 111 22 33"); err != nil {
+		t.Fatalf("request otp: %v", err)
+	}
+	if len(external.startCalls) != 1 || external.startCalls[0] != "+905321112233" {
+		t.Errorf("expected one start call with the normalized phone, got %v", external.startCalls)
+	}
+	if len(store.otpCodes) != 0 {
+		t.Error("expected no local otp_codes row when the provider owns the code")
+	}
+}
+
+func TestAuthService_External_RequestOTP_InvalidPhoneNeverReachesProvider(t *testing.T) {
+	external := &fakeExternalOTPProvider{}
+	svc := newTestExternalAuthService(t, newFakeAuthStore(), external)
+
+	if err := svc.RequestOTP(context.Background(), "not-a-phone"); !errors.Is(err, service.ErrInvalidPhone) {
+		t.Fatalf("expected ErrInvalidPhone, got %v", err)
+	}
+	if len(external.startCalls) != 0 {
+		t.Error("expected no provider call for a malformed phone")
+	}
+}
+
+func TestAuthService_External_RequestOTP_ProviderErrorPropagates(t *testing.T) {
+	external := &fakeExternalOTPProvider{startErr: service.ErrOTPResendTooSoon}
+	svc := newTestExternalAuthService(t, newFakeAuthStore(), external)
+
+	if err := svc.RequestOTP(context.Background(), "5321112233"); !errors.Is(err, service.ErrOTPResendTooSoon) {
+		t.Errorf("expected the provider's mapped error, got %v", err)
+	}
+}
+
+func TestAuthService_External_VerifyOTP_SuccessIssuesSession(t *testing.T) {
+	store := newFakeAuthStore()
+	external := &fakeExternalOTPProvider{}
+	svc := newTestExternalAuthService(t, store, external)
+
+	session, err := svc.VerifyOTP(context.Background(), "5321112233", "123456", testDeviceID)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if len(external.checkCalls) != 1 || external.checkCalls[0].phone != "+905321112233" || external.checkCalls[0].code != "123456" {
+		t.Errorf("expected one check call with normalized phone and code, got %v", external.checkCalls)
+	}
+	if session.AccessToken == "" || session.RefreshToken == "" || session.UserID == "" {
+		t.Error("expected a full session on successful verify")
+	}
+	if !session.IsNewAccount {
+		t.Error("expected IsNewAccount true for a brand-new phone number")
+	}
+	linked, ok := store.devices[uuid.MustParse(testDeviceID)]
+	if !ok || !linked.UserID.Valid {
+		t.Fatal("expected device to be linked to the new account")
+	}
+}
+
+func TestAuthService_External_VerifyOTP_ReturningAccount(t *testing.T) {
+	store := newFakeAuthStore()
+	external := &fakeExternalOTPProvider{}
+	svc := newTestExternalAuthService(t, store, external)
+
+	first, err := svc.VerifyOTP(context.Background(), "5321112233", "123456", testDeviceID)
+	if err != nil {
+		t.Fatalf("first verify: %v", err)
+	}
+	second, err := svc.VerifyOTP(context.Background(), "5321112233", "654321", "33333333-3333-4333-8333-333333333333")
+	if err != nil {
+		t.Fatalf("second verify: %v", err)
+	}
+	if first.UserID != second.UserID {
+		t.Errorf("expected the same account for the same phone, got %s vs %s", first.UserID, second.UserID)
+	}
+	if second.IsNewAccount {
+		t.Error("expected the returning-account verify to report IsNewAccount false")
+	}
+}
+
+// TestAuthService_External_VerifyOTP_RejectionNeverFallsBack seeds a local
+// otp_codes row that WOULD verify through the local flow, then has the
+// provider reject the code — the rejection must stand. A configured
+// external provider is authoritative; there is no path back onto the local
+// code table (issue #59).
+func TestAuthService_External_VerifyOTP_RejectionNeverFallsBack(t *testing.T) {
+	store := newFakeAuthStore()
+	now := time.Now()
+	if _, err := store.CreateOtpCode(context.Background(), repository.CreateOtpCodeParams{
+		ID:          pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		Phone:       "+905321112233",
+		CodeHash:    service.HashOTPCode("+905321112233", "123456"),
+		MaxAttempts: 5,
+		ExpiresAt:   pgtype.Timestamptz{Time: now.Add(5 * time.Minute), Valid: true},
+	}); err != nil {
+		t.Fatalf("seed otp code: %v", err)
+	}
+
+	external := &fakeExternalOTPProvider{checkErr: service.ErrOTPCodeMismatch}
+	svc := newTestExternalAuthService(t, store, external)
+
+	if _, err := svc.VerifyOTP(context.Background(), "5321112233", "123456", testDeviceID); !errors.Is(err, service.ErrOTPCodeMismatch) {
+		t.Fatalf("expected the provider's rejection to stand, got %v", err)
+	}
+	if len(store.usersByPhone) != 0 {
+		t.Error("expected no account to be created on a rejected verification")
+	}
+	if row := store.otpCodes["+905321112233"]; row.ConsumedAt.Valid || row.Attempts != 0 {
+		t.Error("expected the local otp_codes row to be untouched by the external path")
+	}
+}
+
+func TestAuthService_External_VerifyOTP_ProviderUnavailablePropagates(t *testing.T) {
+	external := &fakeExternalOTPProvider{checkErr: service.ErrOTPProviderUnavailable}
+	svc := newTestExternalAuthService(t, newFakeAuthStore(), external)
+
+	if _, err := svc.VerifyOTP(context.Background(), "5321112233", "123456", testDeviceID); !errors.Is(err, service.ErrOTPProviderUnavailable) {
+		t.Errorf("expected ErrOTPProviderUnavailable, got %v", err)
+	}
+}
+
 func TestHashOTPCode_BoundToPhone(t *testing.T) {
 	if service.HashOTPCode("+905321112233", "123456") == service.HashOTPCode("+905339998877", "123456") {
 		t.Error("the same code for two different phone numbers must hash differently")
