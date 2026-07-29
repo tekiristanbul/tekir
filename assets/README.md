@@ -1,12 +1,15 @@
 # release assets (temporary 0.1 identity — issue #85)
 
-everything in this tree is the **deliberately temporary** 0.1 visual
-identity: a typographic `tekir` wordmark and a wordmark-derived `t`
-lettermark, set in the app's own display font (Fraunces, weight 600) on the
-approved product palette. **issue #24 remains the final original-logo task**
-— when that lands, regenerate or replace this tree; nothing outside it
-hardcodes the artwork except the inline copy in `app/web/index.html`
-(marked with a comment pointing back here).
+everything in this tree is the **temporary 0.1 brand** (approved by the
+product owner for 0.1 only, 2026-07-29): a typographic `tekir` wordmark
+and a wordmark-derived `t` lettermark, set in the app's own display font
+(Fraunces, weight 600) on the approved product palette. **issue #24
+remains the final original-logo task** — replacing this brand must not
+require product or architecture changes, and it doesn't: nothing outside
+this tree hardcodes the artwork except the inline copy in
+`app/web/index.html` (marked with a comment pointing back here) and the
+splash lockup in `app/lib/core/splash/splash_gate.dart`, both of which
+swap with the regenerated sources.
 
 ## structure
 
