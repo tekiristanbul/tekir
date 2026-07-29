@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,9 +26,14 @@ Future<bool> bootstrapFirebase() async {
     return false;
   }
   try {
+    // main() awaits this before runApp. On web initializeApp loads the
+    // firebase js sdk from the cdn at runtime; a hung fetch there isn't a
+    // thrown error, so without a cap it would pin every user to the launch
+    // splash forever. Timing out degrades to noop-analytics/disabled-push,
+    // same as any other init failure.
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
-    );
+    ).timeout(const Duration(seconds: 5));
     return true;
   } catch (error) {
     if (kDebugMode) {
