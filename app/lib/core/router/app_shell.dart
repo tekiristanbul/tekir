@@ -46,7 +46,12 @@ class AppShell extends StatelessWidget {
           initialLocation: index == navigationShell.currentIndex,
         ),
       ),
-      floatingActionButton: const _AddCatFab(),
+      // Map tab only (product owner, issue #91 review): on Keşfet/Profil
+      // the centerFloat fab overlapped real content (e.g. the profile
+      // screen's bottom entries) with no map underneath to justify it.
+      floatingActionButton: navigationShell.currentIndex == 0
+          ? const _AddCatFab()
+          : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
