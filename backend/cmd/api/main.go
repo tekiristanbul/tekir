@@ -41,6 +41,14 @@ func run() error {
 		return err
 	}
 
+	// same fail-closed startup gate for media storage (issue #89):
+	// production with fake/unset/unknown, or s3 with missing settings,
+	// stops here — there is no fallback path to local disk.
+	objectStorageProvider, err := cfg.ResolveObjectStorageProvider()
+	if err != nil {
+		return err
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: logLevel(cfg.LogLevel),
 	}))
@@ -63,7 +71,7 @@ func run() error {
 	followsSvc := service.NewFollowsService(store)
 	followsHandler := handler.NewFollowsHandler(followsSvc)
 
-	objectStore, err := newObjectStore(cfg.ObjectStorageProvider, cfg.MediaLocalDir, cfg.MediaPublicBaseURL)
+	objectStore, err := newObjectStore(cfg, objectStorageProvider)
 	if err != nil {
 		return err
 	}
@@ -73,9 +81,14 @@ func run() error {
 	mediaHandler := handler.NewMediaHandler(mediaSvc, cfg.MediaMaxBytes)
 	// GET /v1/media/objects/{key} only ever serves what FakeObjectStore
 	// wrote — see docs/architecture/backend.md's OBJECT_STORAGE_PROVIDER.
-	// newObjectStore fails startup on any other provider value, so this
-	// concrete-type assertion always succeeds as of issue #70.
-	mediaServeHandler := handler.NewMediaServeHandler(objectStore.(*service.FakeObjectStore))
+	// With the s3 provider, media urls point straight at the bucket's
+	// public endpoint, so this route answers 404 for everything rather
+	// than proxying reads through the api.
+	localObjects := handler.LocalObjectReader(noLocalObjects{})
+	if fake, ok := objectStore.(*service.FakeObjectStore); ok {
+		localObjects = fake
+	}
+	mediaServeHandler := handler.NewMediaServeHandler(localObjects)
 
 	sessionsSvc := service.NewSessionService(store, []byte(cfg.JWTSigningKey), cfg.AccessTokenTTL, cfg.RefreshTokenTTL, service.WithSessionTxRunner(store))
 
@@ -147,18 +160,33 @@ func run() error {
 	return nil
 }
 
-// newObjectStore selects the ObjectStore implementation named by provider.
-// Only "fake" (the deterministic, local-disk dev/test provider — see
-// docs/architecture/backend.md) is implemented as of issue #70: an
-// unrecognized value fails loudly at startup rather than silently
-// defaulting to a provider the operator didn't ask for.
-func newObjectStore(provider, localDir, publicBaseURL string) (service.ObjectStore, error) {
+// newObjectStore builds the ObjectStore implementation named by provider.
+// provider was already validated by cfg.ResolveObjectStorageProvider —
+// this switch is exhaustive over its possible returns, mirroring the otp
+// provider switch above.
+func newObjectStore(cfg config.Config, provider string) (service.ObjectStore, error) {
 	switch provider {
-	case "fake":
-		return service.NewFakeObjectStore(localDir, publicBaseURL)
+	case config.ObjectStorageProviderFake:
+		return service.NewFakeObjectStore(cfg.MediaLocalDir, cfg.MediaPublicBaseURL)
+	case config.ObjectStorageProviderS3:
+		var opts []service.S3ObjectStoreOption
+		if cfg.S3ForcePathStyle {
+			opts = append(opts, service.WithS3ForcePathStyle())
+		}
+		return service.NewS3ObjectStore(cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKeyID, cfg.S3SecretAccessKey, cfg.S3PublicBaseURL, opts...)
 	default:
-		return nil, fmt.Errorf("unsupported OBJECT_STORAGE_PROVIDER %q (only \"fake\" is implemented)", provider)
+		return nil, fmt.Errorf("unsupported resolved object storage provider %q", provider)
 	}
+}
+
+// noLocalObjects backs GET /v1/media/objects/{key} when the s3 provider is
+// selected: nothing is stored locally, so every key is a clean 404 instead
+// of the route disappearing (a stale local url then degrades exactly like
+// a deleted object).
+type noLocalObjects struct{}
+
+func (noLocalObjects) Get(context.Context, string) ([]byte, error) {
+	return nil, service.ErrObjectNotFound
 }
 
 func logLevel(level string) slog.Level {

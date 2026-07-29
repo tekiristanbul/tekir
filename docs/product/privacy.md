@@ -13,6 +13,8 @@ make it clear which information is public, which information remains private, an
 - a user's display name, selected profile avatar, earned badges, contribution totals, and public contribution history are public.
 - cat records, updates, help alerts, comments, and uploaded media are public because the product depends on shared city information.
 - uploaded media may contain location or contextual information; the upload flow must explain that accepted media becomes publicly visible.
+- uploaded images are decoded and re-encoded before storage, which strips exif and other embedded metadata (including camera location) so it never reaches public storage.
+- stored media objects live in publicly readable object storage under opaque random keys; keys never contain phone numbers, display names, cat names, comments, original filenames, coordinates, or account/device identifiers.
 - precise device location is used only when necessary for map interaction or user-requested nearby discovery. it is not published as a user's location history.
 - tekir does not sell personal data or expose private account data to advertisers.
 - account deletion removes or anonymizes personal account information. public cat history and contributions remain, but are no longer associated with the deleted user's public identity.

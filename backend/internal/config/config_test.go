@@ -67,13 +67,12 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 }
 
-// TestLoad_NotificationProviderHasNoDefault proves NotificationProvider,
-// unlike OTPProvider/ObjectStorageProvider, is empty (not "fake") when
-// unset — issue #78 requires notification delivery to fail closed rather
-// than silently default to the dev/test provider in a production
-// deployment that forgot to set NOTIFICATION_PROVIDER. The empty-string
-// case is rejected by cmd/notifier's newNotificationSender, not here —
-// Load() itself never fails on it, mirroring how OTP_PROVIDER/
+// TestLoad_NotificationProviderHasNoDefault proves NotificationProvider is
+// empty (not "fake") when unset — issue #78 requires notification delivery
+// to fail closed rather than silently default to the dev/test provider in
+// a production deployment that forgot to set NOTIFICATION_PROVIDER. The
+// empty-string case is rejected by cmd/notifier's newNotificationSender,
+// not here — Load() itself never fails on it, mirroring how OTP_PROVIDER/
 // OBJECT_STORAGE_PROVIDER validation also lives at the cmd/api call site.
 func TestLoad_NotificationProviderHasNoDefault(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://example")
@@ -86,6 +85,24 @@ func TestLoad_NotificationProviderHasNoDefault(t *testing.T) {
 	}
 	if cfg.NotificationProvider != "" {
 		t.Errorf("expected no default notification provider, got %q", cfg.NotificationProvider)
+	}
+}
+
+// TestLoad_ObjectStorageProviderHasNoDefault proves the old unconditional
+// "fake" default is gone (issue #89): like OTP_PROVIDER and
+// NOTIFICATION_PROVIDER, the raw value stays empty when unset and the
+// environment-aware defaulting lives in ResolveObjectStorageProvider.
+func TestLoad_ObjectStorageProviderHasNoDefault(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("JWT_SIGNING_KEY", "test-signing-key")
+	t.Setenv("OBJECT_STORAGE_PROVIDER", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ObjectStorageProvider != "" {
+		t.Errorf("expected no default object storage provider, got %q", cfg.ObjectStorageProvider)
 	}
 }
 
@@ -242,6 +259,106 @@ func TestResolveNotificationProvider(t *testing.T) {
 				// error may name the variable but must never echo the path.
 				if tc.cfg.FCMCredentialsFile != "" && strings.Contains(err.Error(), tc.cfg.FCMCredentialsFile) {
 					t.Errorf("error leaks the credentials path: %q", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("expected provider %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+// TestResolveObjectStorageProvider covers issue #89's fail-closed provider
+// selection, mirroring TestResolveOTPProvider/TestResolveNotificationProvider:
+// fake is only reachable under an explicit APP_ENV=development, every
+// non-development environment accepts s3 exclusively, and s3 always
+// requires its six settings. No case ever resolves a misconfigured s3
+// provider to fake/local disk.
+func TestResolveObjectStorageProvider(t *testing.T) {
+	s3 := Config{
+		S3Endpoint:        "https://fra1.digitaloceanspaces.com",
+		S3Region:          "fra1",
+		S3Bucket:          "bucket-placeholder",
+		S3AccessKeyID:     "access-key-placeholder",
+		S3SecretAccessKey: "secret-key-placeholder",
+		S3PublicBaseURL:   "https://bucket-placeholder.fra1.digitaloceanspaces.com",
+	}
+
+	cases := []struct {
+		name     string
+		cfg      Config
+		want     string
+		wantErr  bool
+		errNames []string // substrings the error must mention
+	}{
+		{name: "development defaults to fake when unset", cfg: Config{AppEnv: AppEnvDevelopment}, want: ObjectStorageProviderFake},
+		{name: "development explicit fake", cfg: Config{AppEnv: AppEnvDevelopment, ObjectStorageProvider: ObjectStorageProviderFake}, want: ObjectStorageProviderFake},
+		{name: "development s3 with full settings", cfg: func() Config {
+			c := s3
+			c.AppEnv = AppEnvDevelopment
+			c.ObjectStorageProvider = ObjectStorageProviderS3
+			return c
+		}(), want: ObjectStorageProviderS3},
+		{name: "development unknown provider rejected", cfg: Config{AppEnv: AppEnvDevelopment, ObjectStorageProvider: "carrier-pigeon"}, wantErr: true},
+		{name: "production s3 with full settings", cfg: func() Config {
+			c := s3
+			c.AppEnv = AppEnvProduction
+			c.ObjectStorageProvider = ObjectStorageProviderS3
+			return c
+		}(), want: ObjectStorageProviderS3},
+		{name: "production rejects fake", cfg: Config{AppEnv: AppEnvProduction, ObjectStorageProvider: ObjectStorageProviderFake}, wantErr: true},
+		{name: "production rejects unset", cfg: Config{AppEnv: AppEnvProduction}, wantErr: true},
+		{name: "production rejects unknown", cfg: Config{AppEnv: AppEnvProduction, ObjectStorageProvider: "carrier-pigeon"}, wantErr: true},
+		{name: "unset environment behaves as production for fake", cfg: Config{ObjectStorageProvider: ObjectStorageProviderFake}, wantErr: true},
+		{name: "unset environment behaves as production for unset provider", cfg: Config{}, wantErr: true},
+		{name: "unset environment still accepts configured s3", cfg: func() Config { c := s3; c.ObjectStorageProvider = ObjectStorageProviderS3; return c }(), want: ObjectStorageProviderS3},
+		{name: "unrecognized environment behaves as production", cfg: Config{AppEnv: "staging", ObjectStorageProvider: ObjectStorageProviderFake}, wantErr: true},
+		{name: "s3 missing endpoint", cfg: func() Config {
+			c := s3
+			c.AppEnv = AppEnvProduction
+			c.ObjectStorageProvider = ObjectStorageProviderS3
+			c.S3Endpoint = ""
+			return c
+		}(), wantErr: true, errNames: []string{"S3_ENDPOINT"}},
+		{name: "s3 missing secret access key", cfg: func() Config {
+			c := s3
+			c.AppEnv = AppEnvProduction
+			c.ObjectStorageProvider = ObjectStorageProviderS3
+			c.S3SecretAccessKey = ""
+			return c
+		}(), wantErr: true, errNames: []string{"S3_SECRET_ACCESS_KEY"}},
+		{name: "s3 missing public base url", cfg: func() Config {
+			c := s3
+			c.AppEnv = AppEnvDevelopment
+			c.ObjectStorageProvider = ObjectStorageProviderS3
+			c.S3PublicBaseURL = ""
+			return c
+		}(), wantErr: true, errNames: []string{"S3_PUBLIC_BASE_URL"}},
+		{name: "s3 missing everything names all six", cfg: Config{AppEnv: AppEnvProduction, ObjectStorageProvider: ObjectStorageProviderS3}, wantErr: true, errNames: []string{"S3_ENDPOINT", "S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_PUBLIC_BASE_URL"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.cfg.ResolveObjectStorageProvider()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got provider %q", got)
+				}
+				for _, name := range tc.errNames {
+					if !strings.Contains(err.Error(), name) {
+						t.Errorf("expected error to mention %s, got %q", name, err)
+					}
+				}
+				// configured values are secrets — an error may name the
+				// variable but must never echo its value.
+				for _, secret := range []string{tc.cfg.S3AccessKeyID, tc.cfg.S3SecretAccessKey} {
+					if secret != "" && strings.Contains(err.Error(), secret) {
+						t.Errorf("error leaks a configured value: %q", err)
+					}
 				}
 				return
 			}

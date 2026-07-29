@@ -209,6 +209,48 @@ build with `ANALYTICS_PROVIDER=firebase` against the non-production project and 
 - **android**: 0.1 release target (product-owner decision 2026-07-29); publish timing is the product owner's. the Flutter Android target exists (`app/android`, package id `istanbul.tekir`, portrait-only) with generated launcher/adaptive icons and a prototype-aligned native launch screen, and builds from this repo. `flutter build appbundle` produces the Play-ready artifact once `android/key.properties` points at an upload keystore (see `android/key.properties.example`); without it, release builds fall back to debug signing for local runs. still console-side: play listing + data-safety form, play app signing, firebase android app registration if push/analytics ship enabled, real-build screenshots.
 - **ios**: 0.1 release target (product-owner decision 2026-07-29). the Flutter iOS target exists (`app/ios`, bundle id `istanbul.tekir`, min iOS 15) with generated icons and a prototype-aligned native launch screen, but it was scaffolded from linux and has never been built: before treating it as release-ready, run `pod install` + a real Xcode build on a mac, register the `istanbul.tekir` iOS app in Firebase (`GoogleService-Info.plist` is not committed), and configure the APNs key for push.
 
+## object storage providers
+
+`OBJECT_STORAGE_PROVIDER` selects where uploaded media (cat photos) is stored:
+
+- `fake` (local default): deterministic, no network. objects are written to `MEDIA_LOCAL_DIR` (default `backend/data/media`) and served back by the api at `GET /v1/media/objects/{key}`; no object-storage account needed. this is what `make run`, docker compose, and the automated tests use.
+- `s3`: real s3-compatible object storage (digitalocean spaces for 0.1). requires `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and `S3_PUBLIC_BASE_URL`. `S3_FORCE_PATH_STYLE` is optional and stays `false` for spaces.
+
+the `fake` default only applies under an explicit `APP_ENV=development`. any other environment — including unset — fails startup unless `OBJECT_STORAGE_PROVIDER=s3` is fully configured; there is no fallback from a selected `s3` provider to local disk (same posture as `OTP_PROVIDER` and `NOTIFICATION_PROVIDER`).
+
+the variable names are application-owned (`S3_*`, not `AWS_*`) so the process can never accidentally pick up unrelated host credentials.
+
+### production setup
+
+set `APP_ENV=production`, `OBJECT_STORAGE_PROVIDER=s3`, and the six `S3_*` values as deployment secrets. `fake`, unset, unknown, and partially configured providers are rejected at startup. objects are uploaded with `x-amz-acl: public-read`, the validated image content type, and an immutable cache-control policy; `S3_PUBLIC_BASE_URL` (the bucket's public endpoint, or its cdn endpoint) is what stored media urls are built from — changing it later only affects new uploads, since urls are persisted per media row. uploads go through the backend api only, so no bucket cors configuration is needed.
+
+operational procedures:
+
+- **credential rotation**: create a second spaces access key, update the deployment secrets, restart, then revoke the old key. startup only validates presence, so a bad key surfaces as logged `s3 object storage rejected the configured credentials` on the first upload — verify with a real upload before revoking.
+- **rollback**: redeploy with the previous secrets. rolling back from `s3` to `fake` is allowed only outside production; production never silently downgrades.
+- **provider outage**: cat creation and media upload fail with retryable internal errors (one bounded retry per request for transient failures); reads are unaffected for already-delivered urls served by spaces/cdn, and the rest of the api keeps working.
+- **orphan cleanup**: a failed database write compensates by deleting the just-uploaded object; if that best-effort delete also fails, the leaked object is logged (`failed to clean up media object after create failure`). to detect orphans, list bucket objects and compare against `media.object_key`; objects absent from the table and older than a day are safe to delete. never delete objects newer than that — an upload may be mid-transaction.
+- **incident response**: if credentials leak, revoke the key in the digitalocean console first (writes fail closed, public reads continue), then rotate as above and audit the bucket for unexpected objects.
+
+### local spaces smoke test
+
+keep real values only in a repo-root `.env.local` (gitignored — copy [`.env.example`](.env.example)); never commit them or paste them into logs, issues, or pr evidence.
+
+1. create a non-production space and a dedicated spaces access key in the digitalocean console, and fill the six `S3_*` values in `.env.local` (`S3_ENDPOINT` is the regional endpoint without the bucket name; `S3_PUBLIC_BASE_URL` is `https://<space>.<region>.digitaloceanspaces.com` or the cdn endpoint).
+2. run the backend with the s3 provider, loading secrets without echoing them:
+
+   ```text
+   cd backend
+   set -a; . ../.env.local; set +a
+   OBJECT_STORAGE_PROVIDER=s3 make run
+   ```
+
+3. create a cat with a jpeg and a png through the real flutter flow; confirm the returned photo url points at `S3_PUBLIC_BASE_URL`, renders, and the object's content type and cache-control look right in the console.
+4. restart the backend and confirm the cat still displays its photo.
+5. retry the same create with the same idempotency key and confirm no duplicate cat or extra object appears.
+6. unset one required value (e.g. `S3_SECRET_ACCESS_KEY=""`) and confirm startup fails instead of falling back to local disk.
+7. drop `OBJECT_STORAGE_PROVIDER=s3` and confirm the local fake flow still works for normal development.
+
 ## flutter development
 
 install flutter dependencies:
