@@ -81,18 +81,25 @@ startup is terracotta from the first byte with no white flash.
 
 ## platforms and stores
 
-only **web** is a release-supported 0.1 target (see DEVELOPMENT.md); the
-flutter android/ios targets don't exist in this repository yet. per issue
-\#85, no Play/App Store icon or screenshot sets are pre-generated for
-unsupported platforms. when a mobile target is added:
+0.1 release targets are **web/PWA and ios** (product-owner decision
+2026-07-29). the generator fills the ios Runner icon set
+(`app/ios/Runner/Assets.xcassets/AppIcon.appiconset`, sizes read from
+its `Contents.json`, opaque as the store requires) and the native
+launch image (the splash tile at 84pt over a terracotta
+`LaunchScreen.storyboard` background) from the same canonical sources —
+no hand-maintained ios artwork. bundle id: `istanbul.tekir`.
 
-1. add the platform export sizes to `scripts/generate.py` from the icon
-   master (android adaptive icons need a separate foreground layer —
-   lettermark on transparent — plus `#A44732` background; ios icons must
-   be opaque, which the full-bleed master already is),
-2. verify dimensions against the **current** official store documentation
-   at that moment (don't trust sizes written down here),
-3. capture the store screenshot sets per `store/listing/listing.md`.
+ios steps this repository cannot do (need a mac and the consoles):
+xcode signing + first `pod install`/build, APNs key + firebase ios app
+registration (`GoogleService-Info.plist`), TestFlight, and capturing
+App Store screenshots from the real ios build at the sizes App Store
+Connect requires — verify those against the **current** official
+documentation at submission; never trust sizes written down here.
+
+android stays out of 0.1: when it's added, extend `scripts/generate.py`
+from the icon master (adaptive icons need a separate foreground layer —
+lettermark on transparent — plus the `#A44732` background) and follow
+the same verify-at-submission rule.
 
 ## screenshots
 

@@ -207,7 +207,7 @@ build with `ANALYTICS_PROVIDER=firebase` against the non-production project and 
 
 - **web**: supported for foreground push and analytics out of the box; background/terminated web push additionally requires the configured `firebase-messaging-sw.js` and `FCM_VAPID_KEY`.
 - **android**: not present in this repository yet — add the Flutter Android target + Firebase configuration before treating it as release-supported.
-- **ios**: not present in this repository yet — add the Flutter iOS target + APNs setup before treating it as release-supported.
+- **ios**: 0.1 release target (product-owner decision 2026-07-29). the Flutter iOS target exists (`app/ios`, bundle id `istanbul.tekir`, min iOS 15) with generated icons and a prototype-aligned native launch screen, but it was scaffolded from linux and has never been built: before treating it as release-ready, run `pod install` + a real Xcode build on a mac, register the `istanbul.tekir` iOS app in Firebase (`GoogleService-Info.plist` is not committed), and configure the APNs key for push.
 
 ## flutter development
 

@@ -18,9 +18,17 @@ logo, and replacing it must not require product or architecture changes.
 
 ## supported release platforms (0.1)
 
-- web / PWA only — confirmed release scope
-- android / ios: store assets **may** be prepared from the same sources,
-  but native store release is out of scope for 0.1
+- web / PWA
+- ios / App Store (product-owner decision 2026-07-29): bundle id
+  `istanbul.tekir` (reverse of tekir.istanbul — must match the apple
+  developer app record and the firebase ios app), min ios 15
+  (firebase-ios-sdk 12 floor). icon set and native launch screen are
+  generated from the canonical sources; App Store screenshots must be
+  captured from the real ios build at the device sizes App Store
+  Connect requires at submission time — the web captures below are not
+  submittable there
+- android: store assets may be prepared from the same sources, but
+  native release stays out of scope for 0.1
 
 ## locales
 
@@ -59,5 +67,9 @@ only. no personal data, tokens, or debug ui.
 - [x] short description approved (product owner, 2026-07-29)
 - [ ] final captured screenshots + captions reviewed on the real captures
 - [ ] no secrets/personal data in any capture (re-verify on final set)
+- [ ] ios screenshot set captured from the real ios build at the sizes
+      App Store Connect requires (verify against current official docs
+      at submission — do not trust sizes written down anywhere in this
+      repo)
 - [ ] platform dimension requirements re-verified against current official
-      store documentation (n/a while 0.1 is web-only)
+      store documentation

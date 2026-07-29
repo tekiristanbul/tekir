@@ -27,6 +27,7 @@ app/web/index.html (which embeds a copy of the wordmark/lettermark paths).
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 
 import cairosvg
@@ -222,6 +223,23 @@ def main() -> None:
     shutil.copyfile(web_icons / "favicon-32.png", website_fav)
     print(f"  {website_fav.relative_to(ROOT)}")
 
+    # ---- ios: fill the Runner appiconset from the same master (sizes are
+    # read from the checked-in Contents.json so Xcode stays the authority
+    # on which slots exist), plus the native launch image — the splash
+    # tile at 84pt, composited by LaunchScreen.storyboard over the same
+    # terracotta the storyboard background carries.
+    ios_iconset = ROOT / "app" / "ios" / "Runner" / "Assets.xcassets" / "AppIcon.appiconset"
+    if ios_iconset.exists():
+        contents = json.loads((ios_iconset / "Contents.json").read_text())
+        for name in sorted(
+            {img["filename"] for img in contents["images"] if "filename" in img}
+        ):
+            img = next(i for i in contents["images"] if i.get("filename") == name)
+            points = float(img["size"].split("x")[0])
+            scale = int(img["scale"].rstrip("x"))
+            side = round(points * scale)
+            png(icon_svg, ios_iconset / name, side, side)
+
     # ---- splash mark: the prototype's 84px tile (radius 28, white 14%)
     # holding the lettermark where the placeholder paw used to be
     # (prototype/styles.css .splash-screen__mark; issue #85 replaces the
@@ -230,7 +248,16 @@ def main() -> None:
         '<rect width="84" height="84" rx="28" fill="#FFFFFF" fill-opacity="0.14"/>'
         + centered_glyph(lettermark, 84, 40, WHITE)
     )
-    write(ASSETS / "splash" / "source" / "splash-mark.svg", svg_doc(84, 84, mark_body))
+    mark_svg = svg_doc(84, 84, mark_body)
+    write(ASSETS / "splash" / "source" / "splash-mark.svg", mark_svg)
+
+    ios_launch = (
+        ROOT / "app" / "ios" / "Runner" / "Assets.xcassets" / "LaunchImage.imageset"
+    )
+    if ios_launch.exists():
+        for scale in (1, 2, 3):
+            suffix = "" if scale == 1 else f"@{scale}x"
+            png(mark_svg, ios_launch / f"LaunchImage{suffix}.png", 84 * scale, 84 * scale)
 
     # ---- full splash reference frame: the prototype composition
     # (splash-screen: centered column, gap 16) on a 360x780dp viewport
