@@ -47,6 +47,14 @@ class _SplashGateState extends ConsumerState<SplashGate> {
   @override
   void initState() {
     super.initState();
+    // Already settled on first build (warm remount, or an
+    // already-restored session provided from above): skip the overlay
+    // entirely — AnimatedOpacity would start at 0 without ever
+    // animating, so onEnd would never fire to remove it.
+    if (!ref.read(sessionProvider).isLoading) {
+      _removed = true;
+      return;
+    }
     _cap = Timer(_maxWait, () {
       if (mounted) setState(() => _capElapsed = true);
     });

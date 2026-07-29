@@ -9,7 +9,7 @@ logo, and replacing it must not require product or architecture changes.
 
 - name: `tekir`
 - short description (tr-TR, approved 2026-07-29):
-  > istanbul'daki sokak kedilerini keşfet, son durumlarını gör ve bakımın
+  > İstanbul'daki sokak kedilerini keşfet, son durumlarını gör ve bakımın
   > devam etmesine katkı sağla.
 - icon: `assets/app-icon/source/app-icon.svg` — single source of truth;
   all web/pwa exports are generated from it (`uv run
@@ -54,7 +54,7 @@ implementation. order tells the product story:
 
 | # | screen | source capture | caption (tr-TR) |
 |---|--------|----------------|-----------------|
-| 1 | map with visible cats | `01-map.png` | istanbul'un sokak kedileri haritada — yakınındakileri keşfet. |
+| 1 | map with visible cats | `01-map.png` | İstanbul'un sokak kedileri haritada — yakınındakileri keşfet. |
 | 2 | cat detail with recent status | `02-cat-detail.png` | her kedinin son durumu ve geçmişi bir arada. |
 | 3 | discover: nearby cats | `03-discover-nearby.png` | çevrendeki kedileri mesafeleriyle birlikte gör. |
 | 4 | discover: needs-help cats | `04-discover-needs-help.png` | yardıma ihtiyacı olan kediler anında görünür. |
