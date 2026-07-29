@@ -1,0 +1,14 @@
+# Release upload-keystore coordinates (issue #85). Copy to
+# android/key.properties (gitignored) and fill in after creating the
+# keystore — then `flutter build appbundle` is Play-ready as-is:
+#
+#   keytool -genkey -v -keystore ~/tekir-upload.jks -keyalg RSA \
+#     -keysize 2048 -validity 10000 -alias upload
+#
+# Never commit the keystore or this file's real copy. Losing the
+# keystore is recoverable via Play App Signing (upload-key reset), so
+# enroll the app in Play App Signing when creating the Play listing.
+storeFile=/absolute/path/to/tekir-upload.jks
+storePassword=CHANGE_ME
+keyAlias=upload
+keyPassword=CHANGE_ME
