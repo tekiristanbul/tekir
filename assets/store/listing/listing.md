@@ -27,8 +27,20 @@ logo, and replacing it must not require product or architecture changes.
   captured from the real ios build at the device sizes App Store
   Connect requires at submission time — the web captures below are not
   submittable there
-- android: store assets may be prepared from the same sources, but
-  native release stays out of scope for 0.1
+- android / Google Play: **0.1 release target — store-ready, publish
+  timing is the product owner's** (2026-07-29). package id
+  `istanbul.tekir` (same as ios), launcher/adaptive icons and native
+  launch screen generated from the canonical sources, play 512 icon at
+  `assets/app-icon/android/play-icon-512.png`, required 1024x500
+  feature graphic at `assets/store/listing/play-feature-graphic.png`.
+  the release artifact is `flutter build appbundle` — play-ready as-is
+  once `android/key.properties` points at the upload keystore (see
+  `android/key.properties.example`; no code changes needed). remaining
+  console-side work: play console listing + data-safety form, play app
+  signing enrollment, firebase android app registration if
+  push/analytics ship enabled, and screenshots captured from the real
+  android build at sizes verified against current official play
+  documentation
 
 ## locales
 

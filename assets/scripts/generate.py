@@ -240,6 +240,52 @@ def main() -> None:
             side = round(points * scale)
             png(icon_svg, ios_iconset / name, side, side)
 
+    # ---- android: legacy launcher mipmaps from the full-bleed master,
+    # plus the adaptive-icon foreground layer — lettermark on transparent,
+    # sized so the visible 72dp of the 108dp canvas shows the glyph at the
+    # same 45% the other platforms use (45% × 72/108 = 30% of the canvas),
+    # comfortably inside the 66dp safe zone. the same layer serves as the
+    # android 13 monochrome (themed-icon) source.
+    android_res = ROOT / "app" / "android" / "app" / "src" / "main" / "res"
+    if android_res.exists():
+        densities = {"mdpi": 1, "hdpi": 1.5, "xhdpi": 2, "xxhdpi": 3, "xxxhdpi": 4}
+        fg_body = centered_glyph(lettermark, 108, 108 * 0.30, WHITE)
+        fg_svg = svg_doc(108, 108, fg_body)
+        for density, factor in densities.items():
+            png(
+                icon_svg,
+                android_res / f"mipmap-{density}" / "ic_launcher.png",
+                round(48 * factor),
+                round(48 * factor),
+            )
+            png(
+                fg_svg,
+                android_res / f"mipmap-{density}" / "ic_launcher_foreground.png",
+                round(108 * factor),
+                round(108 * factor),
+            )
+
+    # ---- play listing exports: 512 icon and the required 1024x500
+    # feature graphic (wordmark centered on terracotta)
+    play_dir = ASSETS / "app-icon" / "android"
+    png(icon_svg, play_dir / "play-icon-512.png", 512, 512)
+    fg_h = 120.0
+    feature_body = (
+        f'<rect width="1024" height="500" fill="{TERRACOTTA}"/>'
+        + wordmark.svg_group(
+            fg_h / (wordmark.ymax - wordmark.ymin),
+            (1024 - wordmark.width_at(fg_h)) / 2,
+            (500 - fg_h) / 2,
+            WHITE,
+        )
+    )
+    png(
+        svg_doc(1024, 500, feature_body),
+        ASSETS / "store" / "listing" / "play-feature-graphic.png",
+        1024,
+        500,
+    )
+
     # ---- splash mark: the prototype's 84px tile (radius 28, white 14%)
     # holding the lettermark where the placeholder paw used to be
     # (prototype/styles.css .splash-screen__mark; issue #85 replaces the
@@ -258,6 +304,17 @@ def main() -> None:
         for scale in (1, 2, 3):
             suffix = "" if scale == 1 else f"@{scale}x"
             png(mark_svg, ios_launch / f"LaunchImage{suffix}.png", 84 * scale, 84 * scale)
+
+    # android native launch drawable: the same 84dp tile per density
+    # (drawable/launch_background.xml centers it on terracotta)
+    if android_res.exists():
+        for density, factor in densities.items():
+            png(
+                mark_svg,
+                android_res / f"drawable-{density}" / "splash_mark.png",
+                round(84 * factor),
+                round(84 * factor),
+            )
 
     # ---- full splash reference frame: the prototype composition
     # (splash-screen: centered column, gap 16) on a 360x780dp viewport

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- native launch: terracotta with the centered splash mark tile — the
+     same composition the flutter splash (SplashGate) takes over from.
+     splash_mark.png densities are generated from the canonical source by
+     `uv run assets/scripts/generate.py`. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_background" />
+    <item>
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/splash_mark" />
+    </item>
+</layer-list>

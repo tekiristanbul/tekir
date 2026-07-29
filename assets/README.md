@@ -96,10 +96,19 @@ App Store screenshots from the real ios build at the sizes App Store
 Connect requires — verify those against the **current** official
 documentation at submission; never trust sizes written down here.
 
-android stays out of 0.1: when it's added, extend `scripts/generate.py`
-from the icon master (adaptive icons need a separate foreground layer —
-lettermark on transparent — plus the `#A44732` background) and follow
-the same verify-at-submission rule.
+android is a **0.1 release target** (product-owner decision
+2026-07-29; publish timing is the product owner's): the generator
+fills the legacy launcher mipmaps, the adaptive-icon foreground
+(lettermark on transparent over the `#A44732` background color
+resource, also reused as the android 13 monochrome/themed layer), the
+native launch `splash_mark` drawables, the play 512 icon, and the
+1024x500 feature graphic. package id `istanbul.tekir`. the store
+artifact is `flutter build appbundle`, play-ready as-is once
+`android/key.properties` points at the upload keystore
+(`android/key.properties.example`). still console-side: play listing
++ data-safety form, play app signing, firebase android app
+registration, real-build screenshots at sizes verified against
+current official documentation.
 
 ## screenshots
 
