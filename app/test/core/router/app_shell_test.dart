@@ -133,6 +133,8 @@ void main() {
     expect(find.byType(MapScreen), findsNothing);
     expect(find.text('Harita'), findsOneWidget);
     expect(find.text('Profil'), findsOneWidget);
+    // add-cat fab is map-only — on other tabs it floated over content.
+    expect(find.byIcon(Icons.add), findsNothing);
   });
 
   testWidgets('tapping Profil switches to the profile tab, nav bar stays', (
@@ -146,6 +148,7 @@ void main() {
     expect(find.byType(ProfileScreen), findsOneWidget);
     expect(find.text('Harita'), findsOneWidget);
     expect(find.text('Keşfet'), findsOneWidget);
+    expect(find.byIcon(Icons.add), findsNothing);
   });
 
   testWidgets(
