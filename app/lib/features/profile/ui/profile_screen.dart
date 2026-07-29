@@ -10,6 +10,7 @@ import '../../badges/data/badge.dart';
 import '../../badges/ui/badge_icons.dart';
 import '../data/profile.dart';
 import 'edit_display_name_sheet.dart';
+import 'feedback_entry.dart';
 import 'profile_notifier.dart';
 
 const _statusLabelsTr = {
@@ -188,6 +189,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             label: const Text('Ayarlar'),
           ),
         ),
+        const SizedBox(height: AppSpacing.s4),
+        const FeedbackEntry(),
       ],
     );
   }
@@ -427,6 +430,8 @@ class _GuestBody extends StatelessWidget {
             child: const Text('Giriş yap'),
           ),
         ),
+        const SizedBox(height: AppSpacing.s6),
+        const FeedbackEntry(),
       ],
     );
   }
