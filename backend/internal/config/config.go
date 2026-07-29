@@ -29,6 +29,12 @@ const (
 	NotificationProviderFCM  = "fcm"
 )
 
+// ObjectStorageProvider values ResolveObjectStorageProvider can return.
+const (
+	ObjectStorageProviderFake = "fake"
+	ObjectStorageProviderS3   = "s3"
+)
+
 type Config struct {
 	Port            string
 	DatabaseURL     string
@@ -74,10 +80,14 @@ type Config struct {
 	TwilioVerifyServiceSID string
 
 	// ObjectStorageProvider selects the ObjectStore implementation for
-	// media uploads (issue #70). Only "fake" (a deterministic, local-disk
-	// provider — see docs/architecture/backend.md) is wired; a real
-	// s3-compatible provider (digitalocean spaces) is future work, mirroring
-	// OTPProvider's "fake"-only status.
+	// media uploads: "fake" (a deterministic, local-disk provider — issue
+	// #70) or "s3" (an s3-compatible provider; digitalocean spaces is the
+	// 0.1 deployment target — issue #89). Raw environment value; the
+	// environment-aware defaulting and validation live in
+	// ResolveObjectStorageProvider, which cmd/api calls at startup —
+	// exactly the OTPProvider/ResolveOTPProvider split (issue #59). "fake"
+	// is only ever a default under an explicit APP_ENV=development;
+	// production fails closed on unset/unknown/incomplete configuration.
 	ObjectStorageProvider string
 	// MediaLocalDir is where FakeObjectStore reads/writes uploaded media
 	// when ObjectStorageProvider is "fake". Unused by any other provider.
@@ -92,6 +102,26 @@ type Config struct {
 	// so a request can't force the server to decompress an arbitrarily
 	// large image (issue #70's malformed/oversized-media rejection).
 	MediaMaxBytes int
+
+	// S3Endpoint/S3Region/S3Bucket/S3AccessKeyID/S3SecretAccessKey/
+	// S3PublicBaseURL configure the s3-compatible object-store adapter and
+	// are required when ObjectStorageProvider is "s3" (issue #89). The names
+	// are deliberately application-owned (S3_*, not AWS_*) so the process
+	// can never accidentally pick up unrelated host credentials. Key values
+	// are deployment secrets — never logged or echoed in errors.
+	// S3PublicBaseURL is what read urls are built from (bucket public
+	// endpoint or cdn), independent of the api endpoint used for writes.
+	S3Endpoint        string
+	S3Region          string
+	S3Bucket          string
+	S3AccessKeyID     string
+	S3SecretAccessKey string
+	S3PublicBaseURL   string
+	// S3ForcePathStyle switches object urls from virtual-host style
+	// (bucket.endpoint-host) to path style (endpoint-host/bucket) for the
+	// rare s3-compatible endpoint that needs it. Digitalocean spaces does
+	// not — leave it false there.
+	S3ForcePathStyle bool
 
 	// NotificationProvider selects the NotificationSender implementation
 	// cmd/notifier uses: "fake" (the deterministic, log-only, no-network
@@ -139,9 +169,23 @@ func Load() (Config, error) {
 		TwilioAuthToken:        os.Getenv("TWILIO_AUTH_TOKEN"),
 		TwilioVerifyServiceSID: os.Getenv("TWILIO_VERIFY_SERVICE_SID"),
 
-		ObjectStorageProvider: getEnv("OBJECT_STORAGE_PROVIDER", "fake"),
+		// raw value only — ResolveObjectStorageProvider applies the
+		// environment-aware default and validation (issue #89). The old
+		// unconditional "fake" default is gone: fake is only ever a default
+		// under an explicit APP_ENV=development, so a production deployment
+		// that forgets this variable fails startup instead of silently
+		// writing media to local disk.
+		ObjectStorageProvider: os.Getenv("OBJECT_STORAGE_PROVIDER"),
 		MediaLocalDir:         getEnv("MEDIA_LOCAL_DIR", "./data/media"),
 		MediaMaxBytes:         getEnvInt("MEDIA_MAX_BYTES", 8*1024*1024),
+
+		S3Endpoint:        os.Getenv("S3_ENDPOINT"),
+		S3Region:          os.Getenv("S3_REGION"),
+		S3Bucket:          os.Getenv("S3_BUCKET"),
+		S3AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
+		S3SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
+		S3PublicBaseURL:   os.Getenv("S3_PUBLIC_BASE_URL"),
+		S3ForcePathStyle:  getEnvBool("S3_FORCE_PATH_STYLE", false),
 
 		// raw values only — ResolveNotificationProvider applies the
 		// environment-aware default and validation (issue #84), keeping
@@ -256,6 +300,69 @@ func (c Config) ResolveNotificationProvider() (string, error) {
 	}
 }
 
+// ResolveObjectStorageProvider decides which object-storage provider
+// cmd/api runs with (issue #89) and validates the selection is complete —
+// the same fail-closed shape as ResolveOTPProvider (issue #59) and
+// ResolveNotificationProvider (issue #84):
+//
+//   - "fake" is only reachable under an explicit APP_ENV=development —
+//     as the default when OBJECT_STORAGE_PROVIDER is unset, or when set
+//     explicitly.
+//   - any other environment (production, unset, or unrecognized) rejects
+//     fake, unset, and unknown providers outright; only "s3" is accepted
+//     there.
+//   - "s3" additionally requires S3_ENDPOINT, S3_REGION, S3_BUCKET,
+//     S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, and S3_PUBLIC_BASE_URL in
+//     every environment; any missing one fails resolution, naming the
+//     missing variables but never echoing a configured value.
+//
+// There is intentionally no path that degrades a selected or required s3
+// provider to fake/local disk — misconfiguration stops startup instead.
+func (c Config) ResolveObjectStorageProvider() (string, error) {
+	dev := c.AppEnv == AppEnvDevelopment
+
+	provider := c.ObjectStorageProvider
+	if provider == "" && dev {
+		provider = ObjectStorageProviderFake
+	}
+
+	switch provider {
+	case ObjectStorageProviderFake:
+		if !dev {
+			return "", fmt.Errorf("OBJECT_STORAGE_PROVIDER %q is only allowed with APP_ENV=%s (production requires OBJECT_STORAGE_PROVIDER=%s)", provider, AppEnvDevelopment, ObjectStorageProviderS3)
+		}
+		return ObjectStorageProviderFake, nil
+	case ObjectStorageProviderS3:
+		var missing []string
+		if c.S3Endpoint == "" {
+			missing = append(missing, "S3_ENDPOINT")
+		}
+		if c.S3Region == "" {
+			missing = append(missing, "S3_REGION")
+		}
+		if c.S3Bucket == "" {
+			missing = append(missing, "S3_BUCKET")
+		}
+		if c.S3AccessKeyID == "" {
+			missing = append(missing, "S3_ACCESS_KEY_ID")
+		}
+		if c.S3SecretAccessKey == "" {
+			missing = append(missing, "S3_SECRET_ACCESS_KEY")
+		}
+		if c.S3PublicBaseURL == "" {
+			missing = append(missing, "S3_PUBLIC_BASE_URL")
+		}
+		if len(missing) > 0 {
+			return "", fmt.Errorf("OBJECT_STORAGE_PROVIDER=%s requires %s", ObjectStorageProviderS3, strings.Join(missing, ", "))
+		}
+		return ObjectStorageProviderS3, nil
+	case "":
+		return "", fmt.Errorf("OBJECT_STORAGE_PROVIDER is required (set APP_ENV=%s for the local %q default, or OBJECT_STORAGE_PROVIDER=%s)", AppEnvDevelopment, ObjectStorageProviderFake, ObjectStorageProviderS3)
+	default:
+		return "", fmt.Errorf("unsupported OBJECT_STORAGE_PROVIDER %q (%q with APP_ENV=%s, or %q)", provider, ObjectStorageProviderFake, AppEnvDevelopment, ObjectStorageProviderS3)
+	}
+}
+
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -276,6 +383,18 @@ func getEnvInt32(key string, fallback int32) int32 {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return int32(n)
+		}
+	}
+	return fallback
+}
+
+// getEnvBool treats an unparseable value as the fallback rather than an
+// error, matching getEnvInt/getEnvDuration's lenient posture for
+// non-secret tuning knobs.
+func getEnvBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return fallback
