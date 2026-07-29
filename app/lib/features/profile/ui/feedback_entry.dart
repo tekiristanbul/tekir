@@ -98,11 +98,7 @@ class FeedbackEntry extends ConsumerWidget {
           padding: const EdgeInsets.symmetric(vertical: AppSpacing.s2),
           child: Row(
             children: [
-              const Icon(
-                Icons.mail_outline,
-                size: 20,
-                color: AppColors.muted,
-              ),
+              const Icon(Icons.mail_outline, size: 20, color: AppColors.muted),
               const SizedBox(width: AppSpacing.s3),
               Expanded(
                 child: Column(
