@@ -77,8 +77,12 @@ only. no personal data, tokens, or debug ui.
 - [x] splash approved (product owner, 2026-07-29)
 - [x] screenshot selection + order approved (product owner, 2026-07-29)
 - [x] short description approved (product owner, 2026-07-29)
-- [ ] final captured screenshots + captions reviewed on the real captures
-- [ ] no secrets/personal data in any capture (re-verify on final set)
+- [x] captured screenshots + captions reviewed on the real captures
+      (product owner, 2026-07-29 — the web set in
+      `screenshots/source/`; review again if any capture is replaced)
+- [ ] no secrets/personal data in any capture (web set verified at
+      capture time, 2026-07-29; re-verify once the ios/android
+      real-build captures complete the final set)
 - [ ] ios screenshot set captured from the real ios build at the sizes
       App Store Connect requires (verify against current official docs
       at submission — do not trust sizes written down anywhere in this
