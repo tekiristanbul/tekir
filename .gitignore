@@ -3,9 +3,16 @@
 
 # local secrets (see .env.example) — never committed
 .env.local
+.env.production
 
 # backend build output
 backend/bin/
+
+# local fake object-store media (MEDIA_LOCAL_DIR default)
+backend/data/
+
+# local image packaging artifacts
+*.tar.gz
 
 # os junk
 .DS_Store
