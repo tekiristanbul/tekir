@@ -4,9 +4,9 @@
 
 tekir is an open-source, map-first application for discovering and caring for istanbul’s street cats.
 
-[**explore the interactive mvp prototype →**](https://prototype.tekir.istanbul) · [website](https://tekir.istanbul)
+[**open the app →**](https://app.tekir.istanbul) · [prototype](https://prototype.tekir.istanbul) · [website](https://tekir.istanbul)
 
-> **early development:** the prototype is an approved interaction reference, not the production application.
+> **0.1 is live on web.** android and ios store releases are pending. the prototype remains the approved interaction reference.
 
 ---
 
@@ -26,8 +26,8 @@ tekir is not a social network, animal charity, veterinary service, or pet produc
 
 - mvp product contract: complete
 - interactive mvp prototype: approved
-- application implementation: in progress
-- production application: not yet available
+- 0.1 (web): live at [app.tekir.istanbul](https://app.tekir.istanbul) — [release notes](https://github.com/tekiristanbul/tekir/releases/tag/v0.1.0)
+- android / ios: built from this codebase, store releases pending
 
 follow the current implementation sequence in [github issue #45](https://github.com/tekiristanbul/tekir/issues/45).
 
@@ -37,7 +37,7 @@ follow the current implementation sequence in [github issue #45](https://github.
 
 use the prototype to explore the approved mvp screens, navigation, map interactions, cat details, updates, needs-help reporting, discovery, profile, badges, settings, and authentication states.
 
-it is a local/static simulation used as the product behavior and interaction reference. it does not use real user data, real sms delivery, or a production backend. production twilio verify integration is tracked separately and is not implemented yet.
+it is a local/static simulation used as the product behavior and interaction reference. it does not use real user data, real sms delivery, or a production backend.
 
 ## open-source contribution policy
 
