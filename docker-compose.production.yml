@@ -1,3 +1,5 @@
+# compose does not auto-load .env.production — always pass it explicitly:
+#   docker compose -f docker-compose.production.yml --env-file .env.production up -d
 services:
   api:
     image: tekir-api:0.1.0
