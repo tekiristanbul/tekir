@@ -40,6 +40,7 @@ class _FakeAddCatApi implements AddCatApi {
     required Uint8List photoBytes,
     required String photoFilename,
     required String idempotencyKey,
+    void Function(int sent, int total)? onSendProgress,
   }) async {
     createCalls++;
     lastIdempotencyKey = idempotencyKey;

@@ -113,7 +113,10 @@ class AddCatApi {
   /// aren't available on the flutter web target this app also ships, see
   /// docs/architecture/flutter.md). idempotencyKey must be the same value
   /// across retries of the same attempt so a retried submission can never
-  /// create a duplicate cat (issue #70).
+  /// create a duplicate cat (issue #70). [onSendProgress] reports raw
+  /// request-body bytes as the multipart upload (dominated by the photo)
+  /// leaves the device — the ui's photo-upload percentage
+  /// (docs/design/app-states.md, mutation affordances) derives from it.
   Future<CatDetail> createCat({
     required double lat,
     required double lng,
@@ -122,6 +125,7 @@ class AddCatApi {
     required Uint8List photoBytes,
     required String photoFilename,
     required String idempotencyKey,
+    void Function(int sent, int total)? onSendProgress,
   }) async {
     try {
       final formData = FormData.fromMap({
@@ -137,6 +141,7 @@ class AddCatApi {
         '/v1/cats',
         data: formData,
         options: Options(headers: {'Idempotency-Key': idempotencyKey}),
+        onSendProgress: onSendProgress,
       );
       final body = response.data;
       if (body == null) throw const AddCatServerException();

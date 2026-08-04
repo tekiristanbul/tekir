@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -19,6 +20,12 @@ class _FakeAddCatApi implements AddCatApi {
   CatDetail? createResult;
   Object? createError;
 
+  /// When set, createCat reports this (sent, total) pair through
+  /// onSendProgress and then waits on [createGate] before resolving — so a
+  /// test can observe the in-flight upload overlay.
+  (int, int)? progressEvent;
+  Completer<void>? createGate;
+
   @override
   Future<List<DuplicateCandidate>> fetchNearby({
     required double lat,
@@ -34,7 +41,11 @@ class _FakeAddCatApi implements AddCatApi {
     required Uint8List photoBytes,
     required String photoFilename,
     required String idempotencyKey,
+    void Function(int sent, int total)? onSendProgress,
   }) async {
+    final event = progressEvent;
+    if (event != null) onSendProgress?.call(event.$1, event.$2);
+    if (createGate != null) await createGate!.future;
     if (createError != null) throw createError!;
     return createResult!;
   }
@@ -281,7 +292,60 @@ void main() {
     },
   );
 
-  testWidgets('a failed save shows a retry state that resubmits on tap', (
+  testWidgets('a network failure shows the state-11 sheet, keeps the form, and '
+      'retries from the sheet', (tester) async {
+    final api = _FakeAddCatApi()..createError = const AddCatNetworkException();
+    await _pumpAddCat(tester, api);
+    await tester.tap(find.text('Bu konumu kullan'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    fakePlatform.nextFile = XFile.fromData(
+      _validPngBytes,
+      name: 'photo.jpg',
+      path: 'photo.jpg',
+    );
+    await _pickPhoto(tester);
+    await tester.enterText(find.byType(TextFormField), 'Boncuk');
+    await tester.pump();
+
+    await tester.tap(find.text('Kaydet'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // The sheet uses the typed name; the error never references the
+    // transport layer via the old inline banner.
+    expect(find.text('Boncuk haritaya eklenemedi'), findsOneWidget);
+    expect(
+      find.text(
+        'fotoğraf yüklenirken bağlantı koptu. '
+        'yazdıkların telefonunda duruyor.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('yüklenemedi'), findsOneWidget);
+    expect(find.text('Bağlantı sorunu, tekrar dene.'), findsNothing);
+
+    api.createError = null;
+    api.createResult = CatDetail(
+      id: 'new-cat-id',
+      name: '',
+      lat: 41.03,
+      lng: 28.98,
+      areaLabel: null,
+      primaryPhoto: null,
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastUpdateAt: null,
+    );
+    await tester.tap(find.text('tekrar dene'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
+
+    expect(find.text('cat detail new-cat-id'), findsOneWidget);
+    expect(find.byType(AddCatScreen), findsNothing);
+  });
+
+  testWidgets('a nameless failed submission falls back to a generic title', (
     tester,
   ) async {
     final api = _FakeAddCatApi()..createError = const AddCatNetworkException();
@@ -299,27 +363,116 @@ void main() {
 
     await tester.tap(find.text('Kaydet'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('kedi haritaya eklenemedi'), findsOneWidget);
+  });
+
+  testWidgets(
+    'dismissing the sheet leaves the retained form with badge and retry',
+    (tester) async {
+      final api = _FakeAddCatApi()
+        ..createError = const AddCatNetworkException();
+      await _pumpAddCat(tester, api);
+      await tester.tap(find.text('Bu konumu kullan'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      fakePlatform.nextFile = XFile.fromData(
+        _validPngBytes,
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      await _pickPhoto(tester);
+      await tester.enterText(find.byType(TextFormField), 'Boncuk');
+      await tester.pump();
+
+      await tester.tap(find.text('Kaydet'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // Dismiss the sheet by tapping the barrier above it.
+      await tester.tapAt(const Offset(200, 60));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Boncuk haritaya eklenemedi'), findsNothing);
+      // Data is never lost: name, photo (with its badge), and an in-place
+      // retry all remain.
+      expect(find.text('Boncuk'), findsOneWidget);
+      expect(find.text('yüklenemedi'), findsOneWidget);
+      expect(find.text('Tekrar dene'), findsOneWidget);
+    },
+  );
+
+  testWidgets('a server failure keeps the inline banner instead of the sheet', (
+    tester,
+  ) async {
+    final api = _FakeAddCatApi()..createError = const AddCatServerException();
+    await _pumpAddCat(tester, api);
+    await tester.tap(find.text('Bu konumu kullan'));
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('Bağlantı sorunu, tekrar dene.'), findsOneWidget);
-    expect(find.text('Tekrar dene'), findsOneWidget);
-
-    api.createError = null;
-    api.createResult = CatDetail(
-      id: 'new-cat-id',
-      name: '',
-      lat: 41.03,
-      lng: 28.98,
-      areaLabel: null,
-      primaryPhoto: null,
-      createdAt: DateTime.utc(2026, 1, 1),
-      lastUpdateAt: null,
+    fakePlatform.nextFile = XFile.fromData(
+      _validPngBytes,
+      name: 'photo.jpg',
+      path: 'photo.jpg',
     );
-    await tester.tap(find.text('Tekrar dene'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+    await _pickPhoto(tester);
 
-    expect(find.text('cat detail new-cat-id'), findsOneWidget);
-    expect(find.byType(AddCatScreen), findsNothing);
+    await tester.tap(find.text('Kaydet'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      find.text('Sunucuya ulaşılamadı, birazdan tekrar dene.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('haritaya eklenemedi'), findsNothing);
   });
+
+  testWidgets(
+    'an in-flight upload shows the photo percentage and the submitting '
+    'button label',
+    (tester) async {
+      final api = _FakeAddCatApi()
+        ..progressEvent = (62, 100)
+        ..createGate = Completer<void>()
+        ..createResult = CatDetail(
+          id: 'new-cat-id',
+          name: '',
+          lat: 41.03,
+          lng: 28.98,
+          areaLabel: null,
+          primaryPhoto: null,
+          createdAt: DateTime.utc(2026, 1, 1),
+          lastUpdateAt: null,
+        );
+      await _pumpAddCat(tester, api);
+      await tester.tap(find.text('Bu konumu kullan'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      fakePlatform.nextFile = XFile.fromData(
+        _validPngBytes,
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      await _pickPhoto(tester);
+
+      await tester.tap(find.text('Kaydet'));
+      await tester.pump();
+
+      // Same-frame mutation feedback plus the app's only percentage.
+      expect(find.text('haritaya ekleniyor'), findsOneWidget);
+      expect(find.text('%62'), findsOneWidget);
+
+      api.createGate!.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('cat detail new-cat-id'), findsOneWidget);
+    },
+  );
 }

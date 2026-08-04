@@ -56,6 +56,7 @@ class AddCatState {
     this.photoFilename,
     this.name = '',
     this.saving = false,
+    this.uploadProgress,
     this.error,
   });
 
@@ -92,6 +93,13 @@ class AddCatState {
   final String? photoFilename;
   final String name;
   final bool saving;
+
+  /// 0..1 while the submission's multipart body is leaving the device —
+  /// drives the photo-upload percentage overlay, the app's only progress
+  /// indicator (docs/design/app-states.md, mutation affordances). Null
+  /// whenever no upload is in flight.
+  final double? uploadProgress;
+
   final AddCatError? error;
 
   bool get hasDuplicates => duplicates.isNotEmpty;
@@ -109,6 +117,8 @@ class AddCatState {
     String? photoFilename,
     String? name,
     bool? saving,
+    double? uploadProgress,
+    bool clearUploadProgress = false,
     AddCatError? error,
     bool clearError = false,
   }) {
@@ -124,6 +134,9 @@ class AddCatState {
       photoFilename: photoFilename ?? this.photoFilename,
       name: name ?? this.name,
       saving: saving ?? this.saving,
+      uploadProgress: clearUploadProgress
+          ? null
+          : (uploadProgress ?? this.uploadProgress),
       error: clearError ? null : (error ?? this.error),
     );
   }
@@ -249,7 +262,9 @@ class AddCatNotifier extends Notifier<AddCatState> {
       return null;
     }
 
-    state = state.copyWith(saving: true, clearError: true);
+    // Same-frame mutation feedback (docs/design/app-states.md): saving and
+    // the 0% upload overlay both start with the tap, never after 400 ms.
+    state = state.copyWith(saving: true, clearError: true, uploadProgress: 0);
     try {
       final trimmedName = state.name.trim();
       final cat = await ref
@@ -262,6 +277,10 @@ class AddCatNotifier extends Notifier<AddCatState> {
             photoBytes: photoBytes,
             photoFilename: state.photoFilename ?? 'photo.jpg',
             idempotencyKey: _idempotencyKey,
+            onSendProgress: (sent, total) {
+              if (total <= 0 || !state.saving) return;
+              state = state.copyWith(uploadProgress: sent / total);
+            },
           );
       // Reset in full (mirrors AuthNotifier.verifyCode's success path) —
       // there's nothing left to preserve once creation succeeds, and
@@ -279,22 +298,29 @@ class AddCatNotifier extends Notifier<AddCatState> {
       // details the user already entered.
       state = state.copyWith(
         saving: false,
+        clearUploadProgress: true,
         step: AddCatStep.location,
         duplicates: e.candidates,
       );
       return null;
     } on AddCatMediaTooLargeException {
-      state = state.copyWith(saving: false, error: AddCatError.mediaTooLarge);
+      state = state.copyWith(
+        saving: false,
+        clearUploadProgress: true,
+        error: AddCatError.mediaTooLarge,
+      );
       return null;
     } on AddCatUnsupportedMediaException {
       state = state.copyWith(
         saving: false,
+        clearUploadProgress: true,
         error: AddCatError.unsupportedMedia,
       );
       return null;
     } on AddCatValidationException {
       state = state.copyWith(
         saving: false,
+        clearUploadProgress: true,
         error: AddCatError.invalidSubmission,
       );
       return null;
@@ -303,13 +329,25 @@ class AddCatNotifier extends Notifier<AddCatState> {
       // the session went stale mid-flow (e.g. revoked elsewhere) rather
       // than a routine path — mirrors follow/update's explicit 401
       // handling rather than falling through to the generic server error.
-      state = state.copyWith(saving: false, error: AddCatError.unauthorized);
+      state = state.copyWith(
+        saving: false,
+        clearUploadProgress: true,
+        error: AddCatError.unauthorized,
+      );
       return null;
     } on AddCatNetworkException {
-      state = state.copyWith(saving: false, error: AddCatError.network);
+      state = state.copyWith(
+        saving: false,
+        clearUploadProgress: true,
+        error: AddCatError.network,
+      );
       return null;
     } catch (_) {
-      state = state.copyWith(saving: false, error: AddCatError.server);
+      state = state.copyWith(
+        saving: false,
+        clearUploadProgress: true,
+        error: AddCatError.server,
+      );
       return null;
     }
   }
