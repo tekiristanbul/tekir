@@ -688,7 +688,10 @@ func TestNotificationService_DispatchPending_RemovedEarlierMarkKeepsSuppression(
 	}
 	defer pool.Close()
 
-	firstAt := time.Now().Add(-time.Hour)
+	// the first mark stays inside its author's 10-minute correction window,
+	// so the clear below is exactly what production allows — the race needs
+	// nothing older than that.
+	firstAt := time.Now().Add(-5 * time.Minute)
 	firstID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 firstID,
@@ -730,12 +733,15 @@ func TestNotificationService_DispatchPending_RemovedEarlierMarkKeepsSuppression(
 	// the author removes the first mark before the worker runs — the
 	// presence-aware clear (issue #105): no statuses/comment carried, so
 	// the row keeps its "seen" status and only loses the help aspect.
+	// window_start is now-10m, exactly what the service computes in
+	// production; the 5-minute-old mark is legitimately still correctable.
+	clearAt := time.Now()
 	if _, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
 		ID:             firstID,
 		CatID:          catID,
 		AuthorUserID:   author,
-		UpdatedAt:      pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		WindowStart:    pgtype.Timestamptz{Time: firstAt.Add(-time.Minute), Valid: true},
+		UpdatedAt:      pgtype.Timestamptz{Time: clearAt, Valid: true},
+		WindowStart:    pgtype.Timestamptz{Time: clearAt.Add(-10 * time.Minute), Valid: true},
 		ClearNeedsHelp: true,
 	}); err != nil {
 		t.Fatalf("clear first mark: %v", err)

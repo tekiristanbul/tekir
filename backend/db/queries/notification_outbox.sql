@@ -18,7 +18,7 @@
 -- exactly the state the mark was made against.
 insert into notification_outbox (update_id, cat_id, needs_help_eligible)
 select u.id, u.cat_id,
-  (u.needs_help and not exists (
+  case when u.needs_help then not exists (
     select 1 from updates p
     where p.cat_id = u.cat_id
       and p.needs_help
@@ -26,7 +26,7 @@ select u.id, u.cat_id,
       and p.id <> u.id
       and (p.created_at < u.created_at or (p.created_at = u.created_at and p.seq < u.seq))
       and p.needs_help_expires_at > u.created_at
-  ))
+  ) else false end
 from updates u
 where u.id = sqlc.arg(update_id);
 
