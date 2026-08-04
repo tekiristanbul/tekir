@@ -195,6 +195,12 @@ class _FollowedCatRow extends StatelessWidget {
                       ? CachedNetworkImage(
                           imageUrl: cat.primaryPhoto,
                           fit: BoxFit.cover,
+                          placeholder: (_, _) =>
+                              const ColoredBox(color: AppColors.surfaceAlt),
+                          errorWidget: (_, _, _) => const ColoredBox(
+                            color: AppColors.line,
+                            child: Icon(Icons.pets, color: AppColors.faint),
+                          ),
                         )
                       : const ColoredBox(
                           color: AppColors.line,
