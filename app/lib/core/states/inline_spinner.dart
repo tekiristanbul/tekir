@@ -23,11 +23,13 @@ class InlineSpinner extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size,
-      child: CircularProgressIndicator(
-        value: reduceMotion ? 0.25 : null,
-        strokeWidth: 2.5,
-        color: color,
-        backgroundColor: trackColor,
+      child: ExcludeSemantics(
+        child: CircularProgressIndicator(
+          value: reduceMotion ? 0.25 : null,
+          strokeWidth: 2.5,
+          color: color,
+          backgroundColor: trackColor,
+        ),
       ),
     );
   }
