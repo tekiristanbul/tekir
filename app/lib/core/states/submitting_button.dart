@@ -50,8 +50,8 @@ class SubmittingButton extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: background,
           foregroundColor: foreground,
-          disabledBackgroundColor: submittingBackground,
-          disabledForegroundColor: foreground,
+          disabledBackgroundColor: submitting ? submittingBackground : AppColors.lineStrong,
+          disabledForegroundColor: submitting ? foreground : null,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.md),
           ),
