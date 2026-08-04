@@ -279,7 +279,11 @@ class AddCatNotifier extends Notifier<AddCatState> {
             idempotencyKey: _idempotencyKey,
             onSendProgress: (sent, total) {
               if (total <= 0 || !state.saving) return;
-              state = state.copyWith(uploadProgress: sent / total);
+              // Keep the documented 0..1 invariant in state itself rather
+              // than relying on widgets to clamp.
+              state = state.copyWith(
+                uploadProgress: (sent / total).clamp(0.0, 1.0),
+              );
             },
           );
       // Reset in full (mirrors AuthNotifier.verifyCode's success path) —

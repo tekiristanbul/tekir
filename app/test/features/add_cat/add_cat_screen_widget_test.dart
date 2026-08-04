@@ -391,8 +391,10 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
-      // Dismiss the sheet by tapping the barrier above it.
-      await tester.tapAt(const Offset(200, 60));
+      // Dismiss the sheet by tapping its modal barrier (the barrier's
+      // center sits above the bottom-anchored sheet), instead of a
+      // hard-coded screen coordinate.
+      await tester.tap(find.byType(ModalBarrier).last, warnIfMissed: false);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
