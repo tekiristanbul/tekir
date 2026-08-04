@@ -12,6 +12,7 @@ import 'package:app/features/discover/data/discover_api.dart';
 import 'package:app/features/discover/data/discover_cat.dart';
 import 'package:app/features/discover/data/discover_location_service.dart';
 import 'package:app/features/discover/ui/discover_screen.dart';
+import 'package:app/features/discover/ui/discover_skeleton.dart';
 import 'package:app/features/follow/data/follows_api.dart';
 import 'package:app/features/map/data/cat_marker.dart';
 
@@ -113,6 +114,7 @@ Future<void> _pump(
   _FakeFollowsApi? followsApi,
   _FixedDiscoverLocationService? locationService,
   _FakeDiscoverApi? discoverApi,
+  double textScale = 1.0,
 }) async {
   final router = GoRouter(
     routes: [
@@ -144,7 +146,16 @@ Future<void> _pump(
         if (followsApi != null)
           followsApiProvider.overrideWithValue(followsApi),
       ],
-      child: MaterialApp.router(theme: AppTheme.light, routerConfig: router),
+      child: MaterialApp.router(
+        theme: AppTheme.light,
+        routerConfig: router,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -162,40 +173,65 @@ Future<void> _selectNeedsHelpTab(WidgetTester tester) async {
 
 void main() {
   group('nearby tab (default)', () {
-    testWidgets('shows a loading indicator before the first page arrives', (
+    testWidgets(
+      'initial read shows nothing before 400 ms, then the list skeleton',
+      (tester) async {
+        final completer = Completer<DiscoverPage>();
+        final router = GoRouter(
+          routes: [
+            GoRoute(
+              path: '/',
+              builder: (context, state) => const DiscoverScreen(),
+            ),
+          ],
+        );
+        final blockingApi = _BlockingDiscoverApi(completer);
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              sessionIdentityServiceProvider.overrideWithValue(
+                _FakeSessionIdentityService(),
+              ),
+              discoverLocationServiceProvider.overrideWithValue(
+                _FixedDiscoverLocationService(),
+              ),
+              discoverApiProvider.overrideWithValue(blockingApi),
+            ],
+            child: MaterialApp.router(
+              theme: AppTheme.light,
+              routerConfig: router,
+            ),
+          ),
+        );
+        await tester.pump();
+
+        // 0–400 ms: nothing loading-related — no skeleton, and never a
+        // bare spinner screen.
+        expect(find.byType(DiscoverListSkeleton), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+
+        await tester.pump(const Duration(milliseconds: 399));
+        expect(find.byType(DiscoverListSkeleton), findsNothing);
+
+        await tester.pump(const Duration(milliseconds: 1));
+        expect(find.byType(DiscoverListSkeleton), findsOneWidget);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+
+        completer.complete(const DiscoverPage(items: []));
+        await tester.pump();
+        await tester.pump();
+        expect(find.byType(DiscoverListSkeleton), findsNothing);
+        expect(find.text('Yakında kedi bulunamadı'), findsOneWidget);
+      },
+    );
+
+    testWidgets('a read finishing within 400 ms never shows the skeleton', (
       tester,
     ) async {
-      final completer = Completer<DiscoverPage>();
-      final router = GoRouter(
-        routes: [
-          GoRoute(
-            path: '/',
-            builder: (context, state) => const DiscoverScreen(),
-          ),
-        ],
-      );
-      final blockingApi = _BlockingDiscoverApi(completer);
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            sessionIdentityServiceProvider.overrideWithValue(
-              _FakeSessionIdentityService(),
-            ),
-            discoverLocationServiceProvider.overrideWithValue(
-              _FixedDiscoverLocationService(),
-            ),
-            discoverApiProvider.overrideWithValue(blockingApi),
-          ],
-          child: MaterialApp.router(
-            theme: AppTheme.light,
-            routerConfig: router,
-          ),
-        ),
-      );
-      await tester.pump();
+      await _pump(tester, session: null, discoverApi: _FakeDiscoverApi());
 
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      completer.complete(const DiscoverPage(items: []));
+      expect(find.byType(DiscoverListSkeleton), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
     });
 
     testWidgets('lists nearby cats with distance and navigates to detail', (
@@ -479,13 +515,84 @@ void main() {
       },
     );
 
+    testWidgets(
+      'the initial follows read gates its skeleton behind 400 ms too',
+      (tester) async {
+        final api = _FakeFollowsApi(
+          nextCats: const [
+            CatMarker(
+              id: 'cat-1',
+              name: 'Tekir',
+              primaryPhoto: '',
+              lat: 41.0,
+              lng: 29.0,
+            ),
+          ],
+        )..pending = Completer<void>();
+        await _pump(tester, session: _session, followsApi: api);
+
+        await tester.tap(find.text('Takip ettiklerim'));
+        await tester.pump();
+        expect(find.byType(DiscoverListSkeleton), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(DiscoverListSkeleton), findsOneWidget);
+
+        api.pending!.complete();
+        await tester.pump();
+        await tester.pump();
+        expect(find.byType(DiscoverListSkeleton), findsNothing);
+        expect(find.text('Tekir'), findsOneWidget);
+      },
+    );
+
     testWidgets('shows the empty state when there are no followed cats', (
       tester,
     ) async {
       await _pump(tester, session: _session, followsApi: _FakeFollowsApi());
       await _selectFollowingTab(tester);
 
-      expect(find.text('Henüz takip ettiğin kedi yok'), findsOneWidget);
+      expect(find.text('henüz kimseyi takip etmiyorsun'), findsOneWidget);
+      expect(
+        find.text(
+          'bir kedinin sayfasındaki kalbe dokun; ona yardım '
+          'gerektiğinde haberin olsun.',
+        ),
+        findsOneWidget,
+      );
+      // The filter row stays visible and tappable: the emptiness reads as
+      // a filter result, not an empty app.
+      expect(find.text('Takip ettiklerim'), findsOneWidget);
+      expect(find.text('Yakınımda'), findsOneWidget);
+    });
+
+    testWidgets('the empty state\'s quiet action jumps to the nearby tab', (
+      tester,
+    ) async {
+      await _pump(tester, session: _session, followsApi: _FakeFollowsApi());
+      await _selectFollowingTab(tester);
+
+      await tester.tap(find.text('yakındakilere göz at'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Yakında kedi bulunamadı'), findsOneWidget);
+      expect(find.text('henüz kimseyi takip etmiyorsun'), findsNothing);
+    });
+
+    testWidgets('the empty state survives a large system text scale', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        session: _session,
+        followsApi: _FakeFollowsApi(),
+        textScale: 2.0,
+      );
+      await _selectFollowingTab(tester);
+
+      expect(find.text('henüz kimseyi takip etmiyorsun'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('lists followed cats and navigates to the cat detail on tap', (
