@@ -6,12 +6,14 @@
 <style>
 /* ─────────────────────────────────────────────────────────────
    tekir — application state reference, sections 06–14.
-   standalone: no build step, no runtime, no external script.
-   the only network reference is the google-fonts link below; it is
-   non-blocking and the page falls back to georgia / system-ui when
-   offline. metrics, copy and colors do not depend on it.
+   standalone: no build step, no runtime, no external script, and
+   no network request of any kind. the design's lora/nunito families
+   render only if locally installed; otherwise the page falls back
+   to georgia / system-ui. metrics, copy and colors do not depend
+   on the family — sizes, weights and spacing are the binding
+   values, and the implemented app maps families to its bundled
+   fraunces / work sans tokens (docs/design/app-states.md).
    ───────────────────────────────────────────────────────────── */
-@import url("https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600&family=Nunito:wght@400;600;700;800&display=swap");
 
 :root{
   --paper:#fbf6ee; --paper2:#fffdf8; --ink:#2a211a; --muted:#6a584a;
@@ -185,7 +187,7 @@ a:hover{color:#7f2d1a}
   <p>bu sayfa <b>uygulama durum ekranlarının</b> repo içindeki referans kopyasıdır. numaralar (06–14) <code>docs/design/app-states.md</code> ile birebir aynıdır ve orada her durumun kuralı, metni ve hangi dilime ait olduğu yazılıdır. burada gördüğün ölçüler, renkler, metinler ve durumlar bağlayıcıdır; bu sayfa yeni bir karar üretmez.</p>
   <div class="meta">
     <span>ekran 402 × 874 · sabit ölçü, responsive değil</span>
-    <span>tipografi: Lora (başlık) + Nunito (gövde)</span>
+    <span>tipografi hedefi Lora + Nunito · sayfa yerel fallback ile açılır, ölçüler bağlayıcı</span>
     <span>fotoğraflar yer tutucudur, geometri gerçektir</span>
     <span>reduced-motion davranışı stil sayfasında normatiftir</span>
   </div>

@@ -15,9 +15,10 @@ dark mode and a not-found state remain undesigned and out of scope.
 
 ## sources and typography mapping
 
-- `docs/design/screens/app-states.html` — standalone, no external script;
-  the only network reference is a non-blocking google-fonts link with local
-  fallbacks. metrics, copy, and colors are binding.
+- `docs/design/screens/app-states.html` — standalone: no build step, no
+  script, and no network request of any kind; typography renders through
+  local fallbacks (georgia / system-ui) when the design families are not
+  installed. metrics, copy, and colors are binding.
 - the design files render with lora (display) and nunito (body). the app's
   tokens are fraunces (display) and work sans (body), bundled locally per
   `docs/design/implementation-contract.md`. the family maps through
@@ -70,9 +71,14 @@ small spinners appear only inside buttons and inline rows.
   primary "konum iznini aç"; secondary "haritada elle mahalle seç".
 - visuals: blurred, desaturated decorative map behind a cream gradient;
   paw-and-pin glyph in a muted disc with a brick slash.
-- the sub-line is a privacy claim; its verification is recorded under gap
-  4 below and in [[privacy]]. it may not be weakened or extended without
-  re-verification.
+- the sub-line is a privacy claim and is **not final**: the application
+  layer is verified but edge/hosting access logs are not (gap 4). the
+  state may not ship with this sentence until that verification
+  completes.
+- the secondary action "haritada elle mahalle seç" has **no current or
+  planned implementation owner** — see open questions. slice 1's issue
+  must resolve it (implement manual area selection or get the action's
+  removal approved) before this state is built.
 - slice 1.
 
 ### 07 · civarda kayıt yok
@@ -124,12 +130,13 @@ small spinners appear only inside buttons and inline rows.
 - rules: last loaded content is retained at 55% opacity and stays
   readable; writing is not locked; the dark banner persists until
   connectivity returns.
-- this state requires two pieces of infrastructure that do not exist yet:
-  connectivity awareness and a timestamped retained-response cache (gap
-  8). the info note promises the queued draft (gap 5/6) — it must not be
-  shown before slice 6 ships. until then the state renders without the
-  info note.
-- slice 6.
+- **deferred — not in 0.2.** issue #99 excludes offline/cache/queue from
+  the committed 0.2 scope: connectivity awareness, the timestamped
+  retained-response cache, and the queued-draft promise in the info note
+  all sit outside it. this section is kept as the approved design
+  reference for that future work (referenced as "dilim 6" by the html);
+  scheduling it requires its own contract revision and architecture
+  approval first.
 
 ### 11 · gönderilemedi
 
@@ -145,8 +152,10 @@ small spinners appear only inside buttons and inline rows.
   (`docs/architecture/flutter.md`).
 - slice 5 covers in-session preservation only: the form keeps its values
   and "tekrar dene" works while the app lives. "taslak olarak sakla" and
-  the footer's automatic-retry promise require the durable single-draft
-  queue and appear only when slice 6 ships.
+  the footer's automatic-retry promise depend on the durable draft queue,
+  which issue #99 keeps **out of 0.2** — those two elements are deferred
+  with it and are not rendered until that future work is approved and
+  shipped. slice 5 is complete and testable without them.
 
 ### 12 · splash
 
@@ -218,6 +227,9 @@ small spinners appear only inside buttons and inline rows.
   other progress bar exists anywhere. the 6 s fallback never cancels the
   upload.
 
+these are shared, app-wide components with their own issue (slice 7) —
+they are not owned by any single feature slice.
+
 ## reduced motion
 
 normative, not a nicety. when `MediaQuery.disableAnimations` or
@@ -236,35 +248,39 @@ this behavior and its test.
 3. **map placeholders** — only cats with a real cached position may render
    a placeholder pin; the app never invents a location. adopted in 13.
 4. **location copy** — "konumun sadece yakınındaki kedileri göstermek için
-   kullanılır, kaydedilmez" is **verified against the current stack** and
-   final: coordinates travel only as query parameters of nearby/map/
-   discover reads (`GET /v1/cats?bbox=`, `/v1/cats/discover?lat=&lng=`,
-   `/v1/cats/nearby`); no table stores a user location; the backend's
-   `requestLogger` logs `r.URL.Path` only — query strings never enter the
-   logs; the caddy reverse proxy has no access log configured; analytics
-   events carry no coordinates ([[privacy]]). guard: request logging and
-   the proxy must keep query strings out of logs, and any change to that
-   invalidates this copy. recorded in [[privacy]].
+   kullanılır, kaydedilmez" is **partially verified, not final**. verified
+   at the application layer: coordinates travel only as query parameters
+   of nearby/map/discover reads (`GET /v1/cats?bbox=`,
+   `/v1/cats/discover?lat=&lng=`, `/v1/cats/nearby`); no table stores a
+   user location; the backend's `requestLogger` logs `r.URL.Path` only —
+   query strings never enter its logs; the repository's caddy config has
+   no access log; analytics events carry no coordinates ([[privacy]]).
+   **unverified: edge and hosting access logs** (cloudflare and the
+   droplet's infrastructure may record full request urls including query
+   strings). until that is checked and any url logging is disabled or
+   redacted, the sentence stays provisional, state 06 may not ship it,
+   and [[privacy]] is deliberately left untouched.
 5. **durable draft storage** — no existing repository mechanism qualifies:
    the only persistence dependency is `flutter_secure_storage`, a
    credential store, and the draft store must be non-credential and
-   web-compatible. approved resolution: the durable single-draft queue is
-   its own slice (6) with its own issue, which selects the storage
-   dependency; this design pass adds no dependency.
-6. **queue vs offline-first** — the bounded queue holds **one pending
-   draft**, created explicitly by the user from the failure sheet, and
-   delivers it on reconnect. it is not offline-first synchronization: no
-   background sync, no multi-entity replication, no conflict resolution.
-   `docs/architecture/flutter.md` records this approved exception; its
-   out-of-scope line on offline-first synchronization stands.
+   web-compatible. resolution: **removed from this design pass** — issue
+   #99 excludes offline/cache/queue from 0.2. the queue's storage
+   decision belongs to the future contract revision that reopens it.
+6. **queue vs offline-first** — the distinction stands as design intent:
+   the referenced queue holds one pending draft, created explicitly by
+   the user, delivered on reconnect — not offline-first synchronization.
+   but no architecture change is made now: the queue is out of 0.2 per
+   issue #99, `docs/architecture/flutter.md` is unchanged, and reopening
+   this work requires explicit product-owner and architecture approval.
 7. **splash vs issue #24** — the paw/pin lockup is an app-state
    illustration only. #24's brief and exclusions are unaffected; no
    lasting brand change is made. adopted in 12.
 8. **connectivity and staleness** — state 10 requires connectivity
    awareness and a timestamped retained-response cache; neither exists
    today, and both likely need a dependency (connectivity) and a defined
-   web story (cache storage). slice 6 owns both; its issue must make the
-   dependency and web-support implications explicit before implementation.
+   web story (cache storage). both are **deferred with state 10** — out
+   of 0.2 per issue #99; the future issue that reopens them must make
+   the dependency and web-support implications explicit.
 9. **notifications empty-state count** — verified: `GET /v1/me/follows`
    (`ListFollowedCats`) returns each followed cat with `last_update_at`,
    so the count and the freshness window derive from real data. if the
@@ -279,25 +295,36 @@ this behavior and its test.
 
 ## implementation slices
 
-each slice is an independent, separately testable issue. no slice depends
-on a later one. reduced-motion behavior and its tests ship inside every
-slice that animates.
+each slice is a separately testable issue. slice numbering matches the
+references in the html feet ("dilim n"). dependencies are stated
+explicitly per slice — slices 1–4 and 7 are mutually independent; slice
+5 consumes slice 7's shared components, so slice 7 lands first.
+reduced-motion behavior and its tests ship inside every slice that
+animates.
 
 1. **map states** — 06, 07, 13: permission state, in-radius empty state,
-   cached-pin loading with the timing contract.
+   cached-pin loading with the timing contract. blocked on gap 4's
+   remaining verification (06's privacy sub-line) and the open question
+   on 06's secondary action.
 2. **notifications quiet day** — 09: olive banner and followed list from
    `GET /v1/me/follows`, count-drop rule included.
 3. **discover skeleton and empty follow** — 08, 14: skeleton geometry,
    400 ms rule, filter-row persistence.
 4. **splash** — 12, 12b: gate composition, asset pipeline regeneration,
    1.6 s status line, reduced-motion settled frame.
-5. **failed submission, in-session** — 11 without durable draft: retained
-   form, failure sheet, retry with the existing idempotency-key contract,
-   mutation affordances (button, optimistic row, upload percentage).
-6. **connectivity, cache, and the single-draft queue** — 10 and 11's
-   durable parts: connectivity awareness, timestamped response cache,
-   "taslak olarak sakla", reconnect delivery. selects the storage and
-   connectivity dependencies; must record its web story.
+5. **failed submission, in-session** — 11 without its durable elements:
+   retained form, failure sheet, retry with the existing idempotency-key
+   contract. uses slice 7's button and inline affordances.
+6. **deferred — out of 0.2 (issue #99)**: connectivity awareness,
+   timestamped response cache, and the single-pending-draft queue —
+   state 10 plus 11's "taslak olarak sakla" and automatic-retry footer.
+   the number is reserved so the html's "dilim 6" references stay
+   coherent; this is not a schedulable 0.2 issue and reopening it
+   requires a contract revision and architecture approval.
+7. **shared mutation affordances** — its own issue with app-wide
+   ownership, not buried in any feature slice: the in-place submitting
+   button, the optimistic inline row, and the photo-upload percentage,
+   as shared components multiple features consume.
 
 ## issue relationships
 
@@ -305,5 +332,21 @@ slice that animates.
   (recorded in `docs/design/implementation-contract.md`).
 - issue #24's logo process and exclusions are unaffected; the splash
   lockup is an illustration, revisited when #24 delivers.
-- issue #98 adopts this contract; slices 1–6 are its follow-up
+- issue #99 excludes offline/cache/queue from the committed 0.2 scope;
+  this contract honors that — state 10 and the durable draft elements
+  are design reference only, deferred behind a future contract revision.
+  `docs/architecture/flutter.md` is unchanged by this adoption.
+- issue #98 adopts this contract; slices 1–5 and 7 are its follow-up 0.2
   implementation issues.
+
+## open questions
+
+- state 06's secondary action "haritada elle mahalle seç" has no current
+  or planned implementation owner. slice 1 cannot ship 06 until manual
+  area selection is owned by an issue or the action's removal is
+  approved.
+- gap 4's remaining verification: whether cloudflare and the hosting
+  droplet's infrastructure record full request urls (query strings
+  containing coordinates), and if so, disabling or redacting that. until
+  resolved, state 06's privacy sub-line is provisional and [[privacy]]
+  stays unchanged.
