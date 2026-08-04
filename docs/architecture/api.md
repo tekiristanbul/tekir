@@ -78,6 +78,8 @@ active_alert: { category, category_label, created_at, expires_at } | null
 
 `category` is one of the fixed mvp vocabulary (`injured_or_sick`, `food_needed`, `water_needed`, `unsafe_location`, `trapped`); `category_label` is its turkish display label. never a bare boolean — a client needs the category and lifecycle to render an alert meaningfully, not just "something's wrong". the object's mere presence already means "active": the server derives that by comparing `expires_at` against its own clock at request time (see [[db]]), so a client is never asked to make that comparison itself.
 
+**0.2 note (contract only, not yet implemented):** issue #100's simplified help contract (`docs/product/alerts.md`) supersedes the category vocabulary as a user-facing concept — help becomes a single state with an optional note, and this doc's category paragraphs describe the implemented 0.1 wire contract until the migration lands in #101. the target 0.2 shape, the mixed 0.1/0.2 compatibility rule (`category`/`category_label` kept in responses for old clients), and the open decisions blocking #101 are recorded in that product doc, not here.
+
 `area_label` is a nullable, human-readable display-only location string set at cat creation or seed time. coordinates remain the source of truth.
 
 ### traits (dormant legacy storage)

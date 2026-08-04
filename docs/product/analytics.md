@@ -41,7 +41,7 @@ notification_opened          notification_state
 - `auth_intent`: `follow`, `ordinary_update`, `needs_help`, `add_cat`, `profile`.
 - `result`: `success`, `cancelled`, `invalid`, `offline`, `server_error`, `permission_denied`.
 - `update_status`: `seen`, `fed`, `water_provided`, `multiple`.
-- `needs_help_category`: the fixed vocabulary from [[alerts]] (`injured_or_sick`, `food_needed`, `water_needed`, `unsafe_location`, `trapped`), with anything else clamped to `unknown`.
+- `needs_help_category`: the fixed 0.1 vocabulary from [[alerts]] (`injured_or_sick`, `food_needed`, `water_needed`, `unsafe_location`, `trapped`), with anything else clamped to `unknown`. **retired in 0.2** by the simplified help contract ([[alerts]], issue #100): `needs_help_created` keeps its name and loses this parameter entirely; the closed enum in `analytics_events.dart` is removed in #102. until #102 lands, the 0.1 vocabulary above remains the implemented contract.
 - `notification_state`: `foreground`, `background`, `terminated`.
 
 ### never collected
