@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:app/core/theme/app_theme.dart';
+import 'package:app/features/follow/data/follows_api.dart';
+import 'package:app/features/map/data/cat_marker.dart';
 import 'package:app/features/notifications/data/notification.dart';
 import 'package:app/features/notifications/data/notifications_api.dart';
 import 'package:app/features/notifications/ui/notifications_screen.dart';
@@ -16,6 +18,47 @@ AppNotification _notification(String id, {bool read = false}) =>
       read: read,
       createdAt: DateTime.utc(2026, 3, 1),
     );
+
+CatMarker _followedCat(
+  String id, {
+  String name = '',
+  DateTime? seenAt,
+  bool needsHelp = false,
+}) {
+  return CatMarker(
+    id: id,
+    name: name,
+    primaryPhoto: '',
+    lat: 41.0,
+    lng: 29.0,
+    lastUpdateAt: seenAt,
+    activeAlert: needsHelp
+        ? ActiveAlert(
+            createdAt: DateTime.now(),
+            expiresAt: DateTime.now().add(const Duration(hours: 1)),
+          )
+        : null,
+  );
+}
+
+class _FakeFollowsApi implements FollowsApi {
+  _FakeFollowsApi({this.cats = const [], this.error});
+
+  List<CatMarker> cats;
+  Object? error;
+
+  @override
+  Future<void> follow(String catId) async {}
+
+  @override
+  Future<void> unfollow(String catId) async {}
+
+  @override
+  Future<List<CatMarker>> fetchFollows() async {
+    if (error != null) throw error!;
+    return cats;
+  }
+}
 
 class _FakeNotificationsApi implements NotificationsApi {
   _FakeNotificationsApi({
@@ -45,7 +88,12 @@ class _FakeNotificationsApi implements NotificationsApi {
   }
 }
 
-Future<void> _pump(WidgetTester tester, _FakeNotificationsApi api) async {
+Future<void> _pump(
+  WidgetTester tester,
+  _FakeNotificationsApi api, {
+  _FakeFollowsApi? followsApi,
+  double textScale = 1.0,
+}) async {
   final router = GoRouter(
     routes: [
       GoRoute(
@@ -62,23 +110,161 @@ Future<void> _pump(WidgetTester tester, _FakeNotificationsApi api) async {
 
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [notificationsApiProvider.overrideWithValue(api)],
-      child: MaterialApp.router(theme: AppTheme.light, routerConfig: router),
+      overrides: [
+        notificationsApiProvider.overrideWithValue(api),
+        followsApiProvider.overrideWithValue(followsApi ?? _FakeFollowsApi()),
+      ],
+      child: MaterialApp.router(
+        theme: AppTheme.light,
+        routerConfig: router,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
+      ),
     ),
   );
   await tester.pump();
 }
 
 void main() {
-  testWidgets('shows the empty state when there are no notifications', (
-    tester,
-  ) async {
-    final api = _FakeNotificationsApi();
-    await _pump(tester, api);
-    await tester.pumpAndSettle();
+  group('quiet day (state 09)', () {
+    testWidgets(
+      'an empty inbox shows the olive banner with real count and window',
+      (tester) async {
+        final now = DateTime.now();
+        final api = _FakeNotificationsApi();
+        await _pump(
+          tester,
+          api,
+          followsApi: _FakeFollowsApi(
+            cats: [
+              _followedCat('1', name: 'Boncuk', seenAt: now),
+              _followedCat(
+                '2',
+                name: 'Pamuk',
+                seenAt: now.subtract(const Duration(days: 1)),
+              ),
+              _followedCat(
+                '3',
+                name: 'Duman',
+                seenAt: now.subtract(const Duration(days: 2)),
+              ),
+            ],
+          ),
+        );
+        await tester.pumpAndSettle();
 
-    expect(find.text('Henüz bildirimin yok'), findsOneWidget);
-    expect(api.fetchCalls, 1);
+        expect(find.text('aktif yardım çağrısı yok'), findsOneWidget);
+        expect(
+          find.text('takip ettiğin 3 kedi de son 3 günde görüldü.'),
+          findsOneWidget,
+        );
+        expect(find.text('takip ettiklerin'), findsOneWidget);
+        expect(find.text('bugün görüldü'), findsOneWidget);
+        expect(find.text('dün görüldü'), findsOneWidget);
+        expect(find.text('2 gün önce'), findsOneWidget);
+        expect(api.fetchCalls, 1);
+      },
+    );
+
+    testWidgets('an unavailable follows source drops the sub-line and list', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        _FakeNotificationsApi(),
+        followsApi: _FakeFollowsApi(error: const FollowNetworkException()),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('aktif yardım çağrısı yok'), findsOneWidget);
+      expect(find.textContaining('takip ettiğin'), findsNothing);
+      expect(find.text('takip ettiklerin'), findsNothing);
+    });
+
+    testWidgets('zero follows keeps the banner count-free', (tester) async {
+      await _pump(tester, _FakeNotificationsApi());
+      await tester.pumpAndSettle();
+
+      expect(find.text('aktif yardım çağrısı yok'), findsOneWidget);
+      expect(find.textContaining('takip ettiğin'), findsNothing);
+      expect(find.text('takip ettiklerin'), findsNothing);
+    });
+
+    testWidgets(
+      'a cat without last_update_at drops the sub-line, not the list',
+      (tester) async {
+        final now = DateTime.now();
+        await _pump(
+          tester,
+          _FakeNotificationsApi(),
+          followsApi: _FakeFollowsApi(
+            cats: [
+              _followedCat('1', name: 'Boncuk', seenAt: now),
+              _followedCat('2', name: 'Pamuk'),
+            ],
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('takip ettiğin'), findsNothing);
+        expect(find.text('takip ettiklerin'), findsOneWidget);
+        expect(find.text('Boncuk'), findsOneWidget);
+        expect(find.text('bugün görüldü'), findsOneWidget);
+        expect(find.text('Pamuk'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'an active help call among follows suppresses the quiet-day banner',
+      (tester) async {
+        await _pump(
+          tester,
+          _FakeNotificationsApi(),
+          followsApi: _FakeFollowsApi(
+            cats: [_followedCat('1', name: 'Boncuk', needsHelp: true)],
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('aktif yardım çağrısı yok'), findsNothing);
+        expect(find.text('Henüz bildirimin yok'), findsOneWidget);
+      },
+    );
+
+    testWidgets('a followed row navigates to the cat detail', (tester) async {
+      await _pump(
+        tester,
+        _FakeNotificationsApi(),
+        followsApi: _FakeFollowsApi(
+          cats: [_followedCat('7', name: 'Boncuk', seenAt: DateTime.now())],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Boncuk'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('cat detail 7'), findsOneWidget);
+    });
+
+    testWidgets('survives a large system text scale', (tester) async {
+      await _pump(
+        tester,
+        _FakeNotificationsApi(),
+        followsApi: _FakeFollowsApi(
+          cats: [_followedCat('1', name: 'Boncuk', seenAt: DateTime.now())],
+        ),
+        textScale: 2.0,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('aktif yardım çağrısı yok'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('shows a retry action on load failure, and retry re-fetches', (
