@@ -19,7 +19,7 @@ define the role of the map in helping people find and help Istanbul street cats.
   - `long_not_seen`: the latest update is at least 30 days old, or no update exists.
 - exact timestamps live in the detail experience rather than crowding the map.
 - the 12-month inactivity presentation in [[cats]] is a stronger detail-level message within the broader `long_not_seen` map state.
-- the product should make practical needs immediately understandable: injured or sick, food needed, water needed, unsafe location, or trapped.
+- the product should make a cat's need for help immediately understandable. in 0.1 (implemented) this is a fixed category vocabulary; in 0.2 (issue #100, [[alerts]]) it is a single needs-help state whose reason comes from the reporter's optional note.
 
 ## open questions
 
