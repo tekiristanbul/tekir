@@ -66,6 +66,11 @@ lib/
 
 ## out of scope
 
-- offline-first synchronization.
+- offline-first synchronization. approved exception (issue #98,
+  `docs/design/app-states.md` slice 6): a bounded queue holding one
+  pending add-cat draft, created explicitly by the user from the failure
+  sheet and delivered on reconnect. no background sync, no multi-entity
+  replication, no conflict resolution — its implementation issue selects
+  the non-credential, web-compatible storage dependency.
 - colony modeling.
 - automated golden-test infrastructure before the mvp ui stabilizes.
