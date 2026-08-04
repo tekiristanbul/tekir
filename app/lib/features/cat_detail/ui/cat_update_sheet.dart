@@ -391,6 +391,23 @@ class _PulsingDotState extends State<_PulsingDot>
     duration: const Duration(milliseconds: 2400),
   );
 
+  bool _reduceMotion = false;
+
+  // Reduced motion: a static dot, no repeating animation at all. Reading
+  // MediaQuery here (not in build) both subscribes to changes and keeps
+  // build side-effect free — this reruns whenever disableAnimations
+  // flips, so the controller's lifecycle follows the platform setting.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.of(context).disableAnimations;
+    if (_reduceMotion) {
+      _controller.stop();
+    } else if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -399,14 +416,6 @@ class _PulsingDotState extends State<_PulsingDot>
 
   @override
   Widget build(BuildContext context) {
-    // Reduced motion: a static dot, no repeating animation at all.
-    final reduceMotion = MediaQuery.of(context).disableAnimations;
-    if (reduceMotion) {
-      _controller.stop();
-    } else if (!_controller.isAnimating) {
-      _controller.repeat();
-    }
-
     const dot = DecoratedBox(
       decoration: BoxDecoration(
         color: AppColors.helpStrong,
@@ -414,7 +423,7 @@ class _PulsingDotState extends State<_PulsingDot>
       ),
       child: SizedBox(width: 8, height: 8),
     );
-    if (reduceMotion) return dot;
+    if (_reduceMotion) return dot;
 
     return SizedBox(
       width: 8,
