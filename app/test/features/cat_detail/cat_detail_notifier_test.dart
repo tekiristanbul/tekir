@@ -36,8 +36,10 @@ class _FakeCatDetailApi implements CatDetailApi {
     this.updatesPages = const [],
   });
 
-  final CatDetail? detail;
-  final Object? detailError;
+  // Mutable so the reconcile tests below can change what a re-fetch
+  // returns after the initial load.
+  CatDetail? detail;
+  Object? detailError;
   final List<UpdatesPage> updatesPages;
   int _updatesCalls = 0;
 
@@ -58,6 +60,7 @@ class _FakeCatDetailApi implements CatDetailApi {
   Future<CatUpdateEntry> createUpdate(
     String catId, {
     required List<String> statuses,
+    bool needsHelp = false,
     String? comment,
     String idempotencyKey = '',
   }) => throw UnimplementedError();
@@ -68,6 +71,7 @@ class _FakeCatDetailApi implements CatDetailApi {
     String updateId, {
     required List<String> statuses,
     String? comment,
+    bool clearNeedsHelp = false,
   }) => throw UnimplementedError();
 
   @override
@@ -320,5 +324,186 @@ void main() {
 
     final state = container.read(catDetailProvider(_catId));
     expect(state.updates.map((u) => u.id), ['u1']);
+  });
+  group('help mark side effects (issue #101/#102)', () {
+    CatUpdateEntry helpEntry(String id, {String? comment}) => CatUpdateEntry(
+      id: id,
+      needsHelp: true,
+      statuses: const [],
+      comment: comment,
+      createdAt: DateTime.utc(2026, 1, 3),
+      needsHelpExpiresAt: DateTime.utc(2026, 1, 6),
+      needsHelpActive: true,
+    );
+
+    CatDetail detailWithAlert(ActiveAlert? alert) => CatDetail(
+      id: _catId,
+      name: 'tekir',
+      lat: 41.0256,
+      lng: 28.9744,
+      areaLabel: null,
+      primaryPhoto: null,
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastUpdateAt: DateTime.utc(2026, 1, 2),
+      activeAlert: alert,
+    );
+
+    test(
+      'prependUpdate promotes a help-carrying entry to the active alert, note included',
+      () async {
+        final container = _containerWith(
+          _FakeCatDetailApi(
+            detail: _detail,
+            updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+          ),
+        );
+        addTearDown(container.dispose);
+
+        final notifier = container.read(catDetailProvider(_catId).notifier);
+        await notifier.load();
+
+        notifier.prependUpdate(helpEntry('u1', comment: 'halsiz görünüyor'));
+
+        final state = container.read(catDetailProvider(_catId));
+        expect(state.updates.map((u) => u.id), ['u1']);
+        final alert = state.detail?.activeAlert;
+        expect(alert, isNotNull);
+        expect(alert!.comment, 'halsiz görünüyor');
+        expect(alert.createdAt, DateTime.utc(2026, 1, 3));
+        expect(alert.expiresAt, DateTime.utc(2026, 1, 6));
+      },
+    );
+
+    test(
+      'prependUpdate leaves the existing alert alone for an ordinary entry',
+      () async {
+        final existing = ActiveAlert(
+          comment: 'önceki not',
+          createdAt: DateTime.utc(2026, 1, 2),
+          expiresAt: DateTime.utc(2026, 1, 5),
+        );
+        final container = _containerWith(
+          _FakeCatDetailApi(
+            detail: detailWithAlert(existing),
+            updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+          ),
+        );
+        addTearDown(container.dispose);
+
+        final notifier = container.read(catDetailProvider(_catId).notifier);
+        await notifier.load();
+
+        notifier.prependUpdate(_update('u1'));
+
+        expect(
+          container.read(catDetailProvider(_catId)).detail?.activeAlert,
+          same(existing),
+        );
+      },
+    );
+
+    test(
+      'reconcileAfterHelpRemoval re-fetches: the server decides the fallback state',
+      () async {
+        final api = _FakeCatDetailApi(
+          detail: detailWithAlert(
+            ActiveAlert(
+              comment: 'kaldırılan not',
+              createdAt: DateTime.utc(2026, 1, 3),
+              expiresAt: DateTime.utc(2026, 1, 6),
+            ),
+          ),
+          updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+        );
+        final container = _containerWith(api);
+        addTearDown(container.dispose);
+
+        final notifier = container.read(catDetailProvider(_catId).notifier);
+        await notifier.load();
+
+        // After the clear, the server serves an older mark as the state.
+        final fallback = ActiveAlert(
+          comment: 'daha eski bir işaret',
+          createdAt: DateTime.utc(2026, 1, 2),
+          expiresAt: DateTime.utc(2026, 1, 5),
+        );
+        api.detail = detailWithAlert(fallback);
+
+        await notifier.reconcileAfterHelpRemoval(DateTime.utc(2026, 1, 3));
+
+        expect(
+          container
+              .read(catDetailProvider(_catId))
+              .detail
+              ?.activeAlert
+              ?.comment,
+          'daha eski bir işaret',
+        );
+      },
+    );
+
+    test(
+      'when the re-fetch fails, the alert this mark sourced is dropped rather than left stale',
+      () async {
+        final api = _FakeCatDetailApi(
+          detail: detailWithAlert(
+            ActiveAlert(
+              comment: 'kaldırılan not',
+              createdAt: DateTime.utc(2026, 1, 3),
+              expiresAt: DateTime.utc(2026, 1, 6),
+            ),
+          ),
+          updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+        );
+        final container = _containerWith(api);
+        addTearDown(container.dispose);
+
+        final notifier = container.read(catDetailProvider(_catId).notifier);
+        await notifier.load();
+
+        api.detailError = Exception('offline');
+
+        await notifier.reconcileAfterHelpRemoval(DateTime.utc(2026, 1, 3));
+
+        expect(
+          container.read(catDetailProvider(_catId)).detail?.activeAlert,
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'when the re-fetch fails and the alert came from a different mark, it stays',
+      () async {
+        final api = _FakeCatDetailApi(
+          detail: detailWithAlert(
+            ActiveAlert(
+              comment: 'başka bir işaret',
+              createdAt: DateTime.utc(2026, 1, 2),
+              expiresAt: DateTime.utc(2026, 1, 5),
+            ),
+          ),
+          updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+        );
+        final container = _containerWith(api);
+        addTearDown(container.dispose);
+
+        final notifier = container.read(catDetailProvider(_catId).notifier);
+        await notifier.load();
+
+        api.detailError = Exception('offline');
+
+        await notifier.reconcileAfterHelpRemoval(DateTime.utc(2026, 1, 3));
+
+        expect(
+          container
+              .read(catDetailProvider(_catId))
+              .detail
+              ?.activeAlert
+              ?.comment,
+          'başka bir işaret',
+        );
+      },
+    );
   });
 }

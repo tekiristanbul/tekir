@@ -10,7 +10,6 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../../auth/ui/auth_gate.dart';
 import '../../follow/ui/follow_button.dart';
-import '../../needs_help/ui/needs_help_sheet.dart';
 import '../data/cat_detail.dart';
 import 'cat_detail_notifier.dart';
 import 'cat_update_composer_notifier.dart';
@@ -28,13 +27,13 @@ const _statusLabelsTr = {
 /// Cat-detail view reached from the map's marker-preview sheet
 /// (docs/product/map.md, docs/design/implementation-contract.md): an
 /// edge-to-edge hero photo, a compact last-update line, a follow toggle,
-/// and a newest-first status-update timeline. Posting an ordinary status
-/// update (issue #43, one-tap "seen" or the compact multi-status
-/// composition sheet), following the cat (issue #65), and reporting
-/// needs-help (issue #78) are all in scope; editing the cat remains out of
-/// scope. Every contribution action is gated at the point of intent via
-/// [AuthGate] — a guest never sees the composer/needs-help sheet or
-/// mutates follow state before signing in.
+/// and a newest-first status-update timeline. Posting an update (issue
+/// #43, one-tap "seen" or the compact composition sheet — which since
+/// issue #102 also carries the single `yardıma ihtiyacı var` mark, per
+/// the #100 simplified help contract) and following the cat (issue #65)
+/// are in scope; editing the cat remains out of scope. Every contribution
+/// action is gated at the point of intent via [AuthGate] — a guest never
+/// sees the composer or mutates follow state before signing in.
 /// Permanent trait chips are not part of the mvp surface (issue #42) —
 /// behavioral observations belong in update comments instead. Matches
 /// prototype/app.js's renderDetail visual hierarchy; never shows raw
@@ -145,12 +144,6 @@ class _CatDetailBody extends ConsumerWidget {
               ),
               const SizedBox(height: AppSpacing.s4),
               _UpdateActionsRow(catId: detail.id),
-              const SizedBox(height: AppSpacing.s3),
-              _NeedsHelpCallout(
-                catId: detail.id,
-                catName: detail.name,
-                catPhotoUrl: detail.primaryPhoto,
-              ),
               const SizedBox(height: AppSpacing.s6),
               Text(
                 'Son güncellemeler',
@@ -333,11 +326,14 @@ class _BackCircleButton extends StatelessWidget {
   }
 }
 
-/// Active needs-help alert (issue #4/#23): category + expiry context in the
-/// help color family, never blended with the primary accent (docs/product/
-/// alerts.md) — the one place on this screen an active alert gets its loud
-/// emphasis. The timeline below never repeats this treatment, active or
-/// expired (see _NeedsHelpTag).
+/// The active `yardıma ihtiyacı var` state (issue #4/#23; reshaped by the
+/// #100 simplified help contract): one fixed title, the reporter's
+/// optional note, and expiry context in the help color family, never
+/// blended with the primary accent (docs/product/alerts.md) — the one
+/// place on this screen an active state gets its loud emphasis. The
+/// timeline below never repeats this treatment, active or expired (see
+/// _NeedsHelpTag). Legacy help categories are never rendered here in any
+/// form.
 class _ActiveAlertBanner extends StatelessWidget {
   const _ActiveAlertBanner({required this.alert});
 
@@ -345,6 +341,7 @@ class _ActiveAlertBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final note = alert.comment;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(
@@ -369,14 +366,25 @@ class _ActiveAlertBanner extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  alert.categoryLabel,
-                  style: const TextStyle(
+                const Text(
+                  'Yardıma ihtiyacı var',
+                  style: TextStyle(
                     color: AppColors.helpStrong,
                     fontWeight: FontWeight.w700,
                     fontSize: 14,
                   ),
                 ),
+                if (note != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    note,
+                    style: const TextStyle(
+                      color: AppColors.helpStrong,
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 2),
                 Text(
                   expiresInTr(alert.expiresAt),
@@ -459,7 +467,6 @@ class _UpdateActionsRow extends ConsumerWidget {
         (s) => s.updates.any(
           (u) =>
               u.authorIsMe &&
-              u.kind == 'ordinary' &&
               u.statuses.contains('seen') &&
               u.isCorrectionOpen(),
         ),
@@ -583,71 +590,6 @@ class _UpdateActionsRow extends ConsumerWidget {
   }
 }
 
-/// The needs-help report entry point (issue #78), in its own warm callout
-/// below the ordinary-update actions — mirroring the approved prototype's
-/// `.help-callout` treatment (prototype/app.js:417-419), visually distinct
-/// from (and never blended with) the primary-accent update actions above
-/// it. Gate-at-intent, exactly like [_UpdateActionsRow]'s two actions: a
-/// guest never sees the needs-help sheet before signing in.
-class _NeedsHelpCallout extends StatelessWidget {
-  const _NeedsHelpCallout({
-    required this.catId,
-    required this.catName,
-    required this.catPhotoUrl,
-  });
-
-  final String catId;
-  final String catName;
-  final String? catPhotoUrl;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.s3),
-      decoration: BoxDecoration(
-        color: AppColors.helpSoft,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      child: Consumer(
-        builder: (context, ref, _) => SizedBox(
-          height: kTapMin,
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: () => _gatedOpenNeedsHelp(context, ref),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.help,
-              foregroundColor: AppColors.helpInk,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppRadius.md),
-              ),
-              textStyle: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            icon: const Icon(Icons.warning_amber_rounded, size: 19),
-            label: const Text('Yardıma ihtiyacı var'),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _gatedOpenNeedsHelp(BuildContext context, WidgetRef ref) {
-    return AuthGate.require(
-      context,
-      ref,
-      contextText: 'Yardım bildirimi oluşturmak için giriş yap',
-      intent: AnalyticsAuthIntent.needsHelp,
-      onAuthenticated: () => unawaited(
-        openNeedsHelpSheet(
-          context,
-          catId: catId,
-          catName: catName,
-          catPhotoUrl: catPhotoUrl,
-        ),
-      ),
-    );
-  }
-}
-
 class _StatusTag extends StatelessWidget {
   const _StatusTag({required this.status});
 
@@ -676,11 +618,14 @@ class _StatusTag extends StatelessWidget {
   }
 }
 
-/// A needs-help timeline entry's category tag (issue #4/#23). Deliberately
+/// A help-carrying timeline entry's `yardım gerekiyor` chip (binding copy,
+/// docs/design/screens/cat-profile.html) — one fixed label, never a
+/// category (docs/product/alerts.md: legacy categories are never
+/// reproduced, so a legacy record renders this same chip). Deliberately
 /// never uses the loud help-red styling here, active or expired — that
 /// emphasis lives solely in _ActiveAlertBanner above the timeline, so it
 /// isn't duplicated per history entry. An expired entry additionally never
-/// gets any active-looking accent, per docs/product/alerts.md.
+/// gets any active-looking accent.
 class _NeedsHelpTag extends StatelessWidget {
   const _NeedsHelpTag({required this.update});
 
@@ -699,7 +644,7 @@ class _NeedsHelpTag extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
       child: Text(
-        update.needsHelpCategoryLabel ?? update.needsHelpCategory ?? '',
+        'yardım gerekiyor',
         style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w700,
@@ -765,16 +710,21 @@ class _TimelineItem extends StatelessWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // A combined update (statuses + the help mark, issue
+                      // #101) is one timeline event: its chips render
+                      // side by side on the same row, never as two
+                      // entries.
                       Expanded(
-                        child: update.isNeedsHelp
-                            ? _NeedsHelpTag(update: update)
-                            : Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: update.statuses
-                                    .map((s) => _StatusTag(status: s))
-                                    .toList(),
-                              ),
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            if (update.needsHelp) _NeedsHelpTag(update: update),
+                            ...update.statuses.map(
+                              (s) => _StatusTag(status: s),
+                            ),
+                          ],
+                        ),
                       ),
                       const SizedBox(width: AppSpacing.s2),
                       Text(
@@ -784,28 +734,54 @@ class _TimelineItem extends StatelessWidget {
                           color: AppColors.faint,
                         ),
                       ),
-                      // issue #80: only the author sees this, and only
-                      // while their own ordinary update is still within
-                      // its 10-minute correction window — a soft-deleted
-                      // update never reaches this list at all, for any
-                      // reader, so no separate "not deleted" check is
-                      // needed here.
-                      if (update.authorIsMe &&
-                          !update.isNeedsHelp &&
-                          update.isCorrectionOpen())
+                      // issue #80, extended by #101: only the author sees
+                      // this, and only while their own update — ordinary
+                      // or help-carrying — is still within its 10-minute
+                      // correction window (correction_expires_at is only
+                      // ever served on a correctable row; a legacy
+                      // pre-#101 help record never gets one). A
+                      // soft-deleted update never reaches this list at
+                      // all, for any reader, so no separate "not deleted"
+                      // check is needed here.
+                      if (update.authorIsMe && update.isCorrectionOpen())
                         _CorrectionMenuButton(catId: catId, update: update),
                     ],
                   ),
                   if (update.comment != null) ...[
                     const SizedBox(height: 4),
-                    Text(
-                      update.comment!,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: AppColors.muted,
-                        height: 1.4,
+                    // A help-carrying entry's comment is its help note —
+                    // set apart on the soft help tint (the design's
+                    // `.note.help` treatment), while an ordinary comment
+                    // stays plain muted body text.
+                    if (update.needsHelp)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.s3,
+                          vertical: AppSpacing.s2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.helpSoft,
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                        child: Text(
+                          update.comment!,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: AppColors.helpStrong,
+                            height: 1.4,
+                          ),
+                        ),
+                      )
+                    else
+                      Text(
+                        update.comment!,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppColors.muted,
+                          height: 1.4,
+                        ),
                       ),
-                    ),
                   ],
                 ],
               ),

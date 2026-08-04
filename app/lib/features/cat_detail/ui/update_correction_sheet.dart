@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../data/cat_detail.dart';
+import 'cat_update_composer_notifier.dart' show helpNoteMaxLength;
 import 'update_correction_notifier.dart';
 
 const _statusLabelsTr = {
@@ -13,14 +14,17 @@ const _statusLabelsTr = {
   'water_provided': 'Su verildi',
 };
 
-/// The correction/delete sheet for the caller's own ordinary update, within
-/// its fixed 10-minute window (issue #80, docs/product/updates.md). No
-/// prototype screen exists for this flow — it's an original design
-/// grounded in this app's existing idioms: [CatUpdateSheet]'s shell/status
-/// pills and [NeedsHelpSheet]'s inline-error-banner pattern. Pops an
-/// [UpdateCorrectionOutcome] on success so the caller (the timeline's "⋮"
-/// affordance) shows the right toast from a context that outlives this
-/// sheet, mirroring both of those sheets' own pop-then-toast convention.
+/// The correction/delete sheet for the caller's own update, within its
+/// fixed 10-minute window (issue #80; extended to help-carrying entries by
+/// #101/#102: the author may remove their own `yardıma ihtiyacı var` mark
+/// in-window — the pill can be switched off but never on, since a
+/// correction can never add the mark after the fact). No prototype screen
+/// exists for this flow — it's an original design grounded in this app's
+/// existing idioms: [CatUpdateSheet]'s shell/status pills and
+/// inline-error-banner pattern. Pops an [UpdateCorrectionOutcome] on
+/// success so the caller (the timeline's "⋮" affordance) shows the right
+/// toast from a context that outlives this sheet, mirroring
+/// [CatUpdateSheet]'s own pop-then-toast convention.
 class UpdateCorrectionSheet extends ConsumerStatefulWidget {
   const UpdateCorrectionSheet({
     super.key,
@@ -212,17 +216,50 @@ class _UpdateCorrectionSheetState extends ConsumerState<UpdateCorrectionSheet> {
                 Wrap(
                   spacing: AppSpacing.s2,
                   runSpacing: AppSpacing.s2,
-                  children: _statusLabelsTr.keys.map((status) {
-                    return _StatusOption(
-                      label: _statusLabelsTr[status]!,
-                      selected: state.statuses.contains(status),
-                      enabled: !actionsDisabled,
-                      onTap: () => ref
-                          .read(updateCorrectionProvider(_key).notifier)
-                          .toggleStatus(status),
-                    );
-                  }).toList(),
+                  children: [
+                    ..._statusLabelsTr.keys.map((status) {
+                      return _StatusOption(
+                        label: _statusLabelsTr[status]!,
+                        selected: state.statuses.contains(status),
+                        enabled: !actionsDisabled,
+                        onTap: () => ref
+                            .read(updateCorrectionProvider(_key).notifier)
+                            .toggleStatus(status),
+                      );
+                    }),
+                    // Only an entry that already carries the mark gets the
+                    // pill — a correction can remove it, never add it.
+                    if (state.hadNeedsHelp)
+                      _HelpOption(
+                        selected: state.needsHelp,
+                        enabled: !actionsDisabled,
+                        onTap: () => ref
+                            .read(updateCorrectionProvider(_key).notifier)
+                            .toggleNeedsHelp(),
+                      ),
+                  ],
                 ),
+                if (state.clearsNeedsHelp) ...[
+                  const SizedBox(height: AppSpacing.s3),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.s3,
+                      vertical: AppSpacing.s2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.helpSoft,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                    child: const Text(
+                      'Kaydedince yardım işareti kaldırılır.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.helpStrong,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.s4),
                 const Text(
                   'Yorum (opsiyonel)',
@@ -237,6 +274,10 @@ class _UpdateCorrectionSheetState extends ConsumerState<UpdateCorrectionSheet> {
                   enabled: !actionsDisabled,
                   minLines: 2,
                   maxLines: 4,
+                  // While the help mark survives, the comment is its note
+                  // and keeps the note's 500-character cap
+                  // (docs/product/alerts.md, decision 4).
+                  maxLength: state.needsHelp ? helpNoteMaxLength : null,
                   onChanged: (value) => ref
                       .read(updateCorrectionProvider(_key).notifier)
                       .setComment(value),
@@ -380,6 +421,58 @@ class _StatusOption extends StatelessWidget {
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     color: selected ? AppColors.primaryStrong : AppColors.muted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The entry's own `yardım` mark, mirroring [CatUpdateSheet]'s help pill
+/// (the help color family, never the primary accent): deep help red while
+/// the mark stays, soft help tint once switched off for removal.
+class _HelpOption extends StatelessWidget {
+  const _HelpOption({
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? AppColors.helpStrong : AppColors.helpSoft,
+      borderRadius: BorderRadius.circular(AppRadius.full),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        onTap: enabled ? onTap : null,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: kTapMin),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                size: 16,
+                color: selected ? AppColors.helpInk : AppColors.helpStrong,
+              ),
+              const SizedBox(width: AppSpacing.s1),
+              Flexible(
+                child: Text(
+                  'yardım',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: selected ? AppColors.helpInk : AppColors.helpStrong,
                   ),
                 ),
               ),

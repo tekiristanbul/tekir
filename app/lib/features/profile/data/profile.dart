@@ -32,9 +32,12 @@ class ContributionTotals {
 }
 
 /// One entry of the profile's newest-first recent-contributions list.
-/// `statuses`/`needsHelpCategory` mirror [CatUpdateEntry]'s own shape so the
-/// client composes display copy the same way it already does for the
-/// cat-detail timeline — the server never pre-composes a label string.
+/// `statuses` mirrors [CatUpdateEntry]'s own shape so the client composes
+/// display copy the same way it already does for the cat-detail timeline —
+/// the server never pre-composes a label string. The wire entry still
+/// carries `needs_help_category`/`needs_help_category_label` for 0.1
+/// clients; this 0.2 model deliberately never reads them
+/// (docs/product/alerts.md: legacy categories are never reproduced).
 class RecentContribution {
   const RecentContribution({
     required this.type,
@@ -42,8 +45,6 @@ class RecentContribution {
     required this.catName,
     required this.catPrimaryPhoto,
     required this.statuses,
-    required this.needsHelpCategory,
-    required this.needsHelpCategoryLabel,
     required this.createdAt,
   });
 
@@ -52,8 +53,6 @@ class RecentContribution {
   final String catName;
   final String? catPrimaryPhoto;
   final List<String> statuses;
-  final String? needsHelpCategory;
-  final String? needsHelpCategoryLabel;
   final DateTime createdAt;
 
   bool get isUpdate => type == 'update';
@@ -71,8 +70,6 @@ class RecentContribution {
               ?.map((e) => e as String)
               .toList() ??
           const [],
-      needsHelpCategory: json['needs_help_category'] as String?,
-      needsHelpCategoryLabel: json['needs_help_category_label'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
     );
   }

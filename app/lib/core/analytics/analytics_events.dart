@@ -95,30 +95,6 @@ enum AnalyticsUpdateStatus {
   final String wire;
 }
 
-/// The existing fixed needs-help product vocabulary
-/// (needsHelpCategoryOptions, docs/product/alerts.md). [fromId] clamps
-/// anything outside it to [unknown] instead of ever passing a raw string
-/// through.
-enum AnalyticsNeedsHelpCategory {
-  injuredOrSick('injured_or_sick'),
-  foodNeeded('food_needed'),
-  waterNeeded('water_needed'),
-  unsafeLocation('unsafe_location'),
-  trapped('trapped'),
-  unknown('unknown');
-
-  const AnalyticsNeedsHelpCategory(this.wire);
-
-  final String wire;
-
-  static AnalyticsNeedsHelpCategory fromId(String id) {
-    for (final category in values) {
-      if (category != unknown && category.wire == id) return category;
-    }
-    return unknown;
-  }
-}
-
 /// The app state a push notification arrived in or was opened from.
 enum AnalyticsNotificationState {
   foreground('foreground'),
@@ -182,8 +158,12 @@ class AnalyticsEvent {
   AnalyticsEvent.ordinaryUpdateCreated(AnalyticsUpdateStatus status)
     : this._('ordinary_update_created', {'update_status': status.wire});
 
-  AnalyticsEvent.needsHelpCreated(AnalyticsNeedsHelpCategory category)
-    : this._('needs_help_created', {'needs_help_category': category.wire});
+  /// The user marked `yardıma ihtiyacı var`. Parameterless since the #100
+  /// simplified help contract retired the category enum (docs/product/
+  /// alerts.md, decision 6) — the optional note is free text and therefore
+  /// never collected. A combined status+help update emits this alongside
+  /// [AnalyticsEvent.ordinaryUpdateCreated].
+  const AnalyticsEvent.needsHelpCreated() : this._('needs_help_created');
 
   const AnalyticsEvent.catCreated() : this._('cat_created');
 

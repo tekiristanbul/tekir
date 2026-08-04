@@ -60,9 +60,9 @@ binding constraints from issue #100 — existing category-bearing records are no
 
 product/design docs (updated or superseded by this contract): `docs/product/alerts.md` (this file), `docs/product/updates.md`, `docs/product/map.md`, `docs/product/analytics.md`, `docs/product/notifications.md`, `docs/design/implementation-contract.md`, `docs/design/screens/cat-profile.html` (imported reference).
 
-api/backend/migration contracts were implemented by #101 (`docs/architecture/api.md`, `docs/architecture/db.md`, migration 00022, backend service/handler/notifier, seed data). remaining for #102 (flutter — no client changes were made in #101):
+api/backend/migration contracts were implemented by #101 (`docs/architecture/api.md`, `docs/architecture/db.md`, migration 00022, backend service/handler/notifier, seed data). the flutter side was implemented by #102:
 
-- flutter: `app/lib/features/needs_help/` (`needs_help_api.dart`, `needs_help_sheet.dart`, `needs_help_notifier.dart` — folded into the update sheet), `app/lib/features/cat_detail/ui/cat_update_sheet.dart` + `cat_update_composer_notifier.dart`, `app/lib/core/models/active_alert.dart`, `app/lib/features/cat_detail/` timeline rendering, `app/lib/core/analytics/analytics_events.dart` (`AnalyticsNeedsHelpCategory` removal), notification screens.
+- flutter: `app/lib/features/needs_help/` removed (`needs_help_api.dart`, `needs_help_sheet.dart`, `needs_help_notifier.dart` — folded into the update sheet), `app/lib/features/cat_detail/ui/cat_update_sheet.dart` + `cat_update_composer_notifier.dart` carry the single help mark, `app/lib/core/models/active_alert.dart` reads the note and never the compat category fields, `app/lib/features/cat_detail/` timeline renders the fixed `yardım gerekiyor` chip, `app/lib/core/analytics/analytics_events.dart` dropped `AnalyticsNeedsHelpCategory`. notification screens needed no change — their copy was already category-free (decision 5).
 - prototype: `prototype/data.js` (`HELP_REASONS`) and `prototype/app.js` help-reason rendering — superseded for the cat-profile surface by `docs/design/screens/cat-profile.html`; the prototype is not updated by this contract.
 
 ## open questions

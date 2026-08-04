@@ -11,10 +11,11 @@ class CatNotFoundException implements Exception {
   const CatNotFoundException();
 }
 
-/// Thrown when `POST .../updates` answers 400 — an empty, unlisted, or
-/// duplicate status set, or a comment-only body. The composition ui
-/// already prevents submitting an empty selection, so this mainly guards
-/// against a stale client/server contract rather than a routine path.
+/// Thrown when `POST .../updates` answers 400 — an unlisted or duplicate
+/// status, a body carrying neither a status nor the help flag, or a help
+/// note beyond its 500-character cap (issue #101). The composition ui
+/// already prevents each of those, so this mainly guards against a stale
+/// client/server contract rather than a routine path.
 class UpdateValidationException implements Exception {
   const UpdateValidationException();
 }
@@ -96,15 +97,17 @@ class CatDetailApi {
     return UpdatesPage.fromJson(response.data!);
   }
 
-  /// Submits an ordinary status update (issue #43, moved onto authenticated
-  /// accounts by issue #65): one or more of the fixed mvp statuses plus an
-  /// optional free-text comment, attributed to the caller's authenticated
-  /// account via the shared [ApiClient]'s `Authorization: Bearer`
-  /// interceptor — the device token is attached too, when available, for
-  /// installation association only. The caller is responsible for making
-  /// sure a session exists first (see [AuthGate]) — this method does not
-  /// trigger sign-in itself, so an unauthenticated call surfaces as a plain
-  /// [UpdateUnauthorizedException] rather than a silent retry.
+  /// Submits an update (issue #43, moved onto authenticated accounts by
+  /// issue #65; help folded in by issue #101): one or more of the fixed mvp
+  /// statuses, the `yardıma ihtiyacı var` flag, or both, plus an optional
+  /// free-text comment — which doubles as the help note when [needsHelp] is
+  /// set. Attributed to the caller's authenticated account via the shared
+  /// [ApiClient]'s `Authorization: Bearer` interceptor — the device token
+  /// is attached too, when available, for installation association only.
+  /// The caller is responsible for making sure a session exists first (see
+  /// [AuthGate]) — this method does not trigger sign-in itself, so an
+  /// unauthenticated call surfaces as a plain [UpdateUnauthorizedException]
+  /// rather than a silent retry.
   ///
   /// idempotencyKey (issue #80 product-owner review, finding 4) must be the
   /// same value across retries of the same attempt — mirrors
@@ -114,13 +117,18 @@ class CatDetailApi {
   Future<CatUpdateEntry> createUpdate(
     String catId, {
     required List<String> statuses,
+    bool needsHelp = false,
     String? comment,
     required String idempotencyKey,
   }) async {
     try {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '/v1/cats/$catId/updates',
-        data: {'statuses': statuses, 'comment': comment},
+        data: {
+          'statuses': statuses,
+          'needs_help': needsHelp,
+          'comment': comment,
+        },
         options: Options(headers: {'Idempotency-Key': idempotencyKey}),
       );
       final body = response.data;
@@ -145,21 +153,31 @@ class CatDetailApi {
     return const UpdateNetworkException();
   }
 
-  /// Corrects the caller's own ordinary update within its fixed 10-minute
-  /// window (issue #80): statuses and/or comment. The caller is
-  /// responsible for making sure a session exists first (see [AuthGate]) —
-  /// this method does not trigger sign-in itself. kind, author identity,
-  /// and created_at are never alterable through this path.
+  /// Corrects the caller's own update within its fixed 10-minute window
+  /// (issue #80, extended by #101): statuses and/or comment, and —
+  /// [clearNeedsHelp] — removal of the update's own help mark. The PATCH
+  /// body is presence-aware (issue #105): `needs_help` is only ever sent as
+  /// `false`, since the mark can never be added by an edit; when
+  /// [clearNeedsHelp] is false the field is omitted so the server leaves
+  /// the mark untouched. The caller is responsible for making sure a
+  /// session exists first (see [AuthGate]) — this method does not trigger
+  /// sign-in itself. Author identity and created_at are never alterable
+  /// through this path.
   Future<CatUpdateEntry> correctUpdate(
     String catId,
     String updateId, {
     required List<String> statuses,
     String? comment,
+    bool clearNeedsHelp = false,
   }) async {
     try {
       final response = await _apiClient.dio.patch<Map<String, dynamic>>(
         '/v1/cats/$catId/updates/$updateId',
-        data: {'statuses': statuses, 'comment': comment},
+        data: {
+          'statuses': statuses,
+          'comment': comment,
+          if (clearNeedsHelp) 'needs_help': false,
+        },
       );
       final body = response.data;
       if (body == null) throw const UpdateServerException();

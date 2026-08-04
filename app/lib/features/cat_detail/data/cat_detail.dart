@@ -56,23 +56,29 @@ class CatDetail {
   }
 }
 
-/// One entry of a cat's newest-first history — either an ordinary status
-/// update (issue #3: one or more structured statuses plus an optional
-/// free-text comment, kind == "ordinary") or a needs-help update (issue
-/// #4/#23: a fixed category plus its own lifecycle, kind == "needs_help").
+/// One entry of a cat's newest-first history: one or more structured
+/// statuses, the `yardıma ihtiyacı var` flag (issue #100/#101 simplified
+/// help contract), or both in a single record, plus an optional free-text
+/// comment — which doubles as the help note on a help-carrying entry.
 /// needsHelpActive is server-decided (the server's clock, never the
-/// client's) and is only meaningful when kind is "needs_help"; an expired
-/// needs-help entry stays in history exactly like an ordinary one, just
+/// client's) and is only meaningful when [needsHelp]; an expired
+/// help-carrying entry stays in history exactly like an ordinary one, just
 /// with needsHelpActive false.
+///
+/// The wire entry still carries `kind` and the
+/// `needs_help_category`/`needs_help_category_label` compat fields for 0.1
+/// clients; this 0.2 model reads the flag and deliberately never reads the
+/// category fields — legacy help categories are never reproduced in the
+/// 0.2 interface in any form (docs/product/alerts.md). `kind` survives
+/// only as a parse fallback so a legacy category-bearing payload without
+/// the flag stays renderable through the compatibility window.
 class CatUpdateEntry {
   const CatUpdateEntry({
     required this.id,
-    this.kind = 'ordinary',
+    this.needsHelp = false,
     required this.statuses,
     required this.comment,
     required this.createdAt,
-    this.needsHelpCategory,
-    this.needsHelpCategoryLabel,
     this.needsHelpExpiresAt,
     this.needsHelpActive,
     this.authorIsMe = false,
@@ -80,13 +86,11 @@ class CatUpdateEntry {
   });
 
   final String id;
-  final String kind;
+  final bool needsHelp;
   final List<String> statuses;
   final String? comment;
   final DateTime createdAt;
 
-  final String? needsHelpCategory;
-  final String? needsHelpCategoryLabel;
   final DateTime? needsHelpExpiresAt;
   final bool? needsHelpActive;
 
@@ -96,14 +100,14 @@ class CatUpdateEntry {
   /// client to compute by comparing ids itself.
   final bool authorIsMe;
 
-  /// Non-null only when [authorIsMe] and [kind] is "ordinary" (issue #80):
+  /// Non-null only when [authorIsMe] and the row is a correctable resource
+  /// (issue #80, extended by #101: every post-migration row, help-carrying
+  /// or not — a legacy pre-#101 help subtype row never gets one):
   /// `created_at` + the fixed 10-minute correction window
   /// (docs/product/updates.md). Used only to decide whether to show the
   /// correction affordance/countdown — the server remains the sole
   /// authority on whether an actual correction attempt succeeds.
   final DateTime? correctionExpiresAt;
-
-  bool get isNeedsHelp => kind == 'needs_help';
 
   /// Whether this entry is still eligible for the caller's own
   /// correction/delete action — its own copy of PATCH/DELETE's window
@@ -120,14 +124,16 @@ class CatUpdateEntry {
     final rawCorrectionExpiresAt = json['correction_expires_at'] as String?;
     return CatUpdateEntry(
       id: json['id'] as String,
-      kind: json['kind'] as String? ?? 'ordinary',
-      statuses: (json['statuses'] as List<dynamic>)
+      // A payload predating the flag (legacy 0.1 shape) stays renderable
+      // through the compatibility window via its kind.
+      needsHelp:
+          json['needs_help'] as bool? ??
+          (json['kind'] as String?) == 'needs_help',
+      statuses: (json['statuses'] as List<dynamic>? ?? const [])
           .map((e) => e as String)
           .toList(),
       comment: json['comment'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
-      needsHelpCategory: json['needs_help_category'] as String?,
-      needsHelpCategoryLabel: json['needs_help_category_label'] as String?,
       needsHelpExpiresAt: rawExpiresAt != null
           ? DateTime.parse(rawExpiresAt)
           : null,

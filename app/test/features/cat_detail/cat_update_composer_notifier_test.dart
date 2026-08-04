@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:app/core/analytics/analytics.dart';
 import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
@@ -30,6 +31,32 @@ CatUpdateEntry _entry(String id) => CatUpdateEntry(
   comment: null,
   createdAt: DateTime.utc(2026, 1, 2),
 );
+
+/// A server-confirmed help-carrying entry, the shape POST .../updates
+/// answers for a `needs_help: true` submission (expiry always
+/// server-computed 72h out, active on arrival).
+CatUpdateEntry _helpEntry(
+  String id, {
+  List<String> statuses = const [],
+  String? comment,
+}) => CatUpdateEntry(
+  id: id,
+  needsHelp: true,
+  statuses: statuses,
+  comment: comment,
+  createdAt: DateTime.utc(2026, 1, 2),
+  needsHelpExpiresAt: DateTime.utc(2026, 1, 5),
+  needsHelpActive: true,
+);
+
+class _RecordingAnalytics implements AnalyticsService {
+  final events = <AnalyticsEvent>[];
+
+  @override
+  void log(AnalyticsEvent event) => events.add(event);
+
+  List<String> names() => events.map((e) => e.name).toList();
+}
 
 // Storage is pre-populated so DeviceIdentityService.init() resolves from
 // storage without any network call — the composer's device-identity
@@ -83,6 +110,7 @@ class _EmptyStorage implements DeviceKeyValueStorage {
 class _FakeCatDetailApi implements CatDetailApi {
   int createUpdateCalls = 0;
   List<String>? lastStatuses;
+  bool? lastNeedsHelp;
   String? lastComment;
   String? lastIdempotencyKey;
   final idempotencyKeysSeen = <String>[];
@@ -106,11 +134,13 @@ class _FakeCatDetailApi implements CatDetailApi {
   Future<CatUpdateEntry> createUpdate(
     String catId, {
     required List<String> statuses,
+    bool needsHelp = false,
     String? comment,
     String idempotencyKey = '',
   }) async {
     createUpdateCalls++;
     lastStatuses = statuses;
+    lastNeedsHelp = needsHelp;
     lastComment = comment;
     lastIdempotencyKey = idempotencyKey;
     idempotencyKeysSeen.add(idempotencyKey);
@@ -125,6 +155,7 @@ class _FakeCatDetailApi implements CatDetailApi {
     String updateId, {
     required List<String> statuses,
     String? comment,
+    bool clearNeedsHelp = false,
   }) => throw UnimplementedError();
 
   @override
@@ -217,10 +248,12 @@ ProviderContainer _containerWith(
   _FakeCatDetailApi api, {
   DeviceIdentityService? deviceIdentityService,
   SessionIdentityService? sessionIdentityService,
+  AnalyticsService? analytics,
 }) {
   final container = ProviderContainer(
     overrides: [
       catDetailApiProvider.overrideWithValue(api),
+      if (analytics != null) analyticsProvider.overrideWithValue(analytics),
       deviceIdentityServiceProvider.overrideWithValue(
         deviceIdentityService ??
             DeviceIdentityService(
@@ -652,22 +685,219 @@ void main() {
     },
   );
 
-  test('reset clears selection, comment, and a stale error', () async {
-    final api = _FakeCatDetailApi()..nextError = const UpdateNetworkException();
-    final container = _containerWith(api);
-    addTearDown(container.dispose);
-    await container.read(catDetailProvider(_catId).notifier).load();
+  test(
+    'reset clears selection, help mark, comment, and a stale error',
+    () async {
+      final api = _FakeCatDetailApi()
+        ..nextError = const UpdateNetworkException();
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
 
-    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
-    notifier.toggleStatus('fed');
-    notifier.setComment('taslak');
-    await notifier.submit();
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      notifier.toggleStatus('fed');
+      notifier.toggleNeedsHelp();
+      notifier.setComment('taslak');
+      await notifier.submit();
 
-    notifier.reset();
+      notifier.reset();
 
-    final state = container.read(catUpdateComposerProvider(_catId));
-    expect(state.selectedStatuses, isEmpty);
-    expect(state.comment, isEmpty);
-    expect(state.error, isNull);
+      final state = container.read(catUpdateComposerProvider(_catId));
+      expect(state.selectedStatuses, isEmpty);
+      expect(state.needsHelp, isFalse);
+      expect(state.comment, isEmpty);
+      expect(state.error, isNull);
+    },
+  );
+
+  group('yardıma ihtiyacı var (issue #100/#102)', () {
+    test('a help-only submit is valid: no status required', () async {
+      final api = _FakeCatDetailApi()..nextResult = _helpEntry('upd-1');
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      notifier.toggleNeedsHelp();
+      expect(
+        container.read(catUpdateComposerProvider(_catId)).canSubmit,
+        isTrue,
+      );
+
+      final ok = await notifier.submit();
+
+      expect(ok, isTrue);
+      expect(api.lastStatuses, isEmpty);
+      expect(api.lastNeedsHelp, isTrue);
+      expect(api.lastComment, isNull);
+    });
+
+    test('a help submit carries the optional note', () async {
+      final api = _FakeCatDetailApi()
+        ..nextResult = _helpEntry('upd-1', comment: 'kabı bomboştu');
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      notifier.toggleNeedsHelp();
+      notifier.setComment('  kabı bomboştu  ');
+      await notifier.submit();
+
+      expect(api.lastNeedsHelp, isTrue);
+      expect(api.lastComment, 'kabı bomboştu');
+    });
+
+    test(
+      'a combined status + help submit sends both and emits both events',
+      () async {
+        final analytics = _RecordingAnalytics();
+        final api = _FakeCatDetailApi()
+          ..nextResult = _helpEntry(
+            'upd-1',
+            statuses: const ['water_provided'],
+          );
+        final container = _containerWith(api, analytics: analytics);
+        addTearDown(container.dispose);
+        await container.read(catDetailProvider(_catId).notifier).load();
+
+        final notifier = container.read(
+          catUpdateComposerProvider(_catId).notifier,
+        );
+        notifier.toggleStatus('water_provided');
+        notifier.toggleNeedsHelp();
+
+        final ok = await notifier.submit();
+
+        expect(ok, isTrue);
+        expect(api.lastStatuses, ['water_provided']);
+        expect(api.lastNeedsHelp, isTrue);
+        expect(analytics.names(), [
+          'ordinary_update_created',
+          'needs_help_created',
+        ]);
+        expect(analytics.events[0].params, {'update_status': 'water_provided'});
+        expect(
+          analytics.events[1].params,
+          isEmpty,
+          reason:
+              'needs_help_created is parameterless since #101 — no '
+              'category, and never the note text',
+        );
+        // one submission, one timeline event.
+        final detailState = container.read(catDetailProvider(_catId));
+        expect(detailState.updates.map((u) => u.id), ['upd-1']);
+      },
+    );
+
+    test('a help-only submit emits needs_help_created alone', () async {
+      final analytics = _RecordingAnalytics();
+      final api = _FakeCatDetailApi()..nextResult = _helpEntry('upd-1');
+      final container = _containerWith(api, analytics: analytics);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      notifier.toggleNeedsHelp();
+      await notifier.submit();
+
+      expect(analytics.names(), ['needs_help_created']);
+    });
+
+    test(
+      'a successful help submit becomes the active alert, note included',
+      () async {
+        final api = _FakeCatDetailApi()
+          ..nextResult = _helpEntry('upd-1', comment: 'halsiz görünüyor');
+        final container = _containerWith(api);
+        addTearDown(container.dispose);
+        await container.read(catDetailProvider(_catId).notifier).load();
+
+        final notifier = container.read(
+          catUpdateComposerProvider(_catId).notifier,
+        );
+        notifier.toggleNeedsHelp();
+        notifier.setComment('halsiz görünüyor');
+        await notifier.submit();
+
+        final alert = container
+            .read(catDetailProvider(_catId))
+            .detail
+            ?.activeAlert;
+        expect(alert, isNotNull);
+        expect(alert!.comment, 'halsiz görünüyor');
+        expect(alert.expiresAt, DateTime.utc(2026, 1, 5));
+      },
+    );
+
+    test(
+      'a failed help submit preserves the note, mark, and selection for retry',
+      () async {
+        final api = _FakeCatDetailApi()
+          ..nextError = const UpdateNetworkException();
+        final container = _containerWith(api);
+        addTearDown(container.dispose);
+        await container.read(catDetailProvider(_catId).notifier).load();
+
+        final notifier = container.read(
+          catUpdateComposerProvider(_catId).notifier,
+        );
+        notifier.toggleStatus('water_provided');
+        notifier.toggleNeedsHelp();
+        notifier.setComment('kabı bomboştu ve halsizdi');
+
+        final ok = await notifier.submit();
+
+        expect(ok, isFalse);
+        final state = container.read(catUpdateComposerProvider(_catId));
+        expect(state.error, UpdateSubmitError.network);
+        expect(state.comment, 'kabı bomboştu ve halsizdi');
+        expect(state.needsHelp, isTrue);
+        expect(state.selectedStatuses, {'water_provided'});
+        expect(state.isSubmitting, isFalse);
+
+        // Retry succeeds and clears the draft.
+        api
+          ..nextError = null
+          ..nextResult = _helpEntry(
+            'upd-1',
+            statuses: const ['water_provided'],
+            comment: 'kabı bomboştu ve halsizdi',
+          );
+        final retryOk = await notifier.submit();
+        expect(retryOk, isTrue);
+        expect(
+          container.read(catUpdateComposerProvider(_catId)).comment,
+          isEmpty,
+        );
+      },
+    );
+
+    test('submitSeen never carries a dismissed help mark', () async {
+      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      // Sheet opened, yardım toggled, sheet dismissed without submitting.
+      notifier.toggleNeedsHelp();
+
+      final ok = await notifier.submitSeen();
+
+      expect(ok, isTrue);
+      expect(api.lastNeedsHelp, isFalse);
+      expect(api.lastStatuses, ['seen']);
+    });
   });
 }

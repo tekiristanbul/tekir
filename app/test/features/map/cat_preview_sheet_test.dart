@@ -77,15 +77,13 @@ void main() {
           lat: 41.02561,
           lng: 28.97440,
           activeAlert: ActiveAlert(
-            category: 'trapped',
-            categoryLabel: 'mahsur kalmış',
             createdAt: now.subtract(const Duration(hours: 1)),
             expiresAt: now.add(const Duration(hours: 2)),
           ),
         ),
       );
 
-      expect(find.textContaining('mahsur kalmış'), findsOneWidget);
+      expect(find.textContaining('Yardıma ihtiyacı var'), findsOneWidget);
       expect(find.textContaining('sona eriyor'), findsOneWidget);
     },
   );

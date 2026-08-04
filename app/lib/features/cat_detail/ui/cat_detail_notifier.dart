@@ -117,47 +117,21 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
   /// it has. Also a no-op if this id is already present, so a retried
   /// submit whose earlier attempt actually succeeded server-side can't
   /// duplicate the timeline entry.
+  ///
+  /// A help-carrying entry (issue #101) is always the cat's newest active
+  /// state — the server just computed its expires_at 72 hours out — so it
+  /// also becomes [CatDetail.activeAlert], built from the entry's own
+  /// fields (the comment doubles as the note) rather than re-fetched: the
+  /// same "server-confirmed entry, never optimistic" contract as the
+  /// timeline insert itself.
   void prependUpdate(CatUpdateEntry entry) {
     final detail = state.detail;
     if (detail == null) return;
     if (state.updates.any((u) => u.id == entry.id)) return;
-    state = state.copyWith(
-      updates: [entry, ...state.updates],
-      detail: CatDetail(
-        id: detail.id,
-        name: detail.name,
-        lat: detail.lat,
-        lng: detail.lng,
-        areaLabel: detail.areaLabel,
-        primaryPhoto: detail.primaryPhoto,
-        createdAt: detail.createdAt,
-        lastUpdateAt: entry.createdAt,
-        activeAlert: detail.activeAlert,
-      ),
-    );
-  }
-
-  /// [prependUpdate]'s needs-help counterpart (issue #78): a freshly
-  /// created needs-help update is always active (server-computed
-  /// expires_at is always 72h out — see NeedsHelpExpiry on the backend), so
-  /// unlike an ordinary update this also replaces [CatDetail.activeAlert]
-  /// with the alert this entry just became, instead of leaving the
-  /// previous one in place. Building [ActiveAlert] from entry's own fields
-  /// (rather than re-fetching) keeps this a single server round trip, the
-  /// same "server-confirmed entry, never optimistic" contract
-  /// [prependUpdate] already follows.
-  void applyNeedsHelpUpdate(CatUpdateEntry entry) {
-    final detail = state.detail;
-    if (detail == null) return;
-    if (state.updates.any((u) => u.id == entry.id)) return;
-    final category = entry.needsHelpCategory;
-    final categoryLabel = entry.needsHelpCategoryLabel;
     final expiresAt = entry.needsHelpExpiresAt;
-    final activeAlert =
-        (category != null && categoryLabel != null && expiresAt != null)
+    final activeAlert = (entry.needsHelp && expiresAt != null)
         ? ActiveAlert(
-            category: category,
-            categoryLabel: categoryLabel,
+            comment: entry.comment,
             createdAt: entry.createdAt,
             expiresAt: expiresAt,
           )
@@ -198,6 +172,41 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
     state = state.copyWith(
       updates: state.updates.where((u) => u.id != updateId).toList(),
     );
+  }
+
+  /// Reconciles [CatDetail.activeAlert] after the caller removed their own
+  /// help mark in-window (issue #101) — cleared via PATCH or deleted with
+  /// its whole update. The cat's active state may fall back to an older
+  /// still-active mark, and only the server can decide that (activeness is
+  /// always its clock, never this device's), so re-fetch the detail. If
+  /// the re-fetch fails, drop the alert locally when the removed mark was
+  /// its source (matched by created_at): a stale "yardıma ihtiyacı var"
+  /// banner is worse than briefly missing a fallback alert, and the next
+  /// full load corrects either way.
+  Future<void> reconcileAfterHelpRemoval(DateTime removedMarkCreatedAt) async {
+    if (state.detail == null) return;
+    try {
+      final fresh = await ref.read(catDetailApiProvider).fetchDetail(catId);
+      state = state.copyWith(detail: fresh);
+    } catch (_) {
+      final detail = state.detail;
+      final alert = detail?.activeAlert;
+      if (detail == null || alert == null) return;
+      if (!alert.createdAt.isAtSameMomentAs(removedMarkCreatedAt)) return;
+      state = state.copyWith(
+        detail: CatDetail(
+          id: detail.id,
+          name: detail.name,
+          lat: detail.lat,
+          lng: detail.lng,
+          areaLabel: detail.areaLabel,
+          primaryPhoto: detail.primaryPhoto,
+          createdAt: detail.createdAt,
+          lastUpdateAt: detail.lastUpdateAt,
+          activeAlert: null,
+        ),
+      );
+    }
   }
 }
 

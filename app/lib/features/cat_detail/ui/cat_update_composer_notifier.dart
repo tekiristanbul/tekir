@@ -13,13 +13,19 @@ import 'cat_detail_notifier.dart';
 /// display order.
 const catUpdateStatusOptions = ['seen', 'fed', 'water_provided'];
 
+/// The help note's fixed cap (issue #100 contract, decision 4): at most
+/// 500 unicode characters — applies to the help note only, never an
+/// ordinary comment.
+const helpNoteMaxLength = 500;
+
 enum UpdateSubmitError { validation, unauthorized, notFound, network, server }
 
 /// Turkish, actionable copy for each mapped failure (issue #43) — every
 /// state here implies "try again", so none of them claim to be permanent.
 String updateSubmitErrorMessageTr(UpdateSubmitError error) {
   return switch (error) {
-    UpdateSubmitError.validation => 'En az bir durum seçmelisin.',
+    UpdateSubmitError.validation =>
+      'En az bir durum seç ya da yardımı işaretle.',
     UpdateSubmitError.unauthorized => 'Kimlik doğrulanamadı, tekrar dene.',
     UpdateSubmitError.notFound => 'Bu kedi artık bulunamıyor.',
     UpdateSubmitError.network => 'Bağlantı sorunu, tekrar dene.',
@@ -30,20 +36,30 @@ String updateSubmitErrorMessageTr(UpdateSubmitError error) {
 class CatUpdateComposerState {
   const CatUpdateComposerState({
     this.selectedStatuses = const {},
+    this.needsHelp = false,
     this.comment = '',
     this.isSubmitting = false,
     this.error,
   });
 
   final Set<String> selectedStatuses;
+
+  /// Whether the single `yardıma ihtiyacı var` mark is selected (issue
+  /// #100/#102) — one boolean, no categories. Combinable with statuses in
+  /// the same submission.
+  final bool needsHelp;
   final String comment;
   final bool isSubmitting;
   final UpdateSubmitError? error;
 
-  bool get canSubmit => selectedStatuses.isNotEmpty && !isSubmitting;
+  /// The create invariant (docs/architecture/api.md): at least one status
+  /// or the help flag; comment-only submissions stay invalid.
+  bool get canSubmit =>
+      (selectedStatuses.isNotEmpty || needsHelp) && !isSubmitting;
 
   CatUpdateComposerState copyWith({
     Set<String>? selectedStatuses,
+    bool? needsHelp,
     String? comment,
     bool? isSubmitting,
     UpdateSubmitError? error,
@@ -51,6 +67,7 @@ class CatUpdateComposerState {
   }) {
     return CatUpdateComposerState(
       selectedStatuses: selectedStatuses ?? this.selectedStatuses,
+      needsHelp: needsHelp ?? this.needsHelp,
       comment: comment ?? this.comment,
       isSubmitting: isSubmitting ?? this.isSubmitting,
       error: clearError ? null : (error ?? this.error),
@@ -89,6 +106,11 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     state = state.copyWith(selectedStatuses: next, clearError: true);
   }
 
+  void toggleNeedsHelp() {
+    if (state.isSubmitting) return;
+    state = state.copyWith(needsHelp: !state.needsHelp, clearError: true);
+  }
+
   void setComment(String value) {
     state = state.copyWith(comment: value);
   }
@@ -100,15 +122,20 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     state = const CatUpdateComposerState();
   }
 
-  /// Submits the current selection and draft comment from the composition
-  /// sheet. Returns true on success; on failure, [state.error] carries the
-  /// mapped, turkish-ready failure for the caller to read via
-  /// [updateSubmitErrorMessageTr].
+  /// Submits the current selection, help mark, and draft comment from the
+  /// composition sheet. Returns true on success; on failure, [state.error]
+  /// carries the mapped, turkish-ready failure for the caller to read via
+  /// [updateSubmitErrorMessageTr] — and the draft (including the optional
+  /// help note) survives untouched for a retry.
   Future<bool> submit() {
     final statuses = state.selectedStatuses.toList();
-    if (statuses.isEmpty) return Future.value(false);
+    if (statuses.isEmpty && !state.needsHelp) return Future.value(false);
     final trimmedComment = state.comment.trim();
-    return _submit(statuses, trimmedComment.isEmpty ? null : trimmedComment);
+    return _submit(
+      statuses,
+      trimmedComment.isEmpty ? null : trimmedComment,
+      needsHelp: state.needsHelp,
+    );
   }
 
   /// The one-tap "seen" shortcut. Deliberately bypasses [state.comment] —
@@ -116,7 +143,11 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   /// submitting must never be attached to an unrelated one-tap update.
   Future<bool> submitSeen() => _submit(const ['seen'], null);
 
-  Future<bool> _submit(List<String> statuses, String? comment) async {
+  Future<bool> _submit(
+    List<String> statuses,
+    String? comment, {
+    bool needsHelp = false,
+  }) async {
     if (state.isSubmitting) return false;
     state = state.copyWith(isSubmitting: true, clearError: true);
     try {
@@ -145,25 +176,33 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
           .createUpdate(
             catId,
             statuses: statuses,
+            needsHelp: needsHelp,
             comment: comment,
             idempotencyKey: _idempotencyKey,
           );
       ref.read(catDetailProvider(catId).notifier).prependUpdate(entry);
-      // ordinary_update_created (issue #84): bounded status vocabulary
-      // only — the comment text never leaves the api call above.
-      ref
-          .read(analyticsProvider)
-          .log(
-            AnalyticsEvent.ordinaryUpdateCreated(
-              statuses.length > 1
-                  ? AnalyticsUpdateStatus.multiple
-                  : switch (statuses.single) {
-                      'fed' => AnalyticsUpdateStatus.fed,
-                      'water_provided' => AnalyticsUpdateStatus.waterProvided,
-                      _ => AnalyticsUpdateStatus.seen,
-                    },
-            ),
-          );
+      // A combined update emits both events (docs/product/alerts.md,
+      // decision 6): ordinary_update_created when at least one status is
+      // present, needs_help_created (parameterless since #101) when the
+      // help mark is set. Bounded vocabularies only — the comment/note
+      // text never leaves the api call above.
+      final analytics = ref.read(analyticsProvider);
+      if (statuses.isNotEmpty) {
+        analytics.log(
+          AnalyticsEvent.ordinaryUpdateCreated(
+            statuses.length > 1
+                ? AnalyticsUpdateStatus.multiple
+                : switch (statuses.single) {
+                    'fed' => AnalyticsUpdateStatus.fed,
+                    'water_provided' => AnalyticsUpdateStatus.waterProvided,
+                    _ => AnalyticsUpdateStatus.seen,
+                  },
+          ),
+        );
+      }
+      if (needsHelp) {
+        analytics.log(const AnalyticsEvent.needsHelpCreated());
+      }
       state = const CatUpdateComposerState();
       _idempotencyKey = _generateIdempotencyKey();
       return true;
