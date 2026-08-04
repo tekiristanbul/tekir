@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/session_identity.dart';
 import '../../../core/models/active_alert.dart';
+import '../../../core/states/initial_read_gate.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/distance_format.dart';
 import '../../../core/utils/relative_time.dart';
@@ -14,6 +15,7 @@ import '../../auth/ui/auth_gate.dart';
 import '../../map/data/cat_marker.dart';
 import '../data/discover_location_service.dart';
 import 'discover_notifier.dart';
+import 'discover_skeleton.dart';
 
 /// Keşfet: the three approved mvp discovery surfaces (docs/product/
 /// discovery.md, issue #82) — every active cat by distance ("Yakınımda"),
@@ -146,6 +148,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                 ),
                 DiscoverTab.following => _FollowingTabBody(
                   state: state.following,
+                  onBrowseNearby: () => _selectTab(DiscoverTab.nearby),
                 ),
               },
             ),
@@ -263,7 +266,7 @@ class _LocationTabBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (state.isLoading && !state.hasLoadedOnce) {
-      return const Center(child: CircularProgressIndicator());
+      return const _GatedListSkeleton();
     }
 
     final outcome = state.locationOutcome;
@@ -440,9 +443,10 @@ class _EmptyDiscoverList extends StatelessWidget {
 }
 
 class _FollowingTabBody extends ConsumerWidget {
-  const _FollowingTabBody({required this.state});
+  const _FollowingTabBody({required this.state, required this.onBrowseNearby});
 
   final DiscoverFollowingTabState state;
+  final VoidCallback onBrowseNearby;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -450,7 +454,7 @@ class _FollowingTabBody extends ConsumerWidget {
     if (!isAuthenticated) return const _GuestFollowingBody();
 
     if (state.isLoading && !state.hasLoadedOnce) {
-      return const Center(child: CircularProgressIndicator());
+      return const _GatedListSkeleton();
     }
     if (state.error != null && state.cats.isEmpty) {
       return _ErrorRetry(
@@ -458,7 +462,7 @@ class _FollowingTabBody extends ConsumerWidget {
       );
     }
     if (state.cats.isEmpty) {
-      return const _EmptyFollows();
+      return _EmptyFollows(onBrowseNearby: onBrowseNearby);
     }
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s5),
@@ -596,34 +600,131 @@ class _DiscoverCatRow extends StatelessWidget {
   }
 }
 
-class _EmptyFollows extends StatelessWidget {
-  const _EmptyFollows();
+/// State 14's screen-level gate: the shared 400 ms rule decides when the
+/// skeleton may appear at all, so a read finishing inside the window
+/// never flashes it (docs/design/app-states.md, timing contract). This
+/// widget only ever mounts while the initial read is in flight, so the
+/// gate's clock starts with the read and stops when it unmounts.
+class _GatedListSkeleton extends StatelessWidget {
+  const _GatedListSkeleton();
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.s5),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.compass_calibration,
-              size: 40,
-              color: AppColors.faint,
+    return InitialReadGate(
+      reading: true,
+      builder: (context, phase) => phase == InitialReadPhase.hidden
+          ? const SizedBox.shrink()
+          : const DiscoverListSkeleton(),
+    );
+  }
+}
+
+/// State 08 · takip listesi boş (docs/design/app-states.md): the filter
+/// result is empty because the user follows no one — an invitation, not
+/// a failure. The filter row above stays visible and tappable, and the
+/// single quiet action redirects to the nearby list.
+class _EmptyFollows extends StatelessWidget {
+  const _EmptyFollows({required this.onBrowseNearby});
+
+  final VoidCallback onBrowseNearby;
+
+  @override
+  Widget build(BuildContext context) {
+    // Scrollable so no text scale can overflow it (contract global rule);
+    // at normal scale the content still sits centered.
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.s8,
+                AppSpacing.s5,
+                AppSpacing.s8,
+                AppSpacing.s10,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceAlt,
+                      shape: BoxShape.circle,
+                    ),
+                    child: SizedBox(
+                      width: 88,
+                      height: 88,
+                      child: Icon(
+                        Icons.favorite_border,
+                        size: 34,
+                        color: AppColors.faint,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.s5),
+                  Text(
+                    'henüz kimseyi takip etmiyorsun',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontSize: 23,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.s3),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    child: const Text(
+                      'bir kedinin sayfasındaki kalbe dokun; ona yardım '
+                      'gerektiğinde haberin olsun.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.faint,
+                        height: 1.6,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.s5),
+                  Material(
+                    color: AppColors.surfaceAlt,
+                    borderRadius: BorderRadius.circular(18),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(18),
+                      onTap: onBrowseNearby,
+                      child: Container(
+                        constraints: const BoxConstraints(minHeight: kTapMin),
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.s4 + 2,
+                          vertical: AppSpacing.s3,
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'yakındakilere göz at',
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.muted,
+                              ),
+                            ),
+                            SizedBox(width: AppSpacing.s1),
+                            Icon(
+                              Icons.chevron_right,
+                              size: 16,
+                              color: AppColors.faint,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: AppSpacing.s3),
-            Text(
-              'Henüz takip ettiğin kedi yok',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: AppSpacing.s2),
-            const Text(
-              'Bir kedinin detayından takip etmeye başladığında burada listelenir.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.muted, height: 1.5),
-            ),
-          ],
+          ),
         ),
       ),
     );
