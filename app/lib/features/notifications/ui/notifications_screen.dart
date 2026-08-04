@@ -7,6 +7,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../data/notification.dart';
 import 'notifications_notifier.dart';
+import 'quiet_day.dart';
 
 /// The authenticated account's own notification inbox (issue #78): a
 /// newest-first list of "a followed cat's needs-help update", each
@@ -53,7 +54,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       );
     }
     if (state.items.isEmpty) {
-      return const _EmptyState();
+      return const QuietDayBody();
     }
     return ListView.separated(
       padding: const EdgeInsets.all(AppSpacing.s4),
@@ -134,30 +135,6 @@ class _NotificationTile extends StatelessWidget {
               const Icon(Icons.chevron_right, color: AppColors.faint),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(AppSpacing.s6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.notifications_none, size: 40, color: AppColors.faint),
-            SizedBox(height: AppSpacing.s3),
-            Text(
-              'Henüz bildirimin yok',
-              style: TextStyle(color: AppColors.muted),
-            ),
-          ],
         ),
       ),
     );
