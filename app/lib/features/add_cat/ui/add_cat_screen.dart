@@ -7,6 +7,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../../../core/geo/istanbul_bounds.dart';
+import '../../../core/states/photo_upload_progress.dart';
+import '../../../core/states/submitting_button.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/add_cat_api.dart';
 import 'add_cat_state.dart';
@@ -389,11 +391,25 @@ class _DetailsStep extends ConsumerWidget {
                     )
                   : ClipRRect(
                       borderRadius: BorderRadius.circular(AppRadius.md),
-                      child: Image.memory(
-                        state.photoBytes!,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        height: 150,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Image.memory(state.photoBytes!, fit: BoxFit.cover),
+                          // The only percentage anywhere in the app
+                          // (docs/design/app-states.md): the photo leaving
+                          // the device.
+                          if (state.saving && state.uploadProgress != null)
+                            PhotoUploadProgress(
+                              progress: state.uploadProgress!,
+                            ),
+                          if (!state.saving &&
+                              state.error == AddCatError.network)
+                            const Positioned(
+                              left: AppSpacing.s3,
+                              bottom: AppSpacing.s3,
+                              child: _UploadFailedBadge(),
+                            ),
+                        ],
                       ),
                     ),
             ),
@@ -428,7 +444,10 @@ class _DetailsStep extends ConsumerWidget {
             onChanged: (value) =>
                 ref.read(addCatProvider.notifier).setName(value),
           ),
-          if (state.error != null) ...[
+          // State 11 presents the transient network failure as the sheet
+          // plus the photo badge; the inline banner stays for the
+          // user-fixable validation-class failures only.
+          if (state.error != null && state.error != AddCatError.network) ...[
             const SizedBox(height: AppSpacing.s3),
             Container(
               width: double.infinity,
@@ -461,30 +480,11 @@ class _DetailsStep extends ConsumerWidget {
             ),
           ],
           const SizedBox(height: AppSpacing.s6),
-          SizedBox(
-            height: kTapMin,
-            child: ElevatedButton(
-              onPressed: state.saving ? null : () => _save(context, ref),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.primaryInk,
-                disabledBackgroundColor: AppColors.lineStrong,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-                textStyle: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              child: state.saving
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.primaryInk,
-                      ),
-                    )
-                  : Text(state.error != null ? 'Tekrar dene' : 'Kaydet'),
-            ),
+          SubmittingButton(
+            label: state.error != null ? 'Tekrar dene' : 'Kaydet',
+            submittingLabel: 'haritaya ekleniyor',
+            submitting: state.saving,
+            onPressed: () => _save(context, ref),
           ),
         ],
       ),
@@ -493,8 +493,114 @@ class _DetailsStep extends ConsumerWidget {
 
   Future<void> _save(BuildContext context, WidgetRef ref) async {
     final catId = await ref.read(addCatProvider.notifier).save();
-    if (catId == null || !context.mounted) return;
-    context.go('/cats/$catId');
+    if (!context.mounted) return;
+    if (catId != null) {
+      context.go('/cats/$catId');
+      return;
+    }
+    // State 11 · gönderilemedi (docs/design/app-states.md, slice 5): the
+    // transient connection failure gets the contract's failure sheet. The
+    // form behind it keeps every entered value; retry reuses the flow's
+    // idempotency key. "taslak olarak sakla" and the automatic-retry
+    // footer depend on the durable draft queue, which issue #99 keeps out
+    // of 0.2 — they are not rendered.
+    if (ref.read(addCatProvider).error == AddCatError.network) {
+      await _showFailureSheet(context, ref);
+    }
+  }
+
+  Future<void> _showFailureSheet(BuildContext context, WidgetRef ref) {
+    final typedName = ref.read(addCatProvider).name.trim();
+    final title = typedName.isEmpty
+        ? 'kedi haritaya eklenemedi'
+        : '$typedName haritaya eklenemedi';
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: AppColors.bgElevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s5,
+            0,
+            AppSpacing.s5,
+            AppSpacing.s6,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: AppColors.helpSoft,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                    child: const SizedBox(
+                      width: kTapMin,
+                      height: kTapMin,
+                      child: Icon(
+                        Icons.warning_amber_rounded,
+                        size: 21,
+                        color: AppColors.help,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.s3 + 2),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: Theme.of(sheetContext).textTheme.titleMedium
+                              ?.copyWith(fontSize: 20, height: 1.3),
+                        ),
+                        const SizedBox(height: AppSpacing.s1 + 2),
+                        const Text(
+                          'fotoğraf yüklenirken bağlantı koptu. '
+                          'yazdıkların telefonunda duruyor.',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.55,
+                            color: AppColors.faint,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s5),
+              SizedBox(
+                height: kTapMin,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    _save(context, ref);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: AppColors.primaryInk,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('tekrar dene'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   // "capture/selection" (docs/architecture/flutter.md) — a contributor can
@@ -522,5 +628,38 @@ class _DetailsStep extends ConsumerWidget {
     );
     if (source == null || !context.mounted) return;
     await ref.read(addCatProvider.notifier).pickPhoto(source);
+  }
+}
+
+/// State 11's photo badge (docs/design/app-states.md): sits on the picked
+/// photo after a failed submission — the photo itself is retained, only
+/// its upload didn't happen.
+class _UploadFailedBadge extends StatelessWidget {
+  const _UploadFailedBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.help.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(AppRadius.full),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.warning_amber_rounded, size: 12, color: Colors.white),
+          SizedBox(width: 7),
+          Text(
+            'yüklenemedi',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
