@@ -123,6 +123,7 @@ type Update struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
 	IdempotencyKey     pgtype.Text        `json:"idempotency_key"`
+	NeedsHelp          bool               `json:"needs_help"`
 }
 
 type UpdateStatus struct {

@@ -63,14 +63,15 @@ func TestStore_CreateNeedsHelpUpdate_Success(t *testing.T) {
 
 	createdAt := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
-	row, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	row, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 updateID,
 		CatID:              catID,
 		AuthorDeviceID:     device,
 		AuthorUserID:       userID,
 		Comment:            pgtype.Text{String: "sağ arka ayağını basamıyor", Valid: true},
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  "injured_or_sick",
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: "injured_or_sick", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
 	})
 	if err != nil {
@@ -81,14 +82,21 @@ func TestStore_CreateNeedsHelpUpdate_Success(t *testing.T) {
 	}
 
 	var kind string
+	var needsHelp bool
 	var category pgtype.Text
 	var expiresAt pgtype.Timestamptz
-	if err := pool.QueryRow(ctx, "select kind, needs_help_category, needs_help_expires_at from updates where id = $1", row.ID).
-		Scan(&kind, &category, &expiresAt); err != nil {
+	if err := pool.QueryRow(ctx, "select kind, needs_help, needs_help_category, needs_help_expires_at from updates where id = $1", row.ID).
+		Scan(&kind, &needsHelp, &category, &expiresAt); err != nil {
 		t.Fatalf("query update row: %v", err)
 	}
-	if kind != "needs_help" {
-		t.Errorf("expected kind needs_help, got %q", kind)
+	// issue #101: the compat endpoint writes the unified flag model — kind
+	// stays 'ordinary', the flag is set, the category survives as legacy
+	// metadata only.
+	if kind != "ordinary" {
+		t.Errorf("expected kind ordinary, got %q", kind)
+	}
+	if !needsHelp {
+		t.Error("expected needs_help = true")
 	}
 	if category.String != "injured_or_sick" {
 		t.Errorf("expected category injured_or_sick, got %q", category.String)
@@ -129,12 +137,13 @@ func TestStore_CreateNeedsHelpUpdate_InvalidCategoryRejected(t *testing.T) {
 	userID := createTestUser(t, ctx, store)
 
 	createdAt := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
-	_, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	_, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		CatID:              catID,
 		AuthorUserID:       userID,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  "not_a_real_category",
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: "not_a_real_category", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
 	})
 	if !isCheckViolation(err) {
@@ -226,7 +235,7 @@ func TestStore_ListNeedsHelpRecipientDevices_MultipleDevicesPerFollower(t *testi
 	}
 }
 
-func TestStore_ClaimNotificationOutboxBatch_CarriesKindAuthorAndCategory(t *testing.T) {
+func TestStore_ClaimNotificationOutboxBatch_CarriesFlagAndAuthor(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	drainNotificationOutbox(t, ctx, store)
@@ -236,12 +245,13 @@ func TestStore_ClaimNotificationOutboxBatch_CarriesKindAuthorAndCategory(t *test
 
 	needsHelpID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	createdAt := time.Date(2026, 3, 5, 8, 0, 0, 0, time.UTC)
-	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 needsHelpID,
 		CatID:              catID,
 		AuthorUserID:       author,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  "trapped",
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: "trapped", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
 	}); err != nil {
 		t.Fatalf("create needs-help update: %v", err)
@@ -275,7 +285,7 @@ func TestStore_ClaimNotificationOutboxBatch_CarriesKindAuthorAndCategory(t *test
 	if !ok {
 		t.Fatalf("expected needs-help row claimed")
 	}
-	if nh.Kind != "needs_help" || nh.NeedsHelpCategory.String != "trapped" || nh.AuthorUserID != author {
+	if !nh.NeedsHelp || nh.NeedsHelpAlreadyActive || nh.AuthorUserID != author {
 		t.Errorf("unexpected needs-help claim row: %+v", nh)
 	}
 
@@ -283,7 +293,7 @@ func TestStore_ClaimNotificationOutboxBatch_CarriesKindAuthorAndCategory(t *test
 	if !ok {
 		t.Fatalf("expected ordinary row claimed")
 	}
-	if ord.Kind != "ordinary" || ord.NeedsHelpCategory.Valid {
+	if ord.NeedsHelp || ord.NeedsHelpAlreadyActive {
 		t.Errorf("unexpected ordinary claim row: %+v", ord)
 	}
 }
@@ -405,12 +415,13 @@ func TestStore_CreateNotification_DedupOnConflict(t *testing.T) {
 
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	createdAt := time.Now()
-	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 updateID,
 		CatID:              catID,
 		AuthorUserID:       author,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  "food_needed",
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: "food_needed", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
 	}); err != nil {
 		t.Fatalf("create needs-help update: %v", err)
@@ -467,12 +478,13 @@ func TestStore_ListMyNotifications_And_MarkNotificationRead_OwnerScoped(t *testi
 
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	createdAt := time.Now()
-	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 updateID,
 		CatID:              catID,
 		AuthorUserID:       author,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  "water_needed",
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: "water_needed", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
 	}); err != nil {
 		t.Fatalf("create needs-help update: %v", err)

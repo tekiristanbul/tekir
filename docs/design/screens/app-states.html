@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>tekir — application states 06–14 (design reference)</title>
+<style>
+/* ─────────────────────────────────────────────────────────────
+   tekir — application state reference, sections 06–14.
+   standalone: no build step, no runtime, no external script.
+   the only network reference is the google-fonts link below; it is
+   non-blocking and the page falls back to georgia / system-ui when
+   offline. metrics, copy and colors do not depend on it.
+   ───────────────────────────────────────────────────────────── */
+@import url("https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600&family=Nunito:wght@400;600;700;800&display=swap");
+
+:root{
+  --paper:#fbf6ee; --paper2:#fffdf8; --ink:#2a211a; --muted:#6a584a;
+  --faint:#8a7563; --pale:#b3a390; --dim:#a08a70;
+  --sand:#f5ecdf; --sand2:#f2e9db; --tan:#f2e2cd; --line:#e4d8c4;
+  --brick:#b5452f; --brickInk:#fdf1ec; --brickDeep:#96502f; --brickText:#8a3a24;
+  --help:#c7352b; --helpSoft:#f7dad6; --helpStrong:#8f3018;
+  --olive:#7b9a52; --oliveBg:#eaefe1; --oliveInk:#3f5230; --oliveText:#6b7d55;
+  --blue:#5b7f9c; --photo:#e5dccd; --surfaceAlt:#eee6da; --lineStrong:#d2c1a6;
+  --serif:'Lora',Georgia,'Times New Roman',serif;
+  --sans:'Nunito',system-ui,-apple-system,'Segoe UI',sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#e9e2d6;color:var(--ink);font-family:var(--sans)}
+body{padding:48px 44px 90px}
+a{color:var(--brick);text-decoration:none}
+a:hover{color:#7f2d1a}
+
+/* ── document chrome ───────────────────────────────────────── */
+.doc-head{max-width:760px;display:flex;flex-direction:column;gap:14px;margin-bottom:14px}
+.brand{display:flex;align-items:center;gap:11px}
+.brand h1{margin:0;font-family:var(--serif);font-weight:600;font-size:30px;letter-spacing:-.03em;line-height:1}
+.tag{font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--brick);background:#f7e2d8;border-radius:999px;padding:3px 8px}
+.doc-head p{margin:0;font-size:14.5px;line-height:1.65;color:var(--muted);text-wrap:pretty}
+.meta{display:flex;flex-wrap:wrap;gap:8px;padding-top:4px}
+.meta span{font-size:11.5px;font-weight:700;color:var(--faint);background:var(--sand);border-radius:999px;padding:6px 12px}
+.group{display:flex;flex-direction:column;gap:12px;max-width:660px;padding:44px 0 4px}
+.group h2{margin:0;font-family:var(--serif);font-weight:600;font-size:24px;letter-spacing:-.03em;line-height:1}
+.group .row{display:flex;align-items:center;gap:11px}
+.group .num{font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--olive);background:var(--oliveBg);border-radius:999px;padding:3px 8px}
+.group p{margin:0;font-size:14.5px;line-height:1.65;color:var(--muted);text-wrap:pretty}
+.deck{display:flex;gap:36px;flex-wrap:wrap;align-items:flex-start;padding-top:26px}
+.cap{display:flex;flex-direction:column;gap:3px;padding-left:4px}
+.cap b{font-size:11px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--brick)}
+.cap span{font-size:13px;color:var(--faint)}
+.item{display:flex;flex-direction:column;gap:14px}
+.foot{max-width:360px;padding-left:4px;font-size:12px;line-height:1.6;color:var(--faint);text-wrap:pretty}
+.card{width:340px;background:var(--paper2);border-radius:24px;padding:22px;box-shadow:inset 0 0 0 1.5px #e3d6c2;display:flex;flex-direction:column;gap:16px}
+.card .k{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--brick)}
+.card .v{font-size:13px;line-height:1.6;color:#4a3b2f;text-wrap:pretty}
+.card .blk{display:flex;flex-direction:column;gap:5px}
+.hr{height:1px;background:rgba(42,33,26,.1);margin:2px 0}
+
+/* ── device frame ──────────────────────────────────────────── */
+.frame{position:relative;flex:none;width:434px;height:906px;border-radius:58px;padding:16px;
+  background:#241c17;box-shadow:0 44px 84px -44px rgba(35,25,17,.75),inset 0 0 0 2px #3a2e26}
+.screen{position:relative;width:402px;height:874px;border-radius:42px;overflow:hidden;background:var(--paper)}
+.notch{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:104px;height:28px;border-radius:99px;background:#241c17;z-index:300}
+.status{position:absolute;top:0;left:0;right:0;height:54px;z-index:290;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 7px;font:800 13.5px var(--sans);color:var(--ink);pointer-events:none}
+.status .right{display:flex;align-items:flex-end;gap:7px}
+.status .sig{display:flex;align-items:flex-end;gap:3px}
+.status .sig i{display:block;width:3px;background:var(--ink);border-radius:1px}
+.status .sig i:nth-child(1){height:4px}.status .sig i:nth-child(2){height:6px}
+.status .sig i:nth-child(3){height:8px}.status .sig i:nth-child(4){height:10px}
+.status .bat{width:22px;height:11px;border:1.5px solid var(--ink);border-radius:3px;position:relative}
+.status .bat::after{content:'';position:absolute;inset:1.5px;right:6px;background:var(--ink);border-radius:1px}
+.status.on-dark,.status.on-dark .sig i,.status.on-dark .bat{color:#fdf1ec}
+.status.on-dark .sig i{background:#fdf1ec}
+.status.on-dark .bat{border-color:#fdf1ec}
+.status.on-dark .bat::after{background:#fdf1ec}
+
+/* ── bottom tab bar ───────────────────────────────────────── */
+.tabs{position:absolute;left:16px;right:16px;bottom:22px;z-index:70;display:flex;padding:7px;border-radius:26px;
+  background:rgba(251,246,238,.94);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+  box-shadow:0 18px 40px -18px rgba(35,25,17,.7)}
+.tabs .pill{position:absolute;top:7px;left:7px;width:calc(25% - 3.5px);height:52px;border-radius:20px;background:var(--tan)}
+.tabs[data-active="1"] .pill{transform:translateX(89px)}
+.tabs[data-active="2"] .pill{transform:translateX(178px)}
+.tabs[data-active="3"] .pill{transform:translateX(267px)}
+.tabs .t{position:relative;flex:1;min-height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font:800 10px var(--sans);color:var(--pale)}
+.tabs[data-active="0"] .t:nth-of-type(1),
+.tabs[data-active="1"] .t:nth-of-type(2),
+.tabs[data-active="2"] .t:nth-of-type(3),
+.tabs[data-active="3"] .t:nth-of-type(4){color:var(--brickText)}
+.i{width:21px;height:21px;background:currentColor;
+  -webkit-mask:center/contain no-repeat;mask:center/contain no-repeat}
+/* glyph geometry copied from prototype/icons.js (map, compass, bell, user) */
+.i-map{-webkit-mask-image:var(--g-map);mask-image:var(--g-map)}
+.i-comp{-webkit-mask-image:var(--g-comp);mask-image:var(--g-comp)}
+.i-bell{-webkit-mask-image:var(--g-bell);mask-image:var(--g-bell)}
+.i-user{-webkit-mask-image:var(--g-user);mask-image:var(--g-user)}
+:root{
+  --g-map:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z'/%3E%3Cpath d='M9 4v14'/%3E%3Cpath d='M15 6v14'/%3E%3C/svg%3E");
+  --g-comp:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.2'/%3E%3Cpath d='m14.8 9.2-1.8 5-5 1.8 1.8-5Z'/%3E%3C/svg%3E");
+  --g-bell:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 13 6 9Z'/%3E%3Cpath d='M9.5 17.5a2.5 2.5 0 0 0 5 0'/%3E%3C/svg%3E");
+  --g-user:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='3.6'/%3E%3Cpath d='M4.5 20c1.4-3.6 4.4-5.4 7.5-5.4S18.1 16.4 19.5 20'/%3E%3C/svg%3E");
+  --g-cam:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a5927e' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.5h3.5L8 6h8l1.5 2.5H21v10H3z'/%3E%3Ccircle cx='12' cy='13' r='3.2'/%3E%3C/svg%3E");
+}
+
+/* ── photo placeholders ───────────────────────────────────── */
+/* the hi-fi source used third-party demo photographs. this repository
+   copy carries neutral placeholders at the identical geometry, so no
+   external image is fetched and no unlicensed asset is committed. */
+.ph{background:
+  var(--g-cam) center/26px no-repeat,
+  linear-gradient(135deg,#ece2d2 0%,#ddceb6 100%);}
+.ph.sm{background-size:18px,auto}
+.ph.lg{background-size:34px,auto}
+
+/* ── shared bits ──────────────────────────────────────────── */
+.searchbar{position:absolute;top:58px;left:0;right:0;padding:8px 16px 0;z-index:50}
+.searchbar>div{display:flex;align-items:center;gap:11px;padding:13px 15px;border-radius:22px;
+  background:rgba(253,248,240,.93);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  box-shadow:0 14px 34px -16px rgba(42,33,26,.5)}
+.searchbar span{flex:1;font-size:14px;font-weight:700;color:var(--dim)}
+.hdr{padding:0 18px 16px;font-family:var(--serif);font-weight:600;font-size:32px;letter-spacing:-.03em}
+.body{position:absolute;inset:0;padding:62px 0 116px;display:flex;flex-direction:column}
+.chips{padding:0 18px 14px;display:flex;gap:8px}
+.chip{min-height:34px;display:flex;align-items:center;gap:7px;padding:9px 15px;border-radius:999px;font-size:12.5px;font-weight:800;background:var(--sand2);color:var(--muted)}
+.chip.sel{background:var(--ink);color:var(--brickInk)}
+.chip .n{background:var(--help);color:#fff;border-radius:999px;padding:1px 6px;font-size:10.5px}
+.btn{min-height:44px;display:flex;align-items:center;justify-content:center;gap:9px;border-radius:20px;padding:16px;font-size:15px;font-weight:800}
+.btn-p{background:var(--brick);color:var(--brickInk);box-shadow:0 16px 30px -14px rgba(181,69,47,.95)}
+.btn-q{background:var(--sand2);color:var(--muted);font-size:14px;padding:15px}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 32px 40px;text-align:center}
+.empty .disc{position:relative;width:88px;height:88px;border-radius:50%;background:var(--tan);display:flex;align-items:center;justify-content:center;margin-bottom:22px}
+.empty h3{margin:0;font-family:var(--serif);font-weight:600;font-size:23px;letter-spacing:-.02em;line-height:1.3;text-wrap:balance}
+.empty p{margin:11px 0 0;font-size:13px;line-height:1.6;color:var(--faint);text-wrap:pretty;max-width:280px}
+.card-cat{display:flex;align-items:center;gap:12px;background:#fff;box-shadow:inset 0 0 0 1px var(--line);border-radius:20px;padding:12px 14px}
+.card-cat .thumb{width:52px;height:52px;flex:none;border-radius:14px}
+.card-cat .nm{font-family:var(--serif);font-weight:600;font-size:16px;letter-spacing:-.015em}
+.badge{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:999px;font-size:11px;font-weight:700;background:var(--surfaceAlt);color:var(--muted)}
+
+/* ── motion ───────────────────────────────────────────────── */
+@keyframes tkIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes tkRise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+@keyframes tkPop{0%{opacity:0;transform:scale(.9) translateY(10px)}60%{transform:scale(1.02)}100%{opacity:1;transform:scale(1) translateY(0)}}
+@keyframes tkSonar{0%{transform:scale(.4);opacity:.5}70%{opacity:0}100%{transform:scale(2.8);opacity:0}}
+@keyframes tkShim{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
+@keyframes tkSpin{to{transform:rotate(360deg)}}
+@keyframes tkBreathe{0%,100%{opacity:.45}50%{opacity:1}}
+/* splash, 3.4 s, plays once — see the reduced-motion note in section 12 */
+@keyframes tkPinFall{0%,4%{opacity:0;transform:translateY(-120px) scale(.55)}14%{opacity:1;transform:translateY(7px) scale(1.07)}17%{transform:translateY(-3px) scale(.98)}20%{transform:translateY(0) scale(1)}100%{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes tkLand{0%,13%{opacity:0;transform:scale(.2)}15%{opacity:.5}28%,100%{opacity:0;transform:scale(2.6)}}
+@keyframes tkPad1{0%,20%{opacity:0;transform:translateY(10px)}31%{opacity:1;transform:translateY(0)}100%{opacity:1;transform:translateY(0)}}
+@keyframes tkPad2{0%,23%{opacity:0;transform:translateY(10px)}34%{opacity:1;transform:translateY(0)}100%{opacity:1;transform:translateY(0)}}
+@keyframes tkPad3{0%,26%{opacity:0;transform:translateY(10px)}37%{opacity:1;transform:translateY(0)}100%{opacity:1;transform:translateY(0)}}
+@keyframes tkPad4{0%,29%{opacity:0;transform:translateY(10px)}40%{opacity:1;transform:translateY(0)}100%{opacity:1;transform:translateY(0)}}
+@keyframes tkWordL{0%,44%{opacity:0;transform:translateY(9px)}55%{opacity:1;transform:translateY(0)}100%{opacity:1;transform:translateY(0)}}
+@keyframes tkTagL{0%,50%{opacity:0}61%{opacity:1}100%{opacity:1}}
+@keyframes tkHintIn{0%,45%{opacity:0}55%,70%{opacity:1}82%,100%{opacity:0}}
+@keyframes tkLogoOut{0%,70%{opacity:1;transform:scale(1)}88%,100%{opacity:0;transform:scale(1.14)}}
+@keyframes tkSheetOut{0%,70%{opacity:1}88%,100%{opacity:0}}
+@keyframes tkAppIn{0%,74%{opacity:0;transform:scale(1.06)}92%,100%{opacity:1;transform:scale(1)}}
+
+/* REDUCED MOTION — normative, not a nicety.
+   the implementation must honour MediaQuery.disableAnimations /
+   accessibleNavigation the same way: no staggered entrance, no
+   shimmer, no breathing, no spin. every state jumps straight to its
+   settled frame — the splash shows its final composition and the map
+   underneath is already revealed. nothing is hidden or removed. */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  /* the lockup stays; the map reveal is what gets suppressed, so the
+     brand composition remains inspectable instead of vanishing. */
+  .splash-sheet{opacity:1!important}
+  .splash-logo{opacity:1!important;transform:none!important}
+  .splash-app{opacity:0!important;transform:none!important}
+  .splash-hint{opacity:0!important}
+  .shim{display:none!important}
+}
+</style>
+</head>
+<body>
+
+<header class="doc-head">
+  <div class="brand">
+    <svg width="30" height="33" viewBox="0 0 200 220" fill="none" aria-hidden="true"><ellipse cx="40" cy="78" rx="15.5" ry="20" transform="rotate(-30 40 78)" fill="#2a211a"></ellipse><ellipse cx="79" cy="51" rx="17.5" ry="22.6" transform="rotate(-11 79 51)" fill="#2a211a"></ellipse><ellipse cx="122" cy="51.5" rx="17.5" ry="22.6" transform="rotate(12 122 51.5)" fill="#2a211a"></ellipse><ellipse cx="161" cy="79" rx="15.5" ry="20" transform="rotate(31 161 79)" fill="#2a211a"></ellipse><path d="M100.5 88c30.5 0 49.5 21 48.8 42.2-.7 21-16.6 36.6-30.3 51.2-6 6.4-11.9 15.6-18.6 15.6-6.8 0-12.2-9.4-18.4-15.9C68 166.6 51.5 151 51.5 130.2 51.5 109 70 88 100.5 88z" fill="#b5452f"></path></svg>
+    <h1>application states</h1>
+    <span class="tag">06 – 14</span>  </div>
+  <p>bu sayfa <b>uygulama durum ekranlarının</b> repo içindeki referans kopyasıdır. numaralar (06–14) <code>docs/design/app-states.md</code> ile birebir aynıdır ve orada her durumun kuralı, metni ve hangi dilime ait olduğu yazılıdır. burada gördüğün ölçüler, renkler, metinler ve durumlar bağlayıcıdır; bu sayfa yeni bir karar üretmez.</p>
+  <div class="meta">
+    <span>ekran 402 × 874 · sabit ölçü, responsive değil</span>
+    <span>tipografi: Lora (başlık) + Nunito (gövde)</span>
+    <span>fotoğraflar yer tutucudur, geometri gerçektir</span>
+    <span>reduced-motion davranışı stil sayfasında normatiftir</span>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════
+     06 – 11 · boş ve hata durumları
+     ══════════════════════════════════════════════════════════ -->
+<section class="group">
+  <div class="row"><h2>boş ve hata durumları</h2><span class="num">06 – 11</span></div>
+  <p>kural: boş ekran bir hata değil. her boş durum tek cümleyle ne olduğunu söyler ve tek bir eylem önerir. hata durumlarında kullanıcının yazdığı hiçbir şey kaybolmaz.</p>
+</section>
+
+<div class="deck">
+
+  <!-- ─── 06 · konum izni yok ─────────────────────────────── -->
+  <div class="item">
+    <div class="cap"><b>06 · konum izni yok</b><span>harita çalışmaz · ilk açılışta ve reddedildiğinde</span></div>
+    <div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="status"><span>09:41</span><span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span class="bat"></span></span></div>
+
+      <div style="position:absolute;inset:0;filter:blur(3px);opacity:.5">
+        <svg viewBox="0 0 402 874" preserveAspectRatio="xMidYMid slice" style="width:100%;height:100%;display:block">
+          <rect width="402" height="874" fill="#f2e7d6"></rect>
+          <path d="M-20 640 C 100 600 160 700 280 690 C 380 682 420 760 422 740 L422 894 L-20 894 Z" fill="#cfdbd0"></path>
+          <g stroke="#fdf8f0" fill="none" stroke-linecap="round">
+            <path d="M-20 280 C 120 260 240 320 422 280" stroke-width="17"></path>
+            <path d="M-20 500 C 140 480 300 540 422 500" stroke-width="13"></path>
+            <path d="M110 -20 C 90 240 170 420 130 700" stroke-width="15"></path>
+            <path d="M320 -20 C 340 220 290 420 340 660" stroke-width="11"></path>
+          </g>
+          <g fill="#eaddc6"><rect x="140" y="330" width="70" height="60" rx="8"></rect><rect x="230" y="200" width="60" height="70" rx="8"></rect><rect x="50" y="430" width="50" height="60" rx="8"></rect></g>
+        </svg>
+      </div>
+      <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(251,246,238,.55) 0%,rgba(251,246,238,.92) 45%,#fbf6ee 100%)"></div>
+
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 30px 90px;text-align:center">
+        <div style="position:relative;width:96px;height:96px;margin-bottom:24px;display:flex;align-items:center;justify-content:center">
+          <div style="position:absolute;inset:0;border-radius:50%;background:var(--tan)"></div>
+          <svg width="42" height="46" viewBox="0 0 200 220" fill="none" style="position:relative;opacity:.32"><ellipse cx="40" cy="78" rx="15.5" ry="20" transform="rotate(-30 40 78)" fill="#8a7563"></ellipse><ellipse cx="79" cy="51" rx="17.5" ry="22.6" transform="rotate(-11 79 51)" fill="#8a7563"></ellipse><ellipse cx="122" cy="51.5" rx="17.5" ry="22.6" transform="rotate(12 122 51.5)" fill="#8a7563"></ellipse><ellipse cx="161" cy="79" rx="15.5" ry="20" transform="rotate(31 161 79)" fill="#8a7563"></ellipse><path d="M100.5 88c30.5 0 49.5 21 48.8 42.2-.7 21-16.6 36.6-30.3 51.2-6 6.4-11.9 15.6-18.6 15.6-6.8 0-12.2-9.4-18.4-15.9C68 166.6 51.5 151 51.5 130.2 51.5 109 70 88 100.5 88z" fill="#8a7563"></path></svg>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#b5452f" stroke-width="2.6" stroke-linecap="round" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-8deg)"><path d="m4 4 16 16"></path></svg>
+        </div>
+        <span style="font-family:var(--serif);font-weight:600;font-size:25px;letter-spacing:-.025em;line-height:1.25;text-wrap:balance">nerede olduğunu bilmeden haritayı açamıyoruz</span>
+        <p style="margin:12px 0 0;font-size:13.5px;line-height:1.6;color:var(--faint);text-wrap:pretty;max-width:290px">konumun sadece yakınındaki kedileri göstermek için kullanılır, kaydedilmez.</p>
+        <div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:26px">
+          <div class="btn btn-p">konum iznini aç</div>
+          <div class="btn btn-q">haritada elle mahalle seç</div>
+        </div>
+      </div>
+
+      <nav class="tabs" data-active="0"><span class="pill"></span>
+        <b class="t"><i class="i i-map"></i>harita</b><b class="t"><i class="i i-comp"></i>keşfet</b><b class="t"><i class="i i-bell"></i>haberler</b><b class="t"><i class="i i-user"></i>sen</b>
+      </nav>
+    </div></div>
+    <p class="foot">alt cümle bir gizlilik iddiasıdır: <code>app-states.md</code> uyarınca gerçek istemci, api ve loglama davranışına karşı doğrulanmadan yayına giremez.</p>
+  </div>
+
+  <!-- ─── 07 · civarda kayıt yok ──────────────────────────── -->
+  <div class="item">
+    <div class="cap"><b>07 · civarda kayıt yok</b><span>harita çalışıyor · veri yok · davet eden boşluk</span></div>
+    <div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="status"><span>09:41</span><span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span class="bat"></span></span></div>
+
+      <div style="position:absolute;inset:0">
+        <svg viewBox="0 0 402 874" preserveAspectRatio="xMidYMid slice" style="width:100%;height:100%;display:block">
+          <rect width="402" height="874" fill="#f2e7d6"></rect>
+          <path d="M-20 700 C 100 660 160 760 280 750 C 380 742 420 820 422 790 L422 894 L-20 894 Z" fill="#cfdbd0"></path>
+          <path d="M40 130 h130 v120 h-130 Z" fill="#e2e6c8"></path>
+          <g stroke="#fdf8f0" fill="none" stroke-linecap="round">
+            <path d="M-20 330 C 120 310 240 370 422 330" stroke-width="17"></path>
+            <path d="M-20 550 C 140 530 300 590 422 550" stroke-width="13"></path>
+            <path d="M110 -20 C 90 270 170 450 130 730" stroke-width="15"></path>
+            <path d="M320 -20 C 340 230 290 450 340 690" stroke-width="11"></path>
+            <path d="M210 70 L 260 650" stroke-width="6"></path>
+          </g>
+          <g fill="#eaddc6"><rect x="140" y="360" width="70" height="60" rx="8"></rect><rect x="230" y="230" width="60" height="70" rx="8"></rect><rect x="310" y="270" width="70" height="50" rx="8"></rect></g>
+        </svg>
+      </div>
+
+      <div style="position:absolute;left:196px;top:420px">
+        <div style="position:absolute;left:-90px;top:-90px;width:180px;height:180px;border-radius:50%;border:2px dashed rgba(91,127,156,.4);background:rgba(91,127,156,.07)"></div>
+        <div style="position:absolute;left:-22px;top:-22px;width:44px;height:44px;border-radius:50%;background:var(--blue);animation:tkSonar 3.4s ease-out infinite"></div>
+        <div style="width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border-radius:50%;background:var(--blue);border:3px solid #fdf8f0;box-shadow:0 3px 10px rgba(42,33,26,.35)"></div>
+      </div>
+
+      <div class="searchbar"><div>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#A5927E" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m20 20-3.6-3.6"></path></svg>
+        <span>bu civarda ara</span>
+      </div></div>
+
+      <div style="position:absolute;left:16px;right:16px;bottom:96px;z-index:60;background:#fff;border-radius:24px;padding:20px;box-shadow:0 18px 44px -22px rgba(42,31,27,.55);display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;gap:14px;align-items:flex-start">
+          <div style="width:44px;height:44px;flex:none;border-radius:14px;background:var(--tan);display:flex;align-items:center;justify-content:center">
+            <svg width="20" height="22" viewBox="0 0 200 220" fill="none" style="opacity:.4"><ellipse cx="40" cy="78" rx="15.5" ry="20" transform="rotate(-30 40 78)" fill="#8a7563"></ellipse><ellipse cx="79" cy="51" rx="17.5" ry="22.6" transform="rotate(-11 79 51)" fill="#8a7563"></ellipse><ellipse cx="122" cy="51.5" rx="17.5" ry="22.6" transform="rotate(12 122 51.5)" fill="#8a7563"></ellipse><ellipse cx="161" cy="79" rx="15.5" ry="20" transform="rotate(31 161 79)" fill="#8a7563"></ellipse><path d="M100.5 88c30.5 0 49.5 21 48.8 42.2-.7 21-16.6 36.6-30.3 51.2-6 6.4-11.9 15.6-18.6 15.6-6.8 0-12.2-9.4-18.4-15.9C68 166.6 51.5 151 51.5 130.2 51.5 109 70 88 100.5 88z" fill="#8a7563"></path></svg>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+            <span style="font-family:var(--serif);font-weight:600;font-size:19px;letter-spacing:-.02em;line-height:1.3">bu 300 metrede henüz kayıtlı kedi yok</span>
+            <span style="font-size:12.5px;line-height:1.55;color:var(--faint);text-wrap:pretty">gördüğün ilk kediyi eklersen mahalledeki herkes onu takip edebilir.</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:9px">
+          <div class="btn btn-p" style="flex:1;border-radius:16px;padding:14px;font-size:14px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fdf1ec" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+            ilk kediyi ekle
+          </div>
+          <div class="btn btn-q" style="flex:none;padding:0 16px;border-radius:16px;font-size:13.5px">alanı genişlet</div>
+        </div>
+      </div>
+
+      <nav class="tabs" data-active="0"><span class="pill"></span>
+        <b class="t"><i class="i i-map"></i>harita</b><b class="t"><i class="i i-comp"></i>keşfet</b><b class="t"><i class="i i-bell"></i>haberler</b><b class="t"><i class="i i-user"></i>sen</b>
+      </nav>
+    </div></div>
+    <p class="foot">boş durum yardım paletini kullanmaz: kum rengi kart, kiremit birincil buton. yarıçap metni (300 m) gerçek arama yarıçapından gelir.</p>
+  </div>
+
+  <!-- ─── 08 · takip listesi boş ──────────────────────────── -->
+  <div class="item">
+    <div class="cap"><b>08 · takip listesi boş</b><span>filtre yerinde kalır · liste yerine yönlendirme</span></div>
+    <div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="status"><span>09:41</span><span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span class="bat"></span></span></div>
+
+      <div class="body">
+        <div class="hdr">keşfet</div>
+        <div class="chips">
+          <span class="chip">yakındakiler</span>
+          <span class="chip">yardım<span class="n">2</span></span>
+          <span class="chip sel">takip</span>
+        </div>
+        <div class="empty">
+          <div class="disc">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#b3a390" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7.2-4.5-9.7-9.1C.7 7.6 2.2 4.3 5.6 3.6c2-.4 3.9.5 5 2.1a1 1 0 0 0 1.6 0c1.1-1.6 3-2.5 5-2.1 3.4.7 4.9 4 3.3 7.3C19.2 15.5 12 20 12 20Z"></path></svg>
+          </div>
+          <h3>henüz kimseyi takip etmiyorsun</h3>
+          <p>bir kedinin sayfasındaki kalbe dokun; ona yardım gerektiğinde haberin olsun.</p>
+          <div class="btn btn-q" style="margin-top:22px;border-radius:18px;padding:13px 18px;font-size:13.5px">
+            yakındakilere göz at
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a7563" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9.5 5 7 7-7 7"></path></svg>
+          </div>
+        </div>
+      </div>
+
+      <nav class="tabs" data-active="1"><span class="pill"></span>
+        <b class="t"><i class="i i-map"></i>harita</b><b class="t"><i class="i i-comp"></i>keşfet</b><b class="t"><i class="i i-bell"></i>haberler</b><b class="t"><i class="i i-user"></i>sen</b>
+      </nav>
+    </div></div>
+    <p class="foot">filtre satırı görünür ve dokunulabilir kalır — kullanıcı boşluğun bir filtre sonucu olduğunu anlamalı, uygulamanın boş olduğunu değil.</p>
+  </div>
+
+  <!-- ─── 09 · sakin gün ──────────────────────────────────── -->
+  <div class="item">
+    <div class="cap"><b>09 · sakin gün</b><span>yardım çağrısı yok · boşluk iyi haber</span></div>
+    <div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="status"><span>09:41</span><span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span class="bat"></span></span></div>
+
+      <div class="body" style="display:block;overflow:hidden">
+        <div class="hdr" style="padding-bottom:18px">haberler</div>
+
+        <div style="padding:0 18px">
+          <div style="display:flex;gap:14px;align-items:center;background:var(--oliveBg);border-radius:22px;padding:18px">
+            <div style="width:44px;height:44px;flex:none;border-radius:50%;background:#dbe4cc;display:flex;align-items:center;justify-content:center">
+              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#5b6f42" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4.5 4.5L19 8"></path></svg>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+              <span style="font-family:var(--serif);font-weight:600;font-size:18px;letter-spacing:-.02em;color:var(--oliveInk)">aktif yardım çağrısı yok</span>
+              <span style="font-size:12.5px;font-weight:700;color:var(--oliveText)">takip ettiğin 4 kedi de son 3 günde görüldü.</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="padding:22px 18px 0;display:flex;flex-direction:column;gap:11px">
+          <div style="display:flex;align-items:baseline;gap:10px">
+            <span style="font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">takip ettiklerin</span>
+            <span style="flex:1;height:1px;background:rgba(42,33,26,.1)"></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:13px;background:var(--sand);border-radius:20px;padding:12px">
+            <div class="ph" style="width:54px;height:54px;flex:none;border-radius:15px"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:3px">
+              <span style="font-family:var(--serif);font-weight:600;font-size:18px;letter-spacing:-.015em">boncuk</span>
+              <span style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--faint)"><span style="width:6px;height:6px;border-radius:50%;background:#7b9a52"></span>bugün görüldü</span>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c4b3a0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9.5 5 7 7-7 7"></path></svg>
+          </div>
+          <div style="display:flex;align-items:center;gap:13px;background:var(--sand);border-radius:20px;padding:12px">
+            <div class="ph" style="width:54px;height:54px;flex:none;border-radius:15px"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:3px">
+              <span style="font-family:var(--serif);font-weight:600;font-size:18px;letter-spacing:-.015em">pamuk</span>
+              <span style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--faint)"><span style="width:6px;height:6px;border-radius:50%;background:#7b9a52"></span>dün görüldü</span>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c4b3a0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9.5 5 7 7-7 7"></path></svg>
+          </div>
+          <div style="display:flex;align-items:center;gap:13px;background:var(--sand);border-radius:20px;padding:12px">
+            <div class="ph" style="width:54px;height:54px;flex:none;border-radius:15px"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:3px">
+              <span style="font-family:var(--serif);font-weight:600;font-size:18px;letter-spacing:-.015em">duman</span>
+              <span style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--faint)"><span style="width:6px;height:6px;border-radius:50%;background:#c9a227"></span>2 gün önce</span>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c4b3a0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9.5 5 7 7-7 7"></path></svg>
+          </div>
+          <div style="display:flex;align-items:center;gap:13px;background:var(--sand);border-radius:20px;padding:12px">
+            <div class="ph" style="width:54px;height:54px;flex:none;border-radius:15px"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:3px">
+              <span style="font-family:var(--serif);font-weight:600;font-size:18px;letter-spacing:-.015em">zeytin</span>
+              <span style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--faint)"><span style="width:6px;height:6px;border-radius:50%;background:#7b9a52"></span>bugün görüldü</span>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c4b3a0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9.5 5 7 7-7 7"></path></svg>
+          </div>
+        </div>
+      </div>
+
+      <nav class="tabs" data-active="2"><span class="pill"></span>
+        <b class="t"><i class="i i-map"></i>harita</b><b class="t"><i class="i i-comp"></i>keşfet</b><b class="t"><i class="i i-bell"></i>haberler</b><b class="t"><i class="i i-user"></i>sen</b>
+      </nav>
+    </div></div>
+    <p class="foot">ikinci satırdaki sayı ve <b>3 gün</b> aralığı gerçek veriden gelmek zorunda. kaynak yoksa cümle düşer, yaklaştırılmaz — <code>app-states.md</code>, dilim 2.</p>
+  </div>
+
+  <!-- ─── 10 · bağlantı yok ───────────────────────────────── -->
+  <div class="item">
+    <div class="cap"><b>10 · bağlantı yok</b><span>son yüklenen liste kalır · yazma kilitlenmez</span></div>
+    <div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="status"><span>09:41</span><span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span class="bat"></span></span></div>
+
+      <div class="body" style="display:block;overflow:hidden">
+        <div class="hdr" style="padding-bottom:14px">keşfet</div>
+
+        <div style="padding:0 18px 14px">
+          <div style="display:flex;align-items:center;gap:12px;background:#2A1F1B;border-radius:18px;padding:13px 15px">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f2e2cd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M3 8.5a13 13 0 0 1 18 0"></path><path d="M6.5 12.5a8 8 0 0 1 11 0"></path><path d="M10 16.5a3 3 0 0 1 4 0"></path><path d="m4 4 16 16"></path></svg>
+            <div style="flex:1;display:flex;flex-direction:column;gap:2px">
+              <span style="font-size:13px;font-weight:800;color:#fdf1ec">çevrimdışısın</span>
+              <span style="font-size:11.5px;font-weight:700;color:#c4b3a0">liste 14 dk önceki hali</span>
+            </div>
+            <div style="flex:none;min-height:34px;display:flex;align-items:center;background:rgba(253,241,236,.14);border-radius:999px;padding:7px 13px;font-size:12px;font-weight:800;color:#fdf1ec">yenile</div>
+          </div>
+        </div>
+
+        <div style="padding:0 18px;display:flex;flex-direction:column;gap:11px;opacity:.55">
+          <div class="card-cat">
+            <div class="ph thumb" style="filter:grayscale(.35)"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+              <span class="nm">boncuk</span><span style="font-size:11.5px;font-weight:700;color:#A5927E">140 m</span>
+            </div>
+            <span class="badge">bugün</span>
+          </div>
+          <div class="card-cat">
+            <div class="ph thumb" style="filter:grayscale(.35)"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+              <span class="nm">pamuk</span><span style="font-size:11.5px;font-weight:700;color:#A5927E">210 m</span>
+            </div>
+            <span class="badge">bugün</span>
+          </div>
+          <div class="card-cat">
+            <div class="ph thumb" style="filter:grayscale(.35)"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+              <span class="nm">duman</span><span style="font-size:11.5px;font-weight:700;color:#A5927E">340 m</span>
+            </div>
+            <span class="badge">bu ay</span>
+          </div>
+        </div>
+
+        <div style="padding:16px 18px 0">
+          <div style="display:flex;gap:11px;background:var(--sand);border-radius:18px;padding:14px 15px">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#A5927E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="8.2"></circle><path d="M12 11v5"></path><circle cx="12" cy="8" r=".4" fill="currentColor" stroke="none"></circle></svg>
+            <span style="flex:1;font-size:12px;line-height:1.55;color:var(--faint);text-wrap:pretty">çevrimdışıyken güncelleme ekleyebilirsin; bağlantı gelince kendiliğinden gönderilir.</span>
+          </div>
+        </div>
+      </div>
+
+      <nav class="tabs" data-active="1"><span class="pill"></span>
+        <b class="t"><i class="i i-map"></i>harita</b><b class="t"><i class="i i-comp"></i>keşfet</b><b class="t"><i class="i i-bell"></i>haberler</b><b class="t"><i class="i i-user"></i>sen</b>
+      </nav>
+    </div></div>
+    <p class="foot">bu ekran iki altyapı gerektirir: bağlantı farkındalığı ve zaman damgalı yanıt önbelleği (<b>14 dk</b> oradan gelir). alt not bir kuyruk sözü verir — <code>app-states.md</code>'de dilim 6 ve tek bekleyen taslakla sınırlı.</p>
+  </div>
+
+  <!-- ─── 11 · gönderilemedi ──────────────────────────────── -->
+  <div class="item">
+    <div class="cap"><b>11 · gönderilemedi</b><span>form dolu kalır · taslak korunur</span></div>
+    <div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="status"><span>09:41</span><span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span class="bat"></span></span></div>
+
+      <div style="position:absolute;inset:0;padding:60px 0 0">
+        <div style="padding:0 18px;display:flex;align-items:center;gap:12px">
+          <div style="width:40px;height:40px;border-radius:50%;background:var(--sand2);display:flex;align-items:center;justify-content:center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2a211a" stroke-width="2.4" stroke-linecap="round"><path d="m5 5 14 14"></path><path d="m19 5-14 14"></path></svg></div>
+          <span style="font-family:var(--serif);font-weight:600;font-size:26px;letter-spacing:-.025em">yeni kedi</span>
+        </div>
+        <div style="padding:20px 18px 0;display:flex;flex-direction:column;gap:16px">
+          <div class="ph lg" style="position:relative;aspect-ratio:16/10;border-radius:22px;overflow:hidden">
+            <div style="position:absolute;left:12px;bottom:12px;display:flex;align-items:center;gap:7px;background:rgba(199,53,43,.9);border-radius:999px;padding:5px 11px">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5 21 19H3Z"></path><path d="M12 10v4"></path></svg>
+              <span style="font-size:11px;font-weight:800;color:#fff">yüklenemedi</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <span style="font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">isim</span>
+            <div style="background:var(--sand);border-radius:16px;padding:14px 16px"><span style="font-family:var(--serif);font-size:15px">boncuk</span></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <span style="font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">tanıyalım diye</span>
+            <div style="background:var(--sand);border-radius:16px;padding:14px 16px"><span style="font-family:var(--serif);font-size:15px">sağ kulakta çentik, sarı tekir</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="position:absolute;inset:0;background:rgba(35,25,17,.42);z-index:80"></div>
+
+      <div style="position:absolute;left:0;right:0;bottom:0;z-index:90;background:#fff;border-radius:28px 28px 0 0;padding:8px 20px 30px;box-shadow:0 -20px 50px -20px rgba(42,31,27,.6)">
+        <div style="width:36px;height:4px;border-radius:999px;background:var(--lineStrong);margin:8px auto 20px"></div>
+        <div style="display:flex;gap:14px;align-items:flex-start">
+          <div style="width:44px;height:44px;flex:none;border-radius:14px;background:var(--helpSoft);display:flex;align-items:center;justify-content:center">
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#C7352B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5 21 19H3Z"></path><path d="M12 10v4"></path><path d="M12 16.4v.4"></path></svg>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+            <span style="font-family:var(--serif);font-weight:600;font-size:20px;letter-spacing:-.02em;line-height:1.3">boncuk haritaya eklenemedi</span>
+            <span style="font-size:12.5px;line-height:1.55;color:var(--faint);text-wrap:pretty">fotoğraf yüklenirken bağlantı koptu. yazdıkların telefonunda duruyor.</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:9px;margin-top:20px">
+          <div class="btn btn-p" style="border-radius:18px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fdf1ec" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.4 5.7"></path><path d="M20 5v6h-6"></path></svg>
+            tekrar dene
+          </div>
+          <div class="btn btn-q" style="border-radius:18px">taslak olarak sakla</div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:7px;margin-top:14px;font-size:11.5px;font-weight:700;color:var(--pale)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4.3l3 1.9"></path></svg>
+          bağlantı gelince kendiliğinden denenir
+        </div>
+      </div>
+    </div></div>
+    <p class="foot">başlık kullanıcının yazdığı ismi kullanır. hata metni taşıma katmanına hiç atıf yapmaz. <b>taslak olarak sakla</b>'nın uygulama yeniden başlatıldıktan sonra da durması dilim 6'ya bağlıdır; dilim 5 yalnız oturum içi korumayı kapsar.</p>
+  </div>
+
+  <!-- ─── kural kartı ─────────────────────────────────────── -->
+  <div class="item">
+    <div class="cap"><b>kural</b><span>metin ve davranış · geliştiriciye not</span></div>
+    <div class="card">
+      <div class="blk"><span class="k">tek cümle</span><span class="v">başlık ne olduğunu söyler, alt satır neden olduğunu. üçüncü cümle yazma.</span></div>
+      <div class="blk"><span class="k">tek eylem</span><span class="v">her durumda bir birincil buton. ikincisi varsa sessiz, üçüncüsü yok.</span></div>
+      <div class="blk"><span class="k">suçlama yok</span><span class="v">"hata oluştu" değil, ne olmadığını yaz: "boncuk haritaya eklenemedi".</span></div>
+      <div class="blk"><span class="k">veri kaybolmaz</span><span class="v">gönderim hatasında form dolu kalır, taslak yerelde saklanır, bağlantı gelince kuyruk boşalır.</span></div>
+      <div class="blk"><span class="k">boş ≠ hata</span><span class="v">kedi yoksa kırmızı kullanma. boşluk davettir: kum rengi kart, ekleme çağrısı.</span></div>
+      <div class="blk"><span class="k">çevrimdışı</span><span class="v">son yüklenen içerik silinmez, %55 opaklıkla durur; üstte kalıcı koyu şerit.</span></div>
+      <div class="hr"></div>
+      <div class="blk"><span class="k">dokunma hedefi</span><span class="v">her eylem en az 44 px. büyük sistem yazı ölçeğinde hiçbir durum taşmaz.</span></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     12 – 14 · açılış ve bekleme
+     ══════════════════════════════════════════════════════════ -->
+<section class="group">
+  <div class="row"><h2>açılış ve bekleme</h2><span class="num">12 – 14 · canlı</span></div>
+  <p>splash pin düşer, patiler üstüne konar, isim yazılır — sonra krem perde açılıp harita görünür. uzarsa bir satır durum metni belirir. bekleme hiçbir yerde dönen çarkla anlatılmaz: ekranın gelecek hali iskelet olarak durur, yalnızca butonlarda ve satır içi işlemlerde küçük çark kullanılır.</p>
+  <p style="font-size:13px;color:var(--faint)"><b>reduced motion:</b> bu bölümdeki ekranlar hareketlidir. üründe, işletim sisteminde hareket azaltma açıkken hiçbir animasyon oynamaz ve her ekran doğrudan yerleşmiş haline atlar; parıltı ve nefes alma durur. flutter tarafındaki karşılığı <code>MediaQuery.disableAnimations</code> ve <code>accessibleNavigation</code>'dır. bu <b>referans sayfasında</b> aynı anahtar 12'nin marka kilidini görünür bırakır ve haritaya geçişi bastırır — belge okunabilir kalsın diye.</p>
+  <p style="font-size:13px;color:var(--faint)">12 numaralı çerçeve, üründeki gibi <b>tek sefer</b> oynar: sayfa açıldıktan ~3.4 sn sonra dizilim bitmiş olur ve altta harita kalır. dizilimi yeniden görmek için sayfayı yenile. yerleşmiş marka kompozisyonu her zaman <b>12b</b>'de duruyor.</p>
+</section>
+
+<div class="deck">
+
+  <!-- ─── 12 · splash ─────────────────────────────────────── -->
+  <div class="item">
+    <div class="cap"><b>12 · splash</b><span>pin düşer · patiler üstüne konar · isim yazılır · haritaya geçer</span></div>
+    <div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="status"><span>09:41</span><span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span class="bat"></span></span></div>
+
+      <!-- altta duran harita: flutter'da bu zaten mount edilmiş ekrandır,
+           splash onun üstünde bir overlay olarak durur -->
+      <div class="splash-app" style="position:absolute;inset:0;animation:tkAppIn 3.4s ease-out forwards">
+        <svg viewBox="0 0 402 874" preserveAspectRatio="xMidYMid slice" style="width:100%;height:100%;display:block">
+          <rect width="402" height="874" fill="#f2e7d6"></rect>
+          <path d="M-20 620 C 100 580 160 680 280 670 C 380 662 420 740 422 720 L422 894 L-20 894 Z" fill="#cfdbd0"></path>
+          <g stroke="#fdf8f0" fill="none" stroke-linecap="round">
+            <path d="M-20 280 C 120 260 240 320 422 280" stroke-width="17"></path>
+            <path d="M-20 500 C 140 480 300 540 422 500" stroke-width="13"></path>
+            <path d="M110 -20 C 90 240 170 420 130 700" stroke-width="15"></path>
+            <path d="M320 -20 C 340 220 290 420 340 660" stroke-width="11"></path>
+          </g>
+          <g fill="#eaddc6"><rect x="140" y="330" width="70" height="60" rx="8"></rect><rect x="230" y="200" width="60" height="70" rx="8"></rect><rect x="50" y="430" width="50" height="60" rx="8"></rect></g>
+        </svg>
+        <div class="ph" style="position:absolute;left:120px;top:300px;width:48px;height:48px;border-radius:50%;border:4px solid #96502F;background-size:16px,auto;box-shadow:0 2px 6px rgba(42,31,27,.28)"></div>
+        <div class="ph" style="position:absolute;left:250px;top:250px;width:44px;height:44px;border-radius:50%;border:3px solid #fff;background-size:15px,auto;box-shadow:0 2px 6px rgba(42,31,27,.28)"></div>
+        <div class="ph" style="position:absolute;left:70px;top:430px;width:44px;height:44px;border-radius:50%;border:3px solid #fff;background-size:15px,auto;box-shadow:0 2px 6px rgba(42,31,27,.28)"></div>
+        <div style="position:absolute;left:196px;top:556px">
+          <div style="position:absolute;left:-22px;top:-22px;width:44px;height:44px;border-radius:50%;background:var(--blue);animation:tkSonar 3.4s ease-out infinite"></div>
+          <div style="width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border-radius:50%;background:var(--blue);border:3px solid #fdf8f0;box-shadow:0 3px 10px rgba(42,33,26,.35)"></div>
+        </div>
+        <div class="searchbar"><div>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#A5927E" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m20 20-3.6-3.6"></path></svg>
+          <span>bu civarda ara</span>
+        </div></div>
+        <nav class="tabs" data-active="0"><span class="pill"></span>
+          <b class="t"><i class="i i-map"></i>harita</b><b class="t"><i class="i i-comp"></i>keşfet</b><b class="t"><i class="i i-bell"></i>haberler</b><b class="t"><i class="i i-user"></i>sen</b>
+        </nav>
+      </div>
+
+      <!-- krem perde -->
+      <div class="splash-sheet" style="position:absolute;inset:0;z-index:100;background:radial-gradient(120% 80% at 50% 34%,#fdf8f0 0%,#f2e2cd 100%);animation:tkSheetOut 3.4s ease-out forwards"></div>
+
+      <!-- marka kilidi -->
+      <div class="splash-logo" style="position:absolute;inset:0;z-index:110;display:flex;flex-direction:column;align-items:center;justify-content:center;padding-bottom:70px;animation:tkLogoOut 3.4s ease-out forwards">
+        <div style="position:relative;width:112px;height:123px">
+          <div style="position:absolute;left:50%;top:70%;width:120px;height:120px;margin:-60px 0 0 -60px;border-radius:50%;border:2.5px solid var(--brick);animation:tkLand 3.4s cubic-bezier(.16,.8,.3,1) forwards"></div>
+          <svg width="112" height="123" viewBox="0 0 200 220" fill="none" style="position:relative;display:block;overflow:visible">
+            <g style="transform-box:fill-box;transform-origin:center;animation:tkPad1 3.4s cubic-bezier(.22,1,.36,1) forwards"><ellipse cx="40" cy="78" rx="15.5" ry="20" transform="rotate(-30 40 78)" fill="#2a211a"></ellipse></g>
+            <g style="transform-box:fill-box;transform-origin:center;animation:tkPad2 3.4s cubic-bezier(.22,1,.36,1) forwards"><ellipse cx="79" cy="51" rx="17.5" ry="22.6" transform="rotate(-11 79 51)" fill="#2a211a"></ellipse></g>
+            <g style="transform-box:fill-box;transform-origin:center;animation:tkPad3 3.4s cubic-bezier(.22,1,.36,1) forwards"><ellipse cx="122" cy="51.5" rx="17.5" ry="22.6" transform="rotate(12 122 51.5)" fill="#2a211a"></ellipse></g>
+            <g style="transform-box:fill-box;transform-origin:center;animation:tkPad4 3.4s cubic-bezier(.22,1,.36,1) forwards"><ellipse cx="161" cy="79" rx="15.5" ry="20" transform="rotate(31 161 79)" fill="#2a211a"></ellipse></g>
+            <g style="transform-box:fill-box;transform-origin:center;animation:tkPinFall 3.4s cubic-bezier(.3,1.1,.4,1) forwards"><path d="M100.5 88c30.5 0 49.5 21 48.8 42.2-.7 21-16.6 36.6-30.3 51.2-6 6.4-11.9 15.6-18.6 15.6-6.8 0-12.2-9.4-18.4-15.9C68 166.6 51.5 151 51.5 130.2 51.5 109 70 88 100.5 88z" fill="#b5452f"></path></g>
+          </svg>
+        </div>
+        <span style="display:block;margin-top:26px;font-family:var(--serif);font-weight:600;font-size:46px;letter-spacing:-.045em;line-height:1;animation:tkWordL 3.4s cubic-bezier(.22,1,.36,1) forwards">tekir</span>
+        <span style="display:block;margin-top:12px;font-size:13px;font-weight:700;letter-spacing:.04em;color:var(--faint);animation:tkTagL 3.4s ease forwards">kim görüldü, kim beslendi</span>
+      </div>
+
+      <div class="splash-hint" style="position:absolute;left:0;right:0;bottom:78px;z-index:115;display:flex;flex-direction:column;align-items:center;gap:14px;animation:tkHintIn 3.4s ease forwards">
+        <div style="display:flex;gap:7px">
+          <span style="width:7px;height:7px;border-radius:50%;background:var(--brick);animation:tkBreathe 1.2s ease-in-out infinite"></span>
+          <span style="width:7px;height:7px;border-radius:50%;background:var(--brick);animation:tkBreathe 1.2s ease-in-out .15s infinite"></span>
+          <span style="width:7px;height:7px;border-radius:50%;background:var(--brick);animation:tkBreathe 1.2s ease-in-out .3s infinite"></span>
+        </div>
+        <span style="font-size:12.5px;font-weight:700;color:var(--dim)">yakındaki kediler getiriliyor…</span>
+      </div>
+    </div></div>
+    <p class="foot">bu sayfada dizilim 3.4 sn'ye yayılarak ve <b>tek sefer</b> gösteriliyor, böylece perdenin kalkışı da görünüyor; bittikten sonra altta harita kalır, yerleşmiş kompozisyon için <b>12b</b>'ye bak. üründeki hedef ~820 ms'dir ve süre <b>oturum geri yüklemesi</b> bittiğinde kesilir — asgari gösterim süresi eklenmez. alt satır yalnız 1.6 sn'yi aşan açılışta görünür. animasyonun her ara karesi tek başına sunulabilir olmalı, çünkü hızlı açılışta yarısında kesilir.</p>
+  </div>
+
+  <!-- ─── 12b · splash · yerleşmiş kare ───────────────────── -->
+  <div class="item">
+    <div class="cap"><b>12b · splash · yerleşmiş kare</b><span>hareketsiz · marka kilidinin bağlayıcı hali</span></div>
+    <div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="status"><span>09:41</span><span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span class="bat"></span></span></div>
+      <div style="position:absolute;inset:0;background:radial-gradient(120% 80% at 50% 34%,#fdf8f0 0%,#f2e2cd 100%)"></div>
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding-bottom:70px">
+        <svg width="112" height="123" viewBox="0 0 200 220" fill="none" style="display:block">
+          <ellipse cx="40" cy="78" rx="15.5" ry="20" transform="rotate(-30 40 78)" fill="#2a211a"></ellipse>
+          <ellipse cx="79" cy="51" rx="17.5" ry="22.6" transform="rotate(-11 79 51)" fill="#2a211a"></ellipse>
+          <ellipse cx="122" cy="51.5" rx="17.5" ry="22.6" transform="rotate(12 122 51.5)" fill="#2a211a"></ellipse>
+          <ellipse cx="161" cy="79" rx="15.5" ry="20" transform="rotate(31 161 79)" fill="#2a211a"></ellipse>
+          <path d="M100.5 88c30.5 0 49.5 21 48.8 42.2-.7 21-16.6 36.6-30.3 51.2-6 6.4-11.9 15.6-18.6 15.6-6.8 0-12.2-9.4-18.4-15.9C68 166.6 51.5 151 51.5 130.2 51.5 109 70 88 100.5 88z" fill="#b5452f"></path>
+        </svg>
+        <span style="display:block;margin-top:26px;font-family:var(--serif);font-weight:600;font-size:46px;letter-spacing:-.045em;line-height:1">tekir</span>
+        <span style="display:block;margin-top:12px;font-size:13px;font-weight:700;letter-spacing:.04em;color:var(--faint)">kim görüldü, kim beslendi</span>
+      </div>
+    </div></div>
+    <p class="foot">ölçüler bağlayıcı: marka işareti 112 × 123, kelime 46 px Lora 600, alt satır 13 px, aralar 26 ve 12 px, blok dikeyde ortadan 70 px yukarı kaydırılır. zemin krem (<code>#fdf8f0 → #f2e2cd</code>), pin kiremit (<code>#b5452f</code>) — issue #85'in tam kiremit zemin + <code>t</code> harfi kompozisyonunun yerini alan hal budur.</p>
+  </div>
+
+  <!-- ─── 13 · harita yükleniyor ──────────────────────────── -->  <div class="item">
+    <div class="cap"><b>13 · harita yükleniyor</b><span>zemin hazır · yalnız önbellekteki pinler · çark yok</span></div>
+    <div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="status"><span>09:41</span><span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span class="bat"></span></span></div>
+
+      <div style="position:absolute;inset:0;opacity:.75">
+        <svg viewBox="0 0 402 874" preserveAspectRatio="xMidYMid slice" style="width:100%;height:100%;display:block">
+          <rect width="402" height="874" fill="#f2e7d6"></rect>
+          <path d="M-20 620 C 100 580 160 680 280 670 C 380 662 420 740 422 720 L422 894 L-20 894 Z" fill="#cfdbd0"></path>
+          <g stroke="#fdf8f0" fill="none" stroke-linecap="round">
+            <path d="M-20 280 C 120 260 240 320 422 280" stroke-width="17"></path>
+            <path d="M-20 500 C 140 480 300 540 422 500" stroke-width="13"></path>
+            <path d="M110 -20 C 90 240 170 420 130 700" stroke-width="15"></path>
+            <path d="M320 -20 C 340 220 290 420 340 660" stroke-width="11"></path>
+          </g>
+          <g fill="#eaddc6"><rect x="140" y="330" width="70" height="60" rx="8"></rect><rect x="230" y="200" width="60" height="70" rx="8"></rect><rect x="50" y="430" width="50" height="60" rx="8"></rect></g>
+        </svg>
+      </div>
+
+      <div style="position:absolute;left:120px;top:300px;width:48px;height:48px;border-radius:50%;background:#e3d6c2;box-shadow:0 0 0 3px rgba(253,248,240,.8);animation:tkBreathe 1.6s ease-in-out infinite"></div>
+      <div style="position:absolute;left:250px;top:252px;width:44px;height:44px;border-radius:50%;background:#e3d6c2;box-shadow:0 0 0 3px rgba(253,248,240,.8);animation:tkBreathe 1.6s ease-in-out .2s infinite"></div>
+      <div style="position:absolute;left:70px;top:432px;width:44px;height:44px;border-radius:50%;background:#e3d6c2;box-shadow:0 0 0 3px rgba(253,248,240,.8);animation:tkBreathe 1.6s ease-in-out .4s infinite"></div>
+      <div style="position:absolute;left:212px;top:400px;width:44px;height:44px;border-radius:50%;background:#e3d6c2;box-shadow:0 0 0 3px rgba(253,248,240,.8);animation:tkBreathe 1.6s ease-in-out .6s infinite"></div>
+
+      <div style="position:absolute;left:196px;top:556px">
+        <div style="position:absolute;left:-22px;top:-22px;width:44px;height:44px;border-radius:50%;background:var(--blue);animation:tkSonar 3.4s ease-out infinite"></div>
+        <div style="width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border-radius:50%;background:var(--blue);border:3px solid #fdf8f0;box-shadow:0 3px 10px rgba(42,33,26,.35)"></div>
+      </div>
+
+      <div class="searchbar"><div style="position:relative;overflow:hidden">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c4b3a0" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m20 20-3.6-3.6"></path></svg>
+        <span style="height:11px;flex:1;border-radius:999px;background:#e9dfcd;max-width:150px"></span>
+        <div class="shim" style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);animation:tkShim 1.5s ease-in-out infinite"></div>
+      </div></div>
+
+      <div style="position:absolute;left:50%;transform:translateX(-50%);bottom:106px;z-index:60;display:flex;align-items:center;gap:10px;background:#2A1F1B;border-radius:999px;padding:10px 16px;box-shadow:0 14px 30px -14px rgba(35,25,17,.8)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style="animation:tkSpin .9s linear infinite"><circle cx="12" cy="12" r="9" stroke="rgba(253,241,236,.28)" stroke-width="3"></circle><path d="M12 3a9 9 0 0 1 9 9" stroke="#fdf1ec" stroke-width="3" stroke-linecap="round"></path></svg>
+        <span style="font-size:12.5px;font-weight:800;color:#fdf1ec">yakındaki kediler getiriliyor</span>
+      </div>
+
+      <nav class="tabs" data-active="0"><span class="pill"></span>
+        <b class="t"><i class="i i-map"></i>harita</b><b class="t"><i class="i i-comp"></i>keşfet</b><b class="t"><i class="i i-bell"></i>haberler</b><b class="t"><i class="i i-user"></i>sen</b>
+      </nav>
+    </div></div>
+    <p class="foot"><b>zorunlu sınır:</b> buradaki dört soluk daire yalnızca <b>önbellekte gerçek konumu olan</b> kediler için çizilir. önbellek yoksa harita pinsiz açılır — uydurma bir yer tutucu konum, olmayan bir yerde kedi olduğunu iddia eder. durum şeridi 1.6 sn'den önce görünmez.</p>
+  </div>
+
+  <!-- ─── 14 · liste iskeleti ─────────────────────────────── -->
+  <div class="item">
+    <div class="cap"><b>14 · liste iskeleti</b><span>gelecek kartın ölçüsünde · sıçrama olmaz</span></div>
+    <div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="status"><span>09:41</span><span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span class="bat"></span></span></div>
+
+      <div class="body" style="display:block;overflow:hidden">
+        <div class="hdr">keşfet</div>
+        <div class="chips">
+          <span class="chip sel">yakındakiler</span>
+          <span style="height:34px;width:78px;border-radius:999px;background:var(--sand2)"></span>
+          <span style="height:34px;width:62px;border-radius:999px;background:var(--sand2)"></span>
+        </div>
+        <div style="padding:0 18px;display:flex;flex-direction:column;gap:11px">
+          <div class="card-cat" style="position:relative;overflow:hidden;opacity:1">
+            <div class="thumb" style="background:var(--surfaceAlt)"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+              <div style="height:13px;width:62%;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="display:flex;gap:6px"><div style="height:20px;width:58px;border-radius:999px;background:#F2EAE0"></div><div style="height:20px;width:44px;border-radius:999px;background:#F2EAE0"></div></div>
+            </div>
+            <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:7px">
+              <div style="height:22px;width:56px;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="height:11px;width:34px;border-radius:999px;background:#F2EAE0"></div>
+            </div>
+            <div class="shim" style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent);animation:tkShim 1.5s ease-in-out infinite"></div>
+          </div>
+          <div class="card-cat" style="position:relative;overflow:hidden;opacity:.87">
+            <div class="thumb" style="background:var(--surfaceAlt)"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+              <div style="height:13px;width:48%;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="display:flex;gap:6px"><div style="height:20px;width:58px;border-radius:999px;background:#F2EAE0"></div><div style="height:20px;width:66px;border-radius:999px;background:#F2EAE0"></div></div>
+            </div>
+            <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:7px">
+              <div style="height:22px;width:56px;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="height:11px;width:34px;border-radius:999px;background:#F2EAE0"></div>
+            </div>
+            <div class="shim" style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent);animation:tkShim 1.5s ease-in-out .12s infinite"></div>
+          </div>
+          <div class="card-cat" style="position:relative;overflow:hidden;opacity:.74">
+            <div class="thumb" style="background:var(--surfaceAlt)"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+              <div style="height:13px;width:70%;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="display:flex;gap:6px"><div style="height:20px;width:58px;border-radius:999px;background:#F2EAE0"></div><div style="height:20px;width:38px;border-radius:999px;background:#F2EAE0"></div></div>
+            </div>
+            <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:7px">
+              <div style="height:22px;width:56px;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="height:11px;width:34px;border-radius:999px;background:#F2EAE0"></div>
+            </div>
+            <div class="shim" style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent);animation:tkShim 1.5s ease-in-out .24s infinite"></div>
+          </div>
+          <div class="card-cat" style="position:relative;overflow:hidden;opacity:.61">
+            <div class="thumb" style="background:var(--surfaceAlt)"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+              <div style="height:13px;width:54%;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="display:flex;gap:6px"><div style="height:20px;width:58px;border-radius:999px;background:#F2EAE0"></div><div style="height:20px;width:52px;border-radius:999px;background:#F2EAE0"></div></div>
+            </div>
+            <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:7px">
+              <div style="height:22px;width:56px;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="height:11px;width:34px;border-radius:999px;background:#F2EAE0"></div>
+            </div>
+            <div class="shim" style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent);animation:tkShim 1.5s ease-in-out .36s infinite"></div>
+          </div>
+          <div class="card-cat" style="position:relative;overflow:hidden;opacity:.48">
+            <div class="thumb" style="background:var(--surfaceAlt)"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+              <div style="height:13px;width:44%;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="display:flex;gap:6px"><div style="height:20px;width:58px;border-radius:999px;background:#F2EAE0"></div><div style="height:20px;width:60px;border-radius:999px;background:#F2EAE0"></div></div>
+            </div>
+            <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:7px">
+              <div style="height:22px;width:56px;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="height:11px;width:34px;border-radius:999px;background:#F2EAE0"></div>
+            </div>
+            <div class="shim" style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent);animation:tkShim 1.5s ease-in-out .48s infinite"></div>
+          </div>
+          <div class="card-cat" style="position:relative;overflow:hidden;opacity:.35">
+            <div class="thumb" style="background:var(--surfaceAlt)"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+              <div style="height:13px;width:60%;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="display:flex;gap:6px"><div style="height:20px;width:58px;border-radius:999px;background:#F2EAE0"></div><div style="height:20px;width:40px;border-radius:999px;background:#F2EAE0"></div></div>
+            </div>
+            <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:7px">
+              <div style="height:22px;width:56px;border-radius:999px;background:var(--surfaceAlt)"></div>
+              <div style="height:11px;width:34px;border-radius:999px;background:#F2EAE0"></div>
+            </div>
+            <div class="shim" style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent);animation:tkShim 1.5s ease-in-out .6s infinite"></div>
+          </div>
+        </div>
+      </div>
+
+      <nav class="tabs" data-active="1"><span class="pill"></span>
+        <b class="t"><i class="i i-map"></i>harita</b><b class="t"><i class="i i-comp"></i>keşfet</b><b class="t"><i class="i i-bell"></i>haberler</b><b class="t"><i class="i i-user"></i>sen</b>
+      </nav>
+    </div></div>
+    <p class="foot">iskelet satırı gerçek kartın ölçüsündedir: 52 px foto, 14 px köşe, aynı rozet satırı. veri gelince yükseklik değişmez. 400 ms'den önce hiç görünmez.</p>
+  </div>
+
+  <!-- ─── envanter kartı ─────────────────────────────────── -->
+  <div class="item">
+    <div class="cap"><b>envanter</b><span>nerede hangi bekleme</span></div>
+    <div class="card">
+      <div class="blk">
+        <span class="k">buton · gönderiliyor</span>
+        <div class="btn" style="background:var(--brickDeep);color:var(--brickInk);border-radius:18px;padding:15px;font-size:14.5px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="animation:tkSpin .9s linear infinite"><circle cx="12" cy="12" r="9" stroke="rgba(253,241,236,.3)" stroke-width="3"></circle><path d="M12 3a9 9 0 0 1 9 9" stroke="#fdf1ec" stroke-width="3" stroke-linecap="round"></path></svg>
+          haritaya ekleniyor
+        </div>
+        <span class="v" style="font-size:11.5px;color:var(--faint)">buton yerinde kalır, metni değişir, rengi bir ton koyulaşır. genişlik sabit. bu bir <b>mutasyon</b>dur: 400 ms kuralı burada geçerli değil, geri bildirim dokunuşla aynı karede başlar.</span>
+      </div>
+      <div class="blk">
+        <span class="k">satır içi · güncelleme kaydediliyor</span>
+        <div style="display:flex;align-items:center;gap:10px;background:var(--sand);border-radius:16px;padding:12px 14px">
+          <div class="ph sm" style="width:34px;height:34px;flex:none;border-radius:11px;opacity:.6"></div>
+          <span style="flex:1;font-size:12.5px;font-weight:700;color:var(--faint)">su verdin · kaydediliyor</span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style="animation:tkSpin .9s linear infinite"><circle cx="12" cy="12" r="9" stroke="#e3d6c2" stroke-width="3"></circle><path d="M12 3a9 9 0 0 1 9 9" stroke="#96502F" stroke-width="3" stroke-linecap="round"></path></svg>
+        </div>
+        <span class="v" style="font-size:11.5px;color:var(--faint)">iyimser yazım: kayıt anında listeye düşer, arkada gönderilir. hata olursa satır kırmızıya döner — kaybolmaz.</span>
+      </div>
+      <div class="blk">
+        <span class="k">fotoğraf yükleniyor</span>
+        <div class="ph" style="position:relative;height:74px;border-radius:16px;overflow:hidden">
+          <div style="position:absolute;inset:0;background:rgba(35,25,17,.42)"></div>
+          <div style="position:absolute;left:12px;right:12px;bottom:12px;height:5px;border-radius:999px;background:rgba(253,248,240,.35)">
+            <div style="width:62%;height:100%;border-radius:999px;background:#fdf1ec"></div>
+          </div>
+          <span style="position:absolute;left:12px;top:11px;font-size:11.5px;font-weight:800;color:#fdf1ec">%62</span>
+        </div>
+        <span class="v" style="font-size:11.5px;color:var(--faint)">tek yerde yüzde gösterilir: fotoğraf yükleme. başka hiçbir yerde ilerleme çubuğu yok. 6 sn kuralı bu yüklemeyi <b>iptal etmez</b>.</span>
+      </div>
+      <div class="hr"></div>
+      <div class="blk"><span class="k">zamanlama</span></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;gap:12px;align-items:baseline"><span style="flex:none;width:62px;font-size:12.5px;font-weight:800">0–400 ms</span><span style="flex:1;font-size:12px;line-height:1.5;color:var(--faint)">hiçbir şey gösterme. çoğu istek buraya sığar, çakan iskelet gürültüdür. yalnız ilk okumalar için.</span></div>
+        <div style="display:flex;gap:12px;align-items:baseline"><span style="flex:none;width:62px;font-size:12.5px;font-weight:800">400 ms +</span><span style="flex:1;font-size:12px;line-height:1.5;color:var(--faint)">iskelet veya önbellekteki pinlerin nefes alması.</span></div>
+        <div style="display:flex;gap:12px;align-items:baseline"><span style="flex:none;width:62px;font-size:12.5px;font-weight:800">1.6 sn +</span><span style="flex:1;font-size:12px;line-height:1.5;color:var(--faint)">durum metni eklenir: "yakındaki kediler getiriliyor". mahalle adı yazılmaz — ters geokodlama ek bir servis çağrısı demek.</span></div>
+        <div style="display:flex;gap:12px;align-items:baseline"><span style="flex:none;width:62px;font-size:12.5px;font-weight:800">6 sn +</span><span style="flex:1;font-size:12px;line-height:1.5;color:var(--faint)">bekleme biter, hata veya çevrimdışı ekranına geçilir. yalnız sınırlı okumalar için — yüklemeyi ve yazmayı kesmez.</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="#f2e2cd"/><g transform="translate(60 58) scale(.4)"><ellipse cx="40" cy="78" rx="15.5" ry="20" transform="rotate(-30 40 78)" fill="#2a211a"/><ellipse cx="79" cy="51" rx="17.5" ry="22.6" transform="rotate(-11 79 51)" fill="#2a211a"/><ellipse cx="122" cy="51.5" rx="17.5" ry="22.6" transform="rotate(12 122 51.5)" fill="#2a211a"/><ellipse cx="161" cy="79" rx="15.5" ry="20" transform="rotate(31 161 79)" fill="#2a211a"/><path d="M100.5 88c30.5 0 49.5 21 48.8 42.2-.7 21-16.6 36.6-30.3 51.2-6 6.4-11.9 15.6-18.6 15.6-6.8 0-12.2-9.4-18.4-15.9C68 166.6 51.5 151 51.5 130.2 51.5 109 70 88 100.5 88z" fill="#b5452f"/></g><text x="100" y="168" text-anchor="middle" font-family="Georgia,serif" font-size="26" fill="#2a211a">06–14</text></svg>
+</template>
+
+</body>
+</html>

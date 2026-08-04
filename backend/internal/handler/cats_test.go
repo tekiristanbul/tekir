@@ -68,7 +68,7 @@ type fakeCatsLister struct {
 
 	createNeedsHelpRow repository.CreateUpdateRow
 	createNeedsHelpErr error
-	capturedNeedsHelp  *repository.CreateNeedsHelpUpdateParams
+	capturedNeedsHelp  *repository.CreateOrdinaryUpdateParams
 
 	idempotencyRow repository.GetCatByIdempotencyKeyRow
 	idempotencyErr error
@@ -83,7 +83,9 @@ type fakeCatsLister struct {
 	createCatWithMediaErr error
 
 	correctRow repository.CorrectOrdinaryUpdateRow
-	correctErr error
+	// capturedCorrect mirrors captured above, for CorrectOwnUpdate.
+	capturedCorrect *repository.CorrectOwnUpdateParams
+	correctErr      error
 
 	deleteRow repository.DeleteOwnUpdateRow
 	deleteErr error
@@ -115,17 +117,20 @@ func (f fakeCatsLister) ListCatUpdates(ctx context.Context, arg repository.ListC
 }
 
 func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error) {
+	if arg.NeedsHelpCategory.Valid {
+		// the compat needs-help endpoint's write (issue #101) is the only
+		// caller that records a category — routed to its own captured/row/
+		// err fields so both flows stay independently assertable through
+		// this one store method.
+		if f.capturedNeedsHelp != nil {
+			*f.capturedNeedsHelp = arg
+		}
+		return f.createNeedsHelpRow, f.createNeedsHelpErr
+	}
 	if f.captured != nil {
 		*f.captured = arg
 	}
 	return f.createRow, f.createErr
-}
-
-func (f fakeCatsLister) CreateNeedsHelpUpdate(ctx context.Context, arg repository.CreateNeedsHelpUpdateParams) (repository.CreateUpdateRow, error) {
-	if f.capturedNeedsHelp != nil {
-		*f.capturedNeedsHelp = arg
-	}
-	return f.createNeedsHelpRow, f.createNeedsHelpErr
 }
 
 func (f fakeCatsLister) GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error) {
@@ -145,6 +150,9 @@ func (f fakeCatsLister) CreateCatWithMedia(ctx context.Context, arg repository.C
 }
 
 func (f fakeCatsLister) CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOrdinaryUpdateRow, error) {
+	if f.capturedCorrect != nil {
+		*f.capturedCorrect = arg
+	}
 	return f.correctRow, f.correctErr
 }
 
@@ -606,6 +614,7 @@ func TestCatsHandler_UpdateHistory_NeedsHelpEntry(t *testing.T) {
 			{
 				ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 				Kind:               "needs_help",
+				NeedsHelp:          true,
 				CreatedAt:          pgtype.Timestamptz{Time: fixedNow.Add(-100 * time.Hour), Valid: true},
 				Seq:                pgtype.Int8{Int64: 1, Valid: true},
 				NeedsHelpCategory:  pgtype.Text{String: "water_needed", Valid: true},
@@ -1037,7 +1046,7 @@ func TestCatsHandler_CreateNeedsHelp_Success(t *testing.T) {
 	userID := uuid.New()
 	created := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	returnedID := uuid.New()
-	var captured repository.CreateNeedsHelpUpdateParams
+	var captured repository.CreateOrdinaryUpdateParams
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
 		exists:             true,
 		createNeedsHelpRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
@@ -1085,8 +1094,8 @@ func TestCatsHandler_CreateNeedsHelp_Success(t *testing.T) {
 	if uuid.UUID(captured.AuthorUserID.Bytes).String() != userID.String() {
 		t.Errorf("unexpected captured author user id: %v", captured.AuthorUserID)
 	}
-	if captured.NeedsHelpCategory != "injured_or_sick" {
-		t.Errorf("unexpected captured category: %q", captured.NeedsHelpCategory)
+	if captured.NeedsHelpCategory.String != "injured_or_sick" {
+		t.Errorf("unexpected captured category: %q", captured.NeedsHelpCategory.String)
 	}
 }
 

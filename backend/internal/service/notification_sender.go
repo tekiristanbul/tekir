@@ -23,7 +23,6 @@ type PushMessage struct {
 	PushToken string
 	CatID     string
 	UpdateID  string
-	Category  string
 }
 
 // NotificationSender delivers one needs-help notification to a device.
@@ -63,7 +62,7 @@ func (f *FakeNotificationSender) Send(_ context.Context, msg PushMessage) error 
 	// the push token is deliberately absent from the log line — even the
 	// fake provider treats delivery addresses as secrets (issue #84).
 	slog.Info("fake needs-help notification (dev/test provider — never a real push send)",
-		"device_id", msg.DeviceID, "cat_id", msg.CatID, "update_id", msg.UpdateID, "category", msg.Category)
+		"device_id", msg.DeviceID, "cat_id", msg.CatID, "update_id", msg.UpdateID)
 	return nil
 }
 

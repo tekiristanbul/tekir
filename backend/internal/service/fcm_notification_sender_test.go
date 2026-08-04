@@ -79,7 +79,6 @@ func testPushMessage() service.PushMessage {
 		PushToken: testFCMPushToken,
 		CatID:     "cat-id-1",
 		UpdateID:  "update-id-1",
-		Category:  "injured_or_sick",
 	}
 }
 
@@ -153,10 +152,15 @@ func TestFCMSender_Send_Success(t *testing.T) {
 	if data == nil {
 		t.Fatalf("expected message.data, got %v", message)
 	}
-	for key, want := range map[string]string{"type": "needs_help", "cat_id": "cat-id-1", "update_id": "update-id-1", "category": "injured_or_sick"} {
+	for key, want := range map[string]string{"type": "needs_help", "cat_id": "cat-id-1", "update_id": "update-id-1"} {
 		if data[key] != want {
 			t.Errorf("expected data.%s = %q, got %v", key, want, data[key])
 		}
+	}
+	// issue #101: the category key is retired with the #100 contract's
+	// category vocabulary — it must never reappear in a push payload.
+	if _, ok := data["category"]; ok {
+		t.Errorf("expected no data.category key, got %v", data["category"])
 	}
 	if notification, _ := message["notification"].(map[string]any); notification == nil || notification["title"] == "" {
 		t.Errorf("expected a notification payload for terminated-app display, got %v", message["notification"])

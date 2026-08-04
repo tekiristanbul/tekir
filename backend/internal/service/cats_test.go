@@ -38,7 +38,7 @@ type fakeCatsLister struct {
 	createNeedsHelpRow repository.CreateUpdateRow
 	createNeedsHelpErr error
 	// capturedNeedsHelp mirrors captured above, for CreateNeedsHelpUpdate.
-	capturedNeedsHelp *repository.CreateNeedsHelpUpdateParams
+	capturedNeedsHelp *repository.CreateOrdinaryUpdateParams
 
 	idempotencyRow repository.GetCatByIdempotencyKeyRow
 	idempotencyErr error
@@ -95,17 +95,20 @@ func (f fakeCatsLister) ListCatUpdates(ctx context.Context, arg repository.ListC
 }
 
 func (f fakeCatsLister) CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error) {
+	if arg.NeedsHelpCategory.Valid {
+		// the compat needs-help endpoint's write (issue #101) is the only
+		// caller that records a category — routed to its own captured/row/
+		// err fields so both flows stay independently assertable through
+		// this one store method.
+		if f.capturedNeedsHelp != nil {
+			*f.capturedNeedsHelp = arg
+		}
+		return f.createNeedsHelpRow, f.createNeedsHelpErr
+	}
 	if f.captured != nil {
 		*f.captured = arg
 	}
 	return f.createRow, f.createErr
-}
-
-func (f fakeCatsLister) CreateNeedsHelpUpdate(ctx context.Context, arg repository.CreateNeedsHelpUpdateParams) (repository.CreateUpdateRow, error) {
-	if f.capturedNeedsHelp != nil {
-		*f.capturedNeedsHelp = arg
-	}
-	return f.createNeedsHelpRow, f.createNeedsHelpErr
 }
 
 func (f fakeCatsLister) GetCatByIdempotencyKey(ctx context.Context, arg repository.GetCatByIdempotencyKeyParams) (repository.GetCatByIdempotencyKeyRow, error) {
@@ -519,6 +522,7 @@ func TestCatsService_ListCatUpdates_NeedsHelpEntry(t *testing.T) {
 					{
 						ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 						Kind:               "needs_help",
+						NeedsHelp:          true,
 						CreatedAt:          pgtype.Timestamptz{Time: c.expiresAt.Add(-72 * time.Hour), Valid: true},
 						Seq:                pgtype.Int8{Int64: 1, Valid: true},
 						NeedsHelpCategory:  pgtype.Text{String: "food_needed", Valid: true},
@@ -589,7 +593,7 @@ func TestCatsService_CreateOrdinaryUpdate_Success(t *testing.T) {
 	}, WithClock(func() time.Time { return fixedNow }))
 
 	comment := "mama verildi, su tazelendi"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), userID.String(), deviceID.String(), nil, []string{"water_provided", "fed"}, &comment)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), userID.String(), deviceID.String(), nil, []string{"water_provided", "fed"}, false, &comment)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -642,7 +646,7 @@ func TestCatsService_CreateOrdinaryUpdate_NoComment(t *testing.T) {
 	var captured repository.CreateOrdinaryUpdateParams
 	svc := NewCatsService(fakeCatsLister{exists: true, captured: &captured})
 
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -659,7 +663,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithoutDeviceToken_StillSucceeds(t *te
 	svc := NewCatsService(fakeCatsLister{exists: true, captured: &captured})
 
 	userID := uuid.New()
-	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), userID.String(), "", nil, []string{"seen"}, nil); err != nil {
+	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), userID.String(), "", nil, []string{"seen"}, false, nil); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if captured.AuthorDeviceID.Valid {
@@ -672,7 +676,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithoutDeviceToken_StillSucceeds(t *te
 
 func TestCatsService_CreateOrdinaryUpdate_InvalidUserID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), "not-a-uuid", "", nil, []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), "not-a-uuid", "", nil, []string{"seen"}, false, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid user id, got nil")
 	}
@@ -680,7 +684,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidUserID(t *testing.T) {
 
 func TestCatsService_CreateOrdinaryUpdate_InvalidDeviceID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "not-a-uuid", nil, []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "not-a-uuid", nil, []string{"seen"}, false, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid device id, got nil")
 	}
@@ -702,7 +706,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidStatuses(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, c.statuses, nil); !errors.Is(err, ErrInvalidStatuses) {
+			if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, c.statuses, false, nil); !errors.Is(err, ErrInvalidStatuses) {
 				t.Fatalf("expected ErrInvalidStatuses, got %v", err)
 			}
 		})
@@ -712,7 +716,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidStatuses(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_InvalidCatID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), "not-a-uuid", uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), "not-a-uuid", uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil)
 	if !errors.Is(err, ErrInvalidCatID) {
 		t.Fatalf("expected ErrInvalidCatID, got %v", err)
 	}
@@ -721,7 +725,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidCatID(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_UnknownCat(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: false})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil)
 	if !errors.Is(err, ErrCatNotFound) {
 		t.Fatalf("expected ErrCatNotFound, got %v", err)
 	}
@@ -730,7 +734,7 @@ func TestCatsService_CreateOrdinaryUpdate_UnknownCat(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_RepositoryFailure(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true, createErr: errors.New("connection refused")})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -752,7 +756,7 @@ func TestCatsService_CreateOrdinaryUpdate_IdempotentRetryReturnsExistingWithoutW
 	})
 
 	key := "seen-tap-key"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, false, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -778,7 +782,7 @@ func TestCatsService_CreateOrdinaryUpdate_NoExistingKeyProceedsToCreate(t *testi
 	})
 
 	key := "first-attempt-key"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, false, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -828,7 +832,7 @@ func TestCatsService_CreateOrdinaryUpdate_RaceOnIdempotencyKeyRecoversExisting(t
 	svc := NewCatsService(lister)
 
 	key := "race-seen-key"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, false, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -843,7 +847,7 @@ func TestCatsService_CreateNeedsHelpUpdate_Success(t *testing.T) {
 	deviceID := uuid.New()
 	returnedID := uuid.New()
 	fixedNow := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
-	var captured repository.CreateNeedsHelpUpdateParams
+	var captured repository.CreateOrdinaryUpdateParams
 	svc := NewCatsService(fakeCatsLister{
 		exists:             true,
 		createNeedsHelpRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
@@ -892,8 +896,8 @@ func TestCatsService_CreateNeedsHelpUpdate_Success(t *testing.T) {
 	if uuid.UUID(captured.AuthorUserID.Bytes).String() != userID.String() {
 		t.Errorf("unexpected repository author user id: %v", captured.AuthorUserID)
 	}
-	if captured.NeedsHelpCategory != "injured_or_sick" {
-		t.Errorf("unexpected repository category: %q", captured.NeedsHelpCategory)
+	if captured.NeedsHelpCategory.String != "injured_or_sick" {
+		t.Errorf("unexpected repository category: %q", captured.NeedsHelpCategory.String)
 	}
 	if !captured.NeedsHelpExpiresAt.Time.Equal(wantExpiresAt) {
 		t.Errorf("expected repository expires_at %v, got %v", wantExpiresAt, captured.NeedsHelpExpiresAt.Time)
@@ -1227,7 +1231,7 @@ func TestCatsService_CorrectOwnUpdate_Success(t *testing.T) {
 	}, WithClock(func() time.Time { return fixedNow }))
 
 	comment := "düzeltildi"
-	update, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"water_provided", "fed"}, &comment)
+	update, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"water_provided", "fed"}, false, &comment)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -1259,7 +1263,7 @@ func TestCatsService_CorrectOwnUpdate_Success(t *testing.T) {
 
 func TestCatsService_CorrectOwnUpdate_InvalidStatusesNeverReachesStore(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
-	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"not_a_real_status"}, nil)
+	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"not_a_real_status"}, false, nil)
 	if !errors.Is(err, ErrInvalidStatuses) {
 		t.Fatalf("expected ErrInvalidStatuses, got %v", err)
 	}
@@ -1283,7 +1287,7 @@ func TestCatsService_CorrectOwnUpdate_WrongAuthor(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return createdAt.Add(time.Minute) }))
 
-	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), stranger.String(), []string{"seen"}, nil)
+	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), stranger.String(), []string{"seen"}, false, nil)
 	if !errors.Is(err, ErrNotUpdateAuthor) {
 		t.Fatalf("expected ErrNotUpdateAuthor, got %v", err)
 	}
@@ -1307,7 +1311,7 @@ func TestCatsService_CorrectOwnUpdate_WindowExpired(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return fixedNow }))
 
-	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"seen"}, nil)
+	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"seen"}, false, nil)
 	if !errors.Is(err, ErrCorrectionWindowExpired) {
 		t.Fatalf("expected ErrCorrectionWindowExpired, got %v", err)
 	}
@@ -1330,7 +1334,7 @@ func TestCatsService_CorrectOwnUpdate_NeedsHelpKindIsNotFound(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return createdAt.Add(time.Minute) }))
 
-	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"seen"}, nil)
+	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"seen"}, false, nil)
 	if !errors.Is(err, ErrUpdateNotFound) {
 		t.Fatalf("expected ErrUpdateNotFound for a needs-help update, got %v", err)
 	}
@@ -1342,7 +1346,7 @@ func TestCatsService_CorrectOwnUpdate_UnknownUpdateIsNotFound(t *testing.T) {
 		correctionCheckErr: pgx.ErrNoRows,
 	})
 
-	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, nil)
+	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, false, nil)
 	if !errors.Is(err, ErrUpdateNotFound) {
 		t.Fatalf("expected ErrUpdateNotFound for an unknown update id, got %v", err)
 	}

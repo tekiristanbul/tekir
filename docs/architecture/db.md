@@ -143,14 +143,17 @@ create table cat_traits (
 );
 create index cat_traits_trait_idx on cat_traits (trait_key);
 
--- `kind` (issue #4/#23) discriminates an ordinary status update from a
--- needs-help one sharing this same table — one history, two subtypes,
--- rather than a separate alerts table. needs_help_category/
--- needs_help_expires_at are only ever populated together with kind =
--- 'needs_help' (see updates_kind_fields_ck below); expires_at is persisted
--- explicitly (server-computed as created_at + 72h at write time) rather
--- than derived from created_at on every read, so a future change to the
--- expiry window can't silently reinterpret an already-created alert.
+-- `needs_help` (issue #101, migration 00022 — the issue #100 simplified
+-- help contract) is the combined-model flag: an update may carry statuses,
+-- the flag, or both. `kind` (issue #4/#23) survives as legacy metadata
+-- only — every post-#101 write inserts 'ordinary'; 'needs_help' remains
+-- only on pre-migration subtype rows (backfilled to needs_help = true by
+-- 00022, category/expiry untouched). needs_help_category is populated only
+-- on those legacy rows and on 0.1 compat-endpoint writes, never by the
+-- combined write path. expires_at is persisted explicitly (server-computed
+-- as created_at + 72h at write time) rather than derived from created_at
+-- on every read, so a future change to the expiry window can't silently
+-- reinterpret an already-created alert.
 create table updates (
   id                     uuid primary key default gen_random_uuid(),
   cat_id                 uuid not null references cats(id),
@@ -161,6 +164,7 @@ create table updates (
   author_user_id         uuid references users(id), -- implemented (migration 00016, issue #65): see design notes below
   created_at             timestamptz not null default now(),
   seq                    bigserial,
+  needs_help             boolean not null default false, -- implemented (migration 00022, issue #101)
   needs_help_category    text check (
     needs_help_category in ('injured_or_sick', 'food_needed', 'water_needed', 'unsafe_location', 'trapped')
   ),
@@ -175,14 +179,17 @@ create table updates (
   -- the Idempotency-Key header on POST .../updates, mirroring
   -- cats.idempotency_key/media.idempotency_key — see design notes below.
   idempotency_key        text,
-  constraint updates_kind_fields_ck check (
-    (kind = 'ordinary' and needs_help_category is null and needs_help_expires_at is null)
+  -- migration 00022 replaced updates_kind_fields_ck: the invariants now
+  -- hang off the flag, not the kind. a category may exist only on a
+  -- help-carrying row; expiry exists exactly when the flag is set.
+  constraint updates_needs_help_fields_ck check (
+    (needs_help = false and needs_help_category is null and needs_help_expires_at is null)
     or
-    (kind = 'needs_help' and needs_help_category is not null and needs_help_expires_at is not null)
+    (needs_help = true and needs_help_expires_at is not null)
   )
 );
 create index updates_cat_created_idx on updates (cat_id, created_at desc, seq desc);
-create index updates_needs_help_idx on updates (cat_id, created_at desc, seq desc) where kind = 'needs_help';
+create index updates_needs_help_idx on updates (cat_id, created_at desc, seq desc) where needs_help;
 create unique index updates_user_idempotency_uq on updates (author_user_id, idempotency_key)
   where idempotency_key is not null and kind = 'ordinary';
 -- implemented (migration 00020, issue #80): serves both badge derivation's
@@ -271,7 +278,9 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 - `traits`/`cat_traits`/`trait_groups` (dormant legacy storage, issue #42): the trait vocabulary is data, not code — adding, relabeling, regrouping, or retiring a trait is a row change, never a migration or app release. `cat_traits.trait_key` references `traits.key`, so a cat can only carry a trait that exists in the vocabulary; retiring a trait (`traits.active = false`) removes it from future selection (`ListActiveTraits`) but never deletes the row or a cat's existing association, preserving history. `traits.group_key` is nullable — an ungrouped trait is still valid vocabulary, just not sorted into a picker section; `ListActiveTraits`/`ListCatTraits` order group-then-trait, with an ungrouped trait sorting after every grouped one. as of issue #42, none of this is reachable from the mvp api or seed data any more — the tables, their existing rows, and the repository queries that read them stay in place untouched, but no application code path writes new rows or serves them to a client.
 - `cats.area` is a point; the ~50m "area" concept from [[cats]] is expressed at query time via `st_dwithin(area, point, 50)` rather than a separate area table — that table would add complexity with no behavior it doesn't already give.
 - `ListCatsByDistance`/`ListActiveNeedsHelpCatsByDistance` (new queries, issue #82) back `GET /v1/cats/discover`'s two location-aware surfaces (see [[api]]). both wrap the same `cats`/`media`/needs-help-lateral-join shape `ListCatsInBounds`/`GetCatByID`/`ListFollowedCats` already use in a `candidates` cte that adds one computed column, `distance_m` (`st_distance` against the caller's point, backed by `cats_area_gix` the same way `ListNearbyCatsForDuplicateCheck`'s own `st_dwithin`/`st_distance` already are — no new index). the cte exists because a plain `where`/`order by` can't reference a `select` list's own alias: the keyset predicate below needs the identical `distance_m` value `order by` sorts on, so it's computed once, not re-derived three times. keyset pagination is `(distance_m, id)` ascending — `sqlc.narg(after_distance_m)`/`after_id` are both null on the first page, and the row-comparison-shaped `or` chain is the same pattern `ListCatUpdates`' own `(before_created_at, before_seq)` keyset already established, just ascending instead of descending; `id` is an arbitrary but deterministic tie-breaker for the rare case of two cats sitting at an identical distance. `ListActiveNeedsHelpCatsByDistance` adds exactly one more predicate — `needs_help_expires_at is not null and needs_help_expires_at > sqlc.arg(now)` — comparing against a `now` `CatsService.ListDiscover` passes down explicitly (its own injected clock, the same one `deriveActiveAlert` compares every other active-alert decision against), never the database's own `now()`: this is what lets a test hold that instant fixed at an exact expiry boundary, and what keeps this query's filtering and the response's `active_alert` derivation agreeing on what "active" meant at the same moment (see `CatsService.ListDiscover`'s own comment on why that single reading is captured once and reused, not read twice). neither query has a radius cutoff — unlike the duplicate-check query, "nearby" here means "every active cat, ordered by distance," matching the approved prototype's own `Yakınımda` tab, which has no distance cutoff either.
-- `updates.kind`/`needs_help_category`/`needs_help_expires_at` + `updates_kind_fields_ck` (issue #4/#23): needs-help is modeled as an explicit subtype of the same `updates` history, not a separate table — mirroring how `update_statuses` already models ordinary updates as a closed, fixed vocabulary rather than free text. the check constraint makes an invalid combination (an ordinary update carrying a category, or a needs-help update missing one) unrepresentable, so the invariant holds regardless of which code path performs the insert. `needs_help_expires_at` is always `created_at + 72h` (the fixed issue #4 expiry), computed once at write time and persisted, not derived from `created_at` on every read. "active" is never a separately stored boolean: the map/cat-detail read paths look up a cat's latest `needs_help` update (via `updates_needs_help_idx`) and the service layer — against an injected clock, so this stays deterministically testable — decides whether `needs_help_expires_at` is still in the future. an expired needs-help row is never deleted or rewritten; it simply stops being anyone's "latest active" alert, exactly like [[alerts]]'s "72 hours removes emphasis, not the record" decision.
+- `updates.kind`/`needs_help_category`/`needs_help_expires_at` + `updates_kind_fields_ck` (issue #4/#23; superseded by 00022 below): needs-help was originally modeled as an explicit subtype of the same `updates` history, not a separate table. `needs_help_expires_at` is always `created_at + 72h` (the fixed issue #4 expiry), computed once at write time and persisted, not derived from `created_at` on every read. "active" is never a separately stored boolean: the map/cat-detail read paths look up a cat's latest help-carrying update (via `updates_needs_help_idx`) and the service layer — against an injected clock, so this stays deterministically testable — decides whether `needs_help_expires_at` is still in the future. an expired help row is never deleted or rewritten; it simply stops being anyone's "latest active" alert, exactly like [[alerts]]'s "72 hours removes emphasis, not the record" decision.
+- `updates.needs_help` + `updates_needs_help_fields_ck` (migration 00022, issue #101 — the issue #100 simplified help contract): the subtype becomes a boolean flag an update carries alongside its statuses. **forward migration (additive, non-destructive):** add the flag defaulting false, backfill `true` onto every `kind = 'needs_help'` row (category/expiry columns untouched, so every legacy vocabulary value survives in place), swap the check constraint to hang off the flag (`needs_help = false → no category, no expiry`; `needs_help = true → expiry required, category optional` — optional is what lets a category-less combined row and a category-bearing legacy/compat row coexist), and rebuild `updates_needs_help_idx` as `where needs_help`. every read path that previously filtered `kind = 'needs_help'` (active-alert laterals, discover's needs_help filter, badge/profile queries, the outbox claim join) now filters `needs_help` — and, because help-carrying rows became deletable/clearable inside the author's 10-minute window, the active-alert laterals additionally filter `deleted_at is null` and select the mark's `comment` as the alert note. `kind` is frozen legacy metadata: every post-#101 write inserts `'ordinary'`. **rollback (documented, bounded):** the down migration restores the 0.1 model exactly for all pre-migration data (backfilled rows still hold kind + category + expiry, so dropping the flag returns them bit-for-bit); a post-migration compat-endpoint row (category-bearing) is restored to `kind = 'needs_help'`; a category-less combined-model mark cannot exist in the 0.1 schema and is demoted to a plain ordinary update — row, statuses, and note survive, only the help aspect drops. this bounded loss is the cost of rolling back, never of rolling forward.
+- `ClaimNotificationOutboxBatch.needs_help_already_active` (issue #101): the worker's fan-out gate moved from `kind` to the flag, plus the re-marking suppression signal — an `exists` over earlier non-deleted marks whose `needs_help_expires_at > this mark's created_at`, i.e. "was the cat's help state already active when this mark was made". evaluated against the mark's own `created_at`, never dispatch time, so a delayed worker reaches the same verdict a prompt one would; a suppressed mark is processed with no recipients at all (no push, no `notifications` row). accepted edge: a mark whose suppressor was itself deleted/cleared after this mark was created still reads as suppressed-or-not per the surviving rows at dispatch time — bounded and documented rather than solved with a stored per-mark decision.
 - a prior draft of this schema kept a denormalized `cats.needs_help_until` for the same fact — dropped (issue #23) once it became clear that duplicating "the latest needs-help update's expiry" onto `cats` risked drifting from `updates.needs_help_expires_at`, the actual source of truth, without saving a meaningful join at this scale.
 - `cats.last_update_at`: refreshed on every new update, so the map's "recently updated" highlight ([[map]]) needs no join.
 - `cats.status`: cats are never deleted, only marked `inactive`, per [[cats]]. the threshold for going inactive (silence duration) is undecided — left as a job/cron concern, the schema doesn't need to know the number.
@@ -290,7 +299,7 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 
 - cat-inactivity threshold.
 - duplicate-cat merge mechanism and whether it needs a `merged_into` column or something richer.
-- two update-content invariants from issue #3 still aren't enforced at the database level: an ordinary update must carry at least one `update_statuses` row, and a needs-help update must carry none. for the ordinary side, issue #36's `POST /v1/cats/{cat_id}/updates` write path now enforces the "at least one status" half at the application layer — the service rejects an empty/unknown/duplicate status set with `400` before ever opening the transaction, and `Store.CreateOrdinaryUpdate` writes the update row and its statuses (plus `cats.last_update_at`) together as one transaction, so a partial write can't land even though there's no db-level constraint tying the two tables together. the needs-help half (a needs-help update must carry no statuses) remains genuinely unenforced anywhere, since issue #23/#4's own write path still doesn't exist.
+- the update-content invariant — since issue #101: at least one `update_statuses` row **or** `needs_help = true` (a needs-help update carrying statuses is now the combined model, not a violation) — still isn't enforced at the database level. `POST /v1/cats/{cat_id}/updates`' write path enforces it at the application layer: the service rejects an empty/unknown/duplicate status set (empty allowed only with the flag) with `400` before ever opening the transaction, `Store.CreateOrdinaryUpdate` writes the update row and its statuses (plus `cats.last_update_at`) together as one transaction so a partial write can't land, and the correction statement's own post-state predicate keeps a PATCH from hollowing a row out (see `CorrectOrdinaryUpdate`'s query comment). the 0.1 compat needs-help endpoint writes no statuses, preserving the old subtype shape for those rows.
 
 ## out of scope
 

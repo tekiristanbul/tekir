@@ -79,7 +79,14 @@ func (s *NotificationService) DispatchPending(ctx context.Context) (int, error) 
 			return err
 		}
 		for _, row := range rows {
-			if row.Kind == "needs_help" {
+			// issue #101: the fan-out gate is the help flag, not the legacy
+			// kind column. A mark made while the cat already had an active
+			// help state (NeedsHelpAlreadyActive, decided by the claim query
+			// against the mark's own created_at) is processed with no
+			// recipients at all — the product decision on the #100
+			// contract's re-marking question: the state continues, the 72h
+			// window restarts, nobody is notified twice.
+			if row.NeedsHelp && !row.NeedsHelpAlreadyActive {
 				if err := s.dispatchNeedsHelp(ctx, q, row); err != nil {
 					return err
 				}
@@ -108,7 +115,6 @@ func (s *NotificationService) dispatchNeedsHelp(ctx context.Context, q *reposito
 
 	catIDStr := uuid.UUID(row.CatID.Bytes).String()
 	updateIDStr := uuid.UUID(row.UpdateID.Bytes).String()
-	category := row.NeedsHelpCategory.String
 
 	for _, rec := range recipients {
 		_, err := q.CreateNotification(ctx, repository.CreateNotificationParams{
@@ -142,7 +148,6 @@ func (s *NotificationService) dispatchNeedsHelp(ctx context.Context, q *reposito
 			PushToken: rec.PushToken.String,
 			CatID:     catIDStr,
 			UpdateID:  updateIDStr,
-			Category:  category,
 		}); err != nil {
 			if errors.Is(err, ErrPushTokenInvalid) {
 				// permanent rejection (unregistered/invalid token — issue

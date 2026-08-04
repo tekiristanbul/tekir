@@ -32,12 +32,22 @@ type Querier interface {
 	// lets more than one worker process poll concurrently without claiming the
 	// same row twice — a second worker just skips a row the first already
 	// locked, rather than blocking on it or double-processing it once the
-	// first commits. joins updates for `kind`/`author_user_id` since the
+	// first commits. joins updates for `needs_help`/`author_user_id` since the
 	// outbox itself doesn't carry them: an ordinary-update row's outbox entry
 	// is real (Store.CreateOrdinaryUpdate enqueues one for every write) but
 	// must never fan out to followers (see docs/product/notifications.md — mvp
 	// only notifies for needs-help), so the caller marks it processed with no
 	// recipients rather than skipping it here.
+	//
+	// needs_help_already_active (issue #101, product-owner decision on the
+	// #100 contract's open re-marking question): a help mark made while the
+	// cat already had an active help state must not notify followers again —
+	// the state silently continues (its 72h window restarts via the newer
+	// mark's own expiry). Evaluated against the marked update's own
+	// created_at, not dispatch time, so a delayed worker reaches the same
+	// verdict a prompt one would; a mark deleted/cleared after this one was
+	// created no longer suppresses (bounded, accepted edge — the state it
+	// provided was live when this mark was made).
 	ClaimNotificationOutboxBatch(ctx context.Context, rowLimit int32) ([]ClaimNotificationOutboxBatchRow, error)
 	// issue #84: retires a token fcm permanently rejected (unregistered/
 	// invalid). The `and push_token = sqlc.arg(push_token)` guard makes the
@@ -62,8 +72,9 @@ type Querier interface {
 	// update within the fixed 10-minute window (docs/product/updates.md). The
 	// where clause is the entire authorization + concurrency + expiry check in
 	// one atomic statement: author_user_id must match the caller (never
-	// trusted from the request), kind must be 'ordinary' (needs-help has its
-	// own fixed 72h lifecycle, not a correctable resource here), deleted_at
+	// trusted from the request), kind must be 'ordinary' (a pre-migration
+	// legacy needs-help subtype row is still not a correctable resource; every
+	// post-#101 row is kind = 'ordinary', help-carrying or not), deleted_at
 	// must still be null (a stale/duplicate retry against an already-deleted
 	// row never resurrects it), and created_at must still be after
 	// window_start (computed by the service against its own injected clock,
@@ -72,6 +83,16 @@ type Querier interface {
 	// disambiguates which via GetUpdateForCorrectionCheck below only when that
 	// happens. author_user_id/author_device_id/created_at are never written
 	// here, so a correction can never rewrite authorship or backdate a row.
+	//
+	// issue #101: clear_needs_help removes the author's own help mark within
+	// the same window ("işareti koyan kullanıcı 10 dakika içinde kaldırabilir"
+	// — removal only; a correction can never ADD the flag, which would need a
+	// retroactive notification fan-out). Clearing nulls the expiry and any
+	// compat-recorded category so updates_needs_help_fields_ck holds. The
+	// final where predicate enforces the create-invariant on the post-state
+	// (at least one status, or the help flag still set): a patch that would
+	// leave a status-less, flag-less husk affects zero rows and the service
+	// reports it as invalid content — the author deletes the update instead.
 	CorrectOrdinaryUpdate(ctx context.Context, arg CorrectOrdinaryUpdateParams) (CorrectOrdinaryUpdateRow, error)
 	// issue #70: created_by_user_id is required (resolved from the
 	// authenticated bearer session, never client-supplied); created_by_device_id
@@ -224,10 +245,12 @@ type Querier interface {
 	GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateByIdempotencyKeyParams) (GetUpdateByIdempotencyKeyRow, error)
 	// called only when CorrectOrdinaryUpdate/DeleteOwnUpdate affects 0 rows, to
 	// disambiguate why: wrong cat_id/unknown id (404), someone else's update
-	// (403), a needs-help row (404 — not a correctable resource at all), an
-	// already-deleted row (treated as an idempotent-success retry by the
-	// service, not an error), or a window that has closed (410). See
-	// docs/architecture/api.md's error taxonomy for this endpoint.
+	// (403), a legacy needs-help subtype row (404 — not a correctable resource
+	// at all), an already-deleted row (treated as an idempotent-success retry
+	// by the service, not an error), a window that has closed (410), or — for
+	// a correction only (issue #101) — a request whose post-state would carry
+	// neither a status nor the help flag (400; needs_help is selected so the
+	// service can tell this apart from the other zero-rows causes).
 	GetUpdateForCorrectionCheck(ctx context.Context, arg GetUpdateForCorrectionCheckParams) (GetUpdateForCorrectionCheckRow, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	GetUserByPhone(ctx context.Context, phone string) (User, error)
@@ -368,20 +391,25 @@ type Querier interface {
 	// updates, media, or cat creation" condition and the profile's total
 	// contribution/help counts, but never toward the status-based badges
 	// (first_sighting/feeder/water_helper/neighborhood_watcher), which only
-	// look at ordinary-update statuses. Needs-help updates are never
-	// soft-deleted (issue #80 excludes them from correction entirely), so no
-	// deleted_at filter is needed here. needs_help_category is carried along
-	// purely for the profile's recent-contributions display (the client
-	// composes its own label from category, exactly like the cat-detail
-	// timeline already does), not for badge derivation.
+	// look at ordinary-update statuses. Post-#101 this lists only the legacy
+	// pre-migration subtype rows (kind = 'needs_help') — a new help mark is a
+	// kind = 'ordinary' row and comes through ListUserOrdinaryUpdatesForBadges
+	// with its needs_help flag, so no row is ever counted twice.
+	// needs_help_category is carried along purely for the profile's
+	// recent-contributions display, not for badge derivation. Legacy rows
+	// predate deletability, but the deleted_at filter keeps this list's
+	// contract aligned with the ordinary one's.
 	ListUserNeedsHelpUpdatesForBadges(ctx context.Context, authorUserID pgtype.UUID) ([]ListUserNeedsHelpUpdatesForBadgesRow, error)
 	// issue #80: one row per ordinary update the account authored, oldest
 	// first, with its full status set — feeds ProfileService.BadgeProgress's
 	// oldest-to-newest threshold walk (mirrors the approved prototype's
 	// badgeProgress in prototype/data.js). Soft-deleted updates (see migration
 	// 00020) are excluded: a corrected-away update never counts toward a
-	// threshold. needs_help rows are listed separately (see
-	// ListUserNeedsHelpUpdatesForBadges) since they carry no statuses.
+	// threshold. Legacy needs-help subtype rows (kind = 'needs_help') are
+	// listed separately (see ListUserNeedsHelpUpdatesForBadges); a post-#101
+	// help mark is a kind = 'ordinary' row and appears here, with its
+	// needs_help flag and any compat-recorded category carried along for the
+	// profile's help count and recent-contributions display.
 	ListUserOrdinaryUpdatesForBadges(ctx context.Context, authorUserID pgtype.UUID) ([]ListUserOrdinaryUpdatesForBadgesRow, error)
 	ListWorkspacePings(ctx context.Context) ([]ListWorkspacePingsRow, error)
 	// issue #78: called once per claimed row, after recipient resolution and

@@ -60,7 +60,7 @@ func TestStore_ListUserNeedsHelpUpdatesForBadges_ScopedToAuthor(t *testing.T) {
 
 	createdAt := time.Now()
 	if _, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
-		ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, CatID: catID, Kind: "needs_help",
+		ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, CatID: catID, Kind: "needs_help", NeedsHelp: true,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
 		NeedsHelpCategory:  pgtype.Text{String: "trapped", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
@@ -69,7 +69,7 @@ func TestStore_ListUserNeedsHelpUpdatesForBadges_ScopedToAuthor(t *testing.T) {
 		t.Fatalf("seed my needs-help update: %v", err)
 	}
 	if _, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
-		ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, CatID: catID, Kind: "needs_help",
+		ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, CatID: catID, Kind: "needs_help", NeedsHelp: true,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
 		NeedsHelpCategory:  pgtype.Text{String: "food_needed", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
