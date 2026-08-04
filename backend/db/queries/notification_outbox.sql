@@ -30,8 +30,10 @@ values (sqlc.arg(update_id), sqlc.arg(cat_id));
 -- verdict a prompt one would; a mark deleted/cleared after this one was
 -- created no longer suppresses (bounded, accepted edge — the state it
 -- provided was live when this mark was made).
-select o.id, o.update_id, o.cat_id, u.needs_help, u.author_user_id,
-  (u.needs_help and exists (
+select o.id, o.update_id, o.cat_id,
+  (u.needs_help and u.deleted_at is null) as needs_help,
+  u.author_user_id,
+  ((u.needs_help and u.deleted_at is null) and exists (
     select 1 from updates p
     where p.cat_id = u.cat_id
       and p.needs_help
