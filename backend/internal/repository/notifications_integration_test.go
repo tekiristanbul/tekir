@@ -285,7 +285,7 @@ func TestStore_ClaimNotificationOutboxBatch_CarriesFlagAndAuthor(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected needs-help row claimed")
 	}
-	if !nh.NeedsHelp || nh.NeedsHelpAlreadyActive || nh.AuthorUserID != author {
+	if !nh.NeedsHelp || !nh.NeedsHelpEligible || nh.AuthorUserID != author {
 		t.Errorf("unexpected needs-help claim row: %+v", nh)
 	}
 
@@ -293,7 +293,7 @@ func TestStore_ClaimNotificationOutboxBatch_CarriesFlagAndAuthor(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected ordinary row claimed")
 	}
-	if ord.NeedsHelp || ord.NeedsHelpAlreadyActive {
+	if ord.NeedsHelp || ord.NeedsHelpEligible {
 		t.Errorf("unexpected ordinary claim row: %+v", ord)
 	}
 }

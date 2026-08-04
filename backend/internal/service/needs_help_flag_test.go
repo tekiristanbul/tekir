@@ -181,16 +181,20 @@ func TestCatsService_CorrectOwnUpdate_ClearNeedsHelp(t *testing.T) {
 	createdAt := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
 	var captured repository.CorrectOwnUpdateParams
 	svc := NewCatsService(fakeCatsLister{
-		correctRow: repository.CorrectOrdinaryUpdateRow{
-			ID:        pgtype.UUID{Bytes: updateID, Valid: true},
-			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
-			UpdatedAt: pgtype.Timestamptz{Time: createdAt.Add(time.Minute), Valid: true},
-			NeedsHelp: false,
+		correctRow: repository.CorrectOwnUpdateRow{
+			CorrectOrdinaryUpdateRow: repository.CorrectOrdinaryUpdateRow{
+				ID:        pgtype.UUID{Bytes: updateID, Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+				UpdatedAt: pgtype.Timestamptz{Time: createdAt.Add(time.Minute), Valid: true},
+				NeedsHelp: false,
+			},
+			Statuses: []string{"seen"},
 		},
 		capturedCorrect: &captured,
 	}, WithClock(func() time.Time { return createdAt.Add(time.Minute) }))
 
-	update, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"seen"}, true, nil)
+	statuses := []string{"seen"}
+	update, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), UpdateCorrection{Statuses: &statuses, ClearNeedsHelp: true})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -207,9 +211,13 @@ func TestCatsService_CorrectOwnUpdate_ClearNeedsHelp(t *testing.T) {
 
 func TestCatsService_CorrectOwnUpdate_HollowRequestRejected(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
-	// clearing the mark while also submitting no statuses would leave a
-	// status-less, flag-less husk — rejected before any database work.
-	if _, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, true, nil); !errors.Is(err, ErrInvalidStatuses) {
+	// clearing the mark while explicitly replacing statuses with an empty
+	// set would leave a status-less, flag-less husk — rejected before any
+	// database work. (An OMITTED statuses field while clearing is instead
+	// presence-aware — issue #105 — and preserves the existing set; whether
+	// the post-state holds is then the conditional statement's decision.)
+	empty := []string{}
+	if _, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), UpdateCorrection{Statuses: &empty, ClearNeedsHelp: true}); !errors.Is(err, ErrInvalidStatuses) {
 		t.Fatalf("expected ErrInvalidStatuses, got %v", err)
 	}
 }
@@ -231,10 +239,12 @@ func TestCatsService_CorrectOwnUpdate_PostStateInvariantResolvesTo400(t *testing
 		},
 	}, WithClock(func() time.Time { return createdAt.Add(time.Minute) }))
 
-	// empty statuses without clearing is only valid when the row still has
-	// its flag; this row doesn't, so the conditional statement affected no
-	// rows and the disambiguation must land on invalid content, not 404.
-	if _, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), nil, false, nil); !errors.Is(err, ErrInvalidStatuses) {
+	// an explicit empty replacement without clearing is only valid when the
+	// row still has its flag; this row doesn't, so the conditional statement
+	// affected no rows and the disambiguation must land on invalid content,
+	// not 404.
+	empty := []string{}
+	if _, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), UpdateCorrection{Statuses: &empty}); !errors.Is(err, ErrInvalidStatuses) {
 		t.Fatalf("expected ErrInvalidStatuses, got %v", err)
 	}
 }

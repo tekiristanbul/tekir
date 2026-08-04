@@ -97,11 +97,14 @@ func TestCatsHandler_CorrectUpdate_ClearNeedsHelp(t *testing.T) {
 	fixedNow := createdAt.Add(2 * time.Minute)
 	var captured repository.CorrectOwnUpdateParams
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
-		correctRow: repository.CorrectOrdinaryUpdateRow{
-			ID:        pgtype.UUID{Bytes: updateID, Valid: true},
-			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
-			UpdatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
-			NeedsHelp: false,
+		correctRow: repository.CorrectOwnUpdateRow{
+			CorrectOrdinaryUpdateRow: repository.CorrectOrdinaryUpdateRow{
+				ID:        pgtype.UUID{Bytes: updateID, Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+				UpdatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+				NeedsHelp: false,
+			},
+			Statuses: []string{"seen"},
 		},
 		capturedCorrect: &captured,
 	}, service.WithClock(func() time.Time { return fixedNow })), testMaxUploadBytes)
@@ -122,6 +125,100 @@ func TestCatsHandler_CorrectUpdate_ClearNeedsHelp(t *testing.T) {
 	}
 	if body.NeedsHelp || body.Kind != "ordinary" {
 		t.Errorf("expected a cleared response, got needs_help=%v kind=%q", body.NeedsHelp, body.Kind)
+	}
+}
+
+// TestCatsHandler_CorrectUpdate_ClearOnlyPreservesFields (issue #105): a
+// PATCH carrying only {"needs_help": false} must reach the repository as a
+// presence-aware clear — no status replacement, no comment write — and the
+// response must echo the row's preserved statuses and comment.
+func TestCatsHandler_CorrectUpdate_ClearOnlyPreservesFields(t *testing.T) {
+	catID := uuid.New()
+	updateID := uuid.New()
+	createdAt := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
+	fixedNow := createdAt.Add(2 * time.Minute)
+	preservedNote := "su kabı boş"
+	var captured repository.CorrectOwnUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		correctRow: repository.CorrectOwnUpdateRow{
+			CorrectOrdinaryUpdateRow: repository.CorrectOrdinaryUpdateRow{
+				ID:        pgtype.UUID{Bytes: updateID, Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+				UpdatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+				Comment:   pgtype.Text{String: preservedNote, Valid: true},
+				NeedsHelp: false,
+			},
+			Statuses: []string{"seen", "water_provided"},
+		},
+		capturedCorrect: &captured,
+	}, service.WithClock(func() time.Time { return fixedNow })), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newCorrectUpdateRequest(catID.String(), updateID.String(), `{"needs_help":false}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !captured.ClearNeedsHelp {
+		t.Error("expected the clear flag to reach the repository params")
+	}
+	if captured.ReplaceStatuses {
+		t.Error("expected no status replacement for an omitted statuses field")
+	}
+	if captured.SetComment {
+		t.Error("expected no comment write for an omitted comment field")
+	}
+	var body updateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Statuses) != 2 || body.Statuses[0] != "seen" || body.Statuses[1] != "water_provided" {
+		t.Errorf("expected the preserved statuses echoed, got %v", body.Statuses)
+	}
+	if body.Comment == nil || *body.Comment != preservedNote {
+		t.Errorf("expected the preserved comment echoed, got %v", body.Comment)
+	}
+	if body.NeedsHelp {
+		t.Error("expected needs_help false after clearing")
+	}
+}
+
+// TestCatsHandler_CorrectUpdate_ExplicitNullCommentClears (issue #105): an
+// explicit JSON null is a comment removal, distinct from an omitted field.
+func TestCatsHandler_CorrectUpdate_ExplicitNullCommentClears(t *testing.T) {
+	catID := uuid.New()
+	updateID := uuid.New()
+	createdAt := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
+	fixedNow := createdAt.Add(2 * time.Minute)
+	var captured repository.CorrectOwnUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		correctRow: repository.CorrectOwnUpdateRow{
+			CorrectOrdinaryUpdateRow: repository.CorrectOrdinaryUpdateRow{
+				ID:        pgtype.UUID{Bytes: updateID, Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+				UpdatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+			},
+			Statuses: []string{"seen"},
+		},
+		capturedCorrect: &captured,
+	}, service.WithClock(func() time.Time { return fixedNow })), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newCorrectUpdateRequest(catID.String(), updateID.String(), `{"comment":null}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !captured.SetComment {
+		t.Error("expected an explicit null to count as a comment write")
+	}
+	if captured.Comment.Valid {
+		t.Errorf("expected a null comment value, got %v", captured.Comment)
+	}
+	if captured.ReplaceStatuses || captured.ClearNeedsHelp {
+		t.Errorf("expected no status/flag change, got replace=%v clear=%v", captured.ReplaceStatuses, captured.ClearNeedsHelp)
 	}
 }
 

@@ -80,13 +80,17 @@ func (s *NotificationService) DispatchPending(ctx context.Context) (int, error) 
 		}
 		for _, row := range rows {
 			// issue #101: the fan-out gate is the help flag, not the legacy
-			// kind column. A mark made while the cat already had an active
-			// help state (NeedsHelpAlreadyActive, decided by the claim query
-			// against the mark's own created_at) is processed with no
-			// recipients at all — the product decision on the #100
-			// contract's re-marking question: the state continues, the 72h
-			// window restarts, nobody is notified twice.
-			if row.NeedsHelp && !row.NeedsHelpAlreadyActive {
+			// kind column. NeedsHelpEligible (issue #105) was decided inside
+			// the transaction that created the mark — inactive → active
+			// enqueues exactly one push; a mark made while the cat already
+			// had an active help state is processed with no recipients at
+			// all (the #100/#101 re-marking decision: the state continues,
+			// the 72h window restarts, nobody is notified twice), and later
+			// deletion or correction of that earlier mark can't flip the
+			// frozen verdict here. NeedsHelp still reads the mark's own live
+			// row: an author retracting the mark in-window before dispatch
+			// cancels the send.
+			if row.NeedsHelp && row.NeedsHelpEligible {
 				if err := s.dispatchNeedsHelp(ctx, q, row); err != nil {
 					return err
 				}

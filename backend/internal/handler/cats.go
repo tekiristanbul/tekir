@@ -546,18 +546,37 @@ func (h *CatsHandler) CreateNeedsHelp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toUpdateResponse(update))
 }
 
+// optionalString distinguishes a JSON field that was absent from one that
+// was an explicit null (issue #105): PATCH preserves an omitted comment
+// but clears an explicitly-null one — a plain *string can't tell those
+// apart after decoding.
+type optionalString struct {
+	Set   bool
+	Value *string
+}
+
+func (o *optionalString) UnmarshalJSON(data []byte) error {
+	o.Set = true
+	return json.Unmarshal(data, &o.Value)
+}
+
 // correctUpdateRequest is the body of PATCH /v1/cats/{cat_id}/updates/{update_id}
 // (issue #80). DisallowUnknownFields rejects any client-supplied kind,
 // author, created_at, or deleted_at — none of those are ever alterable
 // through this path, mirroring createUpdateRequest's own guarantee.
-// NeedsHelp (issue #101) is a three-state field: absent leaves the row's
-// help mark untouched (a 0.1 client's PATCH never carries it), false
-// removes the mark within the same 10-minute window, and true is rejected
-// outright — help is only ever marked at creation, never added by an edit.
+// Every field is presence-aware (issue #105): an omitted field preserves
+// the row's existing value, so a patch carrying only {"needs_help": false}
+// removes the help mark without touching statuses or comment. Statuses
+// nil (absent or JSON null) preserves the existing set; an explicit []
+// clears it, valid only while the help flag survives. NeedsHelp (issue
+// #101) is a three-state field: absent leaves the row's help mark
+// untouched (a 0.1 client's PATCH never carries it), false removes the
+// mark within the same 10-minute window, and true is rejected outright —
+// help is only ever marked at creation, never added by an edit.
 type correctUpdateRequest struct {
-	Statuses  []string `json:"statuses"`
-	NeedsHelp *bool    `json:"needs_help"`
-	Comment   *string  `json:"comment"`
+	Statuses  *[]string      `json:"statuses"`
+	NeedsHelp *bool          `json:"needs_help"`
+	Comment   optionalString `json:"comment"`
 }
 
 // CorrectUpdate answers PATCH /v1/cats/{cat_id}/updates/{update_id}: the
@@ -578,10 +597,14 @@ func (h *CatsHandler) CorrectUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "needs_help can only be cleared"})
 		return
 	}
-	clearNeedsHelp := req.NeedsHelp != nil && !*req.NeedsHelp
 
 	user := UserFromContext(r.Context())
-	update, err := h.cats.CorrectOwnUpdate(r.Context(), chi.URLParam(r, "cat_id"), chi.URLParam(r, "update_id"), user.UserID, req.Statuses, clearNeedsHelp, req.Comment)
+	update, err := h.cats.CorrectOwnUpdate(r.Context(), chi.URLParam(r, "cat_id"), chi.URLParam(r, "update_id"), user.UserID, service.UpdateCorrection{
+		Statuses:       req.Statuses,
+		ClearNeedsHelp: req.NeedsHelp != nil && !*req.NeedsHelp,
+		SetComment:     req.Comment.Set,
+		Comment:        req.Comment.Value,
+	})
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return

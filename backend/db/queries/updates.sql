@@ -137,13 +137,20 @@ limit sqlc.arg(row_limit)::int;
 -- the same window ("işareti koyan kullanıcı 10 dakika içinde kaldırabilir"
 -- — removal only; a correction can never ADD the flag, which would need a
 -- retroactive notification fan-out). Clearing nulls the expiry and any
--- compat-recorded category so updates_needs_help_fields_ck holds. The
--- final where predicate enforces the create-invariant on the post-state
--- (at least one status, or the help flag still set): a patch that would
--- leave a status-less, flag-less husk affects zero rows and the service
--- reports it as invalid content — the author deletes the update instead.
+-- compat-recorded category so updates_needs_help_fields_ck holds.
+--
+-- issue #105: the statement is presence-aware. set_comment/replace_statuses
+-- are false when the PATCH body omitted the field, and an omitted field
+-- preserves the row's existing value — a patch carrying only
+-- {"needs_help": false} must not erase statuses or comment. The final
+-- where predicate enforces the create-invariant on the post-state (at
+-- least one status, or the help flag still set), evaluated against the
+-- replacement set when one was supplied and against the row's existing
+-- update_statuses otherwise: a patch that would leave a status-less,
+-- flag-less husk affects zero rows and the service reports it as invalid
+-- content — the author deletes the update instead.
 update updates
-set comment = sqlc.arg(comment),
+set comment = case when sqlc.arg(set_comment)::bool then sqlc.arg(comment) else comment end,
     updated_at = sqlc.arg(updated_at),
     needs_help = needs_help and not sqlc.arg(clear_needs_help)::bool,
     needs_help_expires_at = case when sqlc.arg(clear_needs_help)::bool then null else needs_help_expires_at end,
@@ -154,8 +161,14 @@ where id = sqlc.arg(id)
   and kind = 'ordinary'
   and deleted_at is null
   and created_at > sqlc.arg(window_start)::timestamptz
-  and (sqlc.arg(has_statuses)::bool or (needs_help and not sqlc.arg(clear_needs_help)::bool))
-returning id, created_at, updated_at, needs_help, needs_help_expires_at;
+  and (
+    case when sqlc.arg(replace_statuses)::bool
+      then sqlc.arg(has_statuses)::bool
+      else exists (select 1 from update_statuses s where s.update_id = updates.id)
+    end
+    or (needs_help and not sqlc.arg(clear_needs_help)::bool)
+  )
+returning id, created_at, updated_at, comment, needs_help, needs_help_expires_at;
 
 -- name: DeleteOwnUpdate :one
 -- same authorization/concurrency/expiry shape as CorrectOrdinaryUpdate
@@ -183,6 +196,16 @@ returning id, deleted_at;
 select id, cat_id, author_user_id, kind, needs_help, created_at, deleted_at
 from updates
 where id = sqlc.arg(id) and cat_id = sqlc.arg(cat_id);
+
+-- name: ListUpdateStatuses :many
+-- issue #105: read back a row's existing statuses inside
+-- Store.CorrectOwnUpdate's transaction when a presence-aware PATCH omitted
+-- the field — the response must echo the preserved set, and reading it in
+-- the same transaction keeps it consistent with the row just corrected.
+-- Ordered to match ListCatUpdates' own array_agg(order by s.status).
+select status from update_statuses
+where update_id = sqlc.arg(update_id)
+order by status;
 
 -- name: ReplaceUpdateStatuses :exec
 -- issue #80: a correction may change which structured statuses an ordinary

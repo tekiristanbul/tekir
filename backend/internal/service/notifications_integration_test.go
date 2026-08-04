@@ -661,3 +661,106 @@ func TestNotificationService_DispatchPending_SuppressedWhileActive(t *testing.T)
 	}
 	_ = followerDevice
 }
+
+// TestNotificationService_DispatchPending_RemovedEarlierMarkKeepsSuppression
+// is the issue #105 race: a second mark is made while the first is still
+// active (so it must never notify), and the first mark is then removed —
+// here by its author clearing the flag through the presence-aware
+// correction — before the worker processes the second. Eligibility was
+// frozen at the second mark's creation, so the removal must not turn its
+// suppressed enqueue into a push, no matter how delayed the dispatch is.
+func TestNotificationService_DispatchPending_RemovedEarlierMarkKeepsSuppression(t *testing.T) {
+	store := newNotificationTestStore(t)
+	ctx := context.Background()
+	drainPending(t, ctx, store)
+
+	catID := notifUpsertTestCat(t, ctx, store, "removed earlier mark cat")
+	author := notifCreateTestUser(t, ctx, store)
+	follower := notifCreateTestUser(t, ctx, store)
+	notifCreateTestDevice(t, ctx, store, follower)
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{UserID: follower, CatID: catID}); err != nil {
+		t.Fatalf("follower follow: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	firstAt := time.Now().Add(-time.Hour)
+	firstID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:                 firstID,
+		CatID:              catID,
+		AuthorUserID:       author,
+		CreatedAt:          pgtype.Timestamptz{Time: firstAt, Valid: true},
+		Statuses:           []string{"seen"},
+		NeedsHelp:          true,
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: firstAt.Add(72 * time.Hour), Valid: true},
+	}); err != nil {
+		t.Fatalf("create first mark: %v", err)
+	}
+
+	secondAt := time.Now()
+	secondID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:                 secondID,
+		CatID:              catID,
+		AuthorUserID:       author,
+		CreatedAt:          pgtype.Timestamptz{Time: secondAt, Valid: true},
+		NeedsHelp:          true,
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: secondAt.Add(72 * time.Hour), Valid: true},
+	}); err != nil {
+		t.Fatalf("create second mark while active: %v", err)
+	}
+
+	// the verdicts are already frozen in the outbox, before any removal.
+	var firstEligible, secondEligible bool
+	if err := pool.QueryRow(ctx, "select needs_help_eligible from notification_outbox where update_id = $1", firstID).Scan(&firstEligible); err != nil {
+		t.Fatalf("read first eligibility: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "select needs_help_eligible from notification_outbox where update_id = $1", secondID).Scan(&secondEligible); err != nil {
+		t.Fatalf("read second eligibility: %v", err)
+	}
+	if !firstEligible || secondEligible {
+		t.Fatalf("expected frozen eligibility first=true second=false, got first=%v second=%v", firstEligible, secondEligible)
+	}
+
+	// the author removes the first mark before the worker runs — the
+	// presence-aware clear (issue #105): no statuses/comment carried, so
+	// the row keeps its "seen" status and only loses the help aspect.
+	if _, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
+		ID:             firstID,
+		CatID:          catID,
+		AuthorUserID:   author,
+		UpdatedAt:      pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		WindowStart:    pgtype.Timestamptz{Time: firstAt.Add(-time.Minute), Valid: true},
+		ClearNeedsHelp: true,
+	}); err != nil {
+		t.Fatalf("clear first mark: %v", err)
+	}
+
+	sender := service.NewFakeNotificationSender()
+	notifications := service.NewNotificationService(store, sender)
+	dispatchUntilProcessed(t, ctx, pool, notifications, firstID)
+	dispatchUntilProcessed(t, ctx, pool, notifications, secondID)
+
+	// the second mark stays suppressed even though no earlier active mark
+	// exists at dispatch time anymore; the first was retracted before
+	// dispatch, so it doesn't send either.
+	for _, id := range []pgtype.UUID{firstID, secondID} {
+		var count int
+		if err := pool.QueryRow(ctx, "select count(*) from notifications where update_id = $1", id).Scan(&count); err != nil {
+			t.Fatalf("count notifications: %v", err)
+		}
+		if count != 0 {
+			t.Fatalf("expected no notifications for update %s, got %d", uuid.UUID(id.Bytes).String(), count)
+		}
+	}
+	for _, s := range sender.Sent() {
+		if s.UpdateID == uuid.UUID(firstID.Bytes).String() || s.UpdateID == uuid.UUID(secondID.Bytes).String() {
+			t.Fatalf("expected no push for either mark, got one for update %s", s.UpdateID)
+		}
+	}
+}
