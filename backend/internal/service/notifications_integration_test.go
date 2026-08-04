@@ -192,13 +192,14 @@ func TestNotificationService_DispatchPending_NeedsHelpFansOutExcludingAuthorAndR
 
 	createdAt := time.Now()
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
-	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 updateID,
 		CatID:              catID,
 		AuthorUserID:       author,
 		AuthorDeviceID:     authorDevice,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  "injured_or_sick",
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: "injured_or_sick", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
 	}); err != nil {
 		t.Fatalf("create needs-help update: %v", err)
@@ -225,9 +226,6 @@ func TestNotificationService_DispatchPending_NeedsHelpFansOutExcludingAuthorAndR
 	}
 	if sentToFollower[0].DeviceID != uuid.UUID(followerDevice.Bytes).String() {
 		t.Errorf("expected notification sent to follower's device, got %q", sentToFollower[0].DeviceID)
-	}
-	if sentToFollower[0].Category != "injured_or_sick" {
-		t.Errorf("unexpected category: %q", sentToFollower[0].Category)
 	}
 
 	var notifCount int
@@ -313,12 +311,13 @@ func TestNotificationService_DispatchPending_IdempotentRedispatch(t *testing.T) 
 
 	createdAt := time.Now()
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
-	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 updateID,
 		CatID:              catID,
 		AuthorUserID:       author,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  "water_needed",
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: "water_needed", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
 	}); err != nil {
 		t.Fatalf("create needs-help update: %v", err)
@@ -385,12 +384,13 @@ func TestNotificationService_DispatchPending_ConcurrentDispatchNoDuplicateSends(
 
 	createdAt := time.Now()
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
-	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 updateID,
 		CatID:              catID,
 		AuthorUserID:       author,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  "unsafe_location",
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: "unsafe_location", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
 	}); err != nil {
 		t.Fatalf("create needs-help update: %v", err)
@@ -480,13 +480,14 @@ func TestNotificationService_DispatchPending_NoPushTokenSkipsSendButKeepsRecord(
 
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	createdAt := time.Now().UTC()
-	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 updateID,
 		CatID:              catID,
 		AuthorUserID:       author,
 		AuthorDeviceID:     authorDevice,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  "injured_or_sick",
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: "injured_or_sick", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
 	}); err != nil {
 		t.Fatalf("create needs-help update: %v", err)
@@ -528,13 +529,14 @@ func TestNotificationService_DispatchPending_InvalidTokenRetired(t *testing.T) {
 
 	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	createdAt := time.Now().UTC()
-	if _, err := store.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 updateID,
 		CatID:              catID,
 		AuthorUserID:       author,
 		AuthorDeviceID:     authorDevice,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  "trapped",
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: "trapped", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
 	}); err != nil {
 		t.Fatalf("create needs-help update: %v", err)
@@ -581,4 +583,81 @@ func TestNotificationService_DispatchPending_InvalidTokenRetired(t *testing.T) {
 	if notifCount != 1 {
 		t.Fatalf("expected 1 in-app notification record, got %d", notifCount)
 	}
+}
+
+// TestNotificationService_DispatchPending_SuppressedWhileActive proves the
+// issue #101 re-marking decision end to end: a help mark made while the
+// cat's help state was already active is processed without notifying
+// anyone — no push, no in-app record — while the first mark notified
+// normally.
+func TestNotificationService_DispatchPending_SuppressedWhileActive(t *testing.T) {
+	store := newNotificationTestStore(t)
+	ctx := context.Background()
+	drainPending(t, ctx, store)
+
+	catID := notifUpsertTestCat(t, ctx, store, "suppression dispatch cat")
+	author := notifCreateTestUser(t, ctx, store)
+	follower := notifCreateTestUser(t, ctx, store)
+	followerDevice := notifCreateTestDevice(t, ctx, store, follower)
+	if err := store.CreateFollow(ctx, repository.CreateFollowParams{UserID: follower, CatID: catID}); err != nil {
+		t.Fatalf("follower follow: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	firstAt := time.Now().Add(-time.Hour)
+	firstID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:                 firstID,
+		CatID:              catID,
+		AuthorUserID:       author,
+		CreatedAt:          pgtype.Timestamptz{Time: firstAt, Valid: true},
+		NeedsHelp:          true,
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: firstAt.Add(72 * time.Hour), Valid: true},
+	}); err != nil {
+		t.Fatalf("create first mark: %v", err)
+	}
+
+	secondAt := time.Now()
+	secondID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:                 secondID,
+		CatID:              catID,
+		AuthorUserID:       author,
+		CreatedAt:          pgtype.Timestamptz{Time: secondAt, Valid: true},
+		NeedsHelp:          true,
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: secondAt.Add(72 * time.Hour), Valid: true},
+	}); err != nil {
+		t.Fatalf("create second mark while active: %v", err)
+	}
+
+	sender := service.NewFakeNotificationSender()
+	notifications := service.NewNotificationService(store, sender)
+	dispatchUntilProcessed(t, ctx, pool, notifications, firstID)
+	dispatchUntilProcessed(t, ctx, pool, notifications, secondID)
+
+	var firstCount, secondCount int
+	if err := pool.QueryRow(ctx, "select count(*) from notifications where update_id = $1", firstID).Scan(&firstCount); err != nil {
+		t.Fatalf("count first notifications: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "select count(*) from notifications where update_id = $1", secondID).Scan(&secondCount); err != nil {
+		t.Fatalf("count second notifications: %v", err)
+	}
+	if firstCount != 1 {
+		t.Fatalf("expected the first mark to notify the follower, got %d records", firstCount)
+	}
+	if secondCount != 0 {
+		t.Fatalf("expected the second mark to be suppressed, got %d records", secondCount)
+	}
+
+	for _, s := range sender.Sent() {
+		if s.UpdateID == uuid.UUID(secondID.Bytes).String() {
+			t.Fatalf("expected no push for the suppressed mark, got one to device %s", s.DeviceID)
+		}
+	}
+	_ = followerDevice
 }

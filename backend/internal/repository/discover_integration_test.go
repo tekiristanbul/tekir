@@ -219,6 +219,7 @@ func createNeedsHelpUpdateAt(t *testing.T, ctx context.Context, store *repositor
 		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		CatID:              catID,
 		Kind:               "needs_help",
+		NeedsHelp:          true,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
 		NeedsHelpCategory:  pgtype.Text{String: category, Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},

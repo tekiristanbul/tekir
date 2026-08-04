@@ -46,8 +46,15 @@ var ErrInvalidStatuses = errors.New("invalid statuses")
 // updates, enforced here too even though updates_kind_fields_ck would also
 // reject an unrecognized value at the database level: failing before any
 // write starts means an invalid category never allocates an id or opens a
-// transaction.
+// transaction. Post-#101 only the compat needs-help endpoint still accepts
+// a category at all.
 var ErrInvalidNeedsHelpCategory = errors.New("invalid needs-help category")
+
+// ErrNoteTooLong means a help-carrying update's optional note exceeds
+// needsHelpNoteMaxChars (issue #100's note constraint, applied by #101).
+// Scoped to the help note only — an ordinary update's comment predates the
+// contract and stays unconstrained here.
+var ErrNoteTooLong = errors.New("needs-help note too long")
 
 // ErrInvalidArea means the submitted location falls outside the product's
 // geographic boundary (istanbulBounds below) or isn't well-formed
@@ -158,16 +165,70 @@ var approvedStatuses = map[string]bool{
 	"water_provided": true,
 }
 
-// needsHelpCategoryLabels is the fixed, closed mvp help-category vocabulary
+// needsHelpCategoryLabels is the fixed, closed 0.1 help-category vocabulary
 // and its turkish display label (product-owner decision on issue #4) — a
 // check constraint in the database, not a data-driven vocabulary like
 // traits, so it's a plain map rather than a repository-backed lookup.
+// Post-#101 (issue #100's simplified help contract) this is a legacy
+// vocabulary: it validates only the compat needs-help endpoint's input and
+// labels stored legacy categories on reads. The combined update write path
+// never touches it.
 var needsHelpCategoryLabels = map[string]string{
 	"injured_or_sick": "yaralı / hasta",
 	"food_needed":     "mamaya ihtiyacı var",
 	"water_needed":    "suya ihtiyacı var",
 	"unsafe_location": "güvenli olmayan konum",
 	"trapped":         "mahsur kalmış",
+}
+
+// needsHelpCompatCategory/-Label are what a category-less (post-#101) help
+// mark serves in the response fields 0.1 clients require to be non-null
+// (docs/product/alerts.md's mixed-client rule): active_alert.category/
+// category_label and the timeline's needs_help_category/-_label. Never a
+// valid submission value — needsHelpCategoryLabels above deliberately does
+// not contain it. A 0.1 client's own analytics clamps "unspecified" to its
+// existing `unknown` bucket, so no invalid closed-enum value is ever
+// emitted (issue #101 acceptance).
+const (
+	needsHelpCompatCategory      = "unspecified"
+	needsHelpCompatCategoryLabel = "Yardıma ihtiyacı var"
+)
+
+// needsHelpCategoryLabel resolves the display label for a stored legacy
+// category, or the compat label when the row carries none.
+func needsHelpCategoryLabel(category string) string {
+	if label, ok := needsHelpCategoryLabels[category]; ok {
+		return label
+	}
+	return needsHelpCompatCategoryLabel
+}
+
+// needsHelpNoteMaxChars caps the optional free-text note on a help mark
+// (issue #100's note constraint: at most 500 unicode characters), counted
+// in runes, not bytes.
+const needsHelpNoteMaxChars = 500
+
+// wireUpdateKind derives the response `kind` from the help flag (issue
+// #101): "needs_help" for any help-carrying update, "ordinary" otherwise —
+// regardless of the stored legacy kind column, which no longer reaches the
+// wire.
+func wireUpdateKind(needsHelp bool) string {
+	if needsHelp {
+		return "needs_help"
+	}
+	return "ordinary"
+}
+
+// validateNeedsHelpNote enforces the note cap on a help-carrying update's
+// optional comment.
+func validateNeedsHelpNote(comment *string) error {
+	if comment == nil {
+		return nil
+	}
+	if len([]rune(*comment)) > needsHelpNoteMaxChars {
+		return ErrNoteTooLong
+	}
+	return nil
 }
 
 // NeedsHelpExpiry is the fixed mvp needs-help lifetime (product-owner
@@ -185,14 +246,18 @@ func NeedsHelpExpiresAt(createdAt time.Time) time.Time {
 	return createdAt.Add(NeedsHelpExpiry)
 }
 
-// ActiveAlert is the minimum metadata a client needs to render an active
-// needs-help alert (issue #4/#23): which category, and enough of the
-// lifecycle (created_at/expires_at) to show context — never just a
-// boolean. Present only while CreatedAt/ExpiresAt (as decided against the
-// service's clock) mean the alert hasn't expired yet.
+// ActiveAlert is the metadata a client needs to render an active help
+// state: the reporter's optional note plus enough lifecycle
+// (created_at/expires_at) to show context. Present only while ExpiresAt
+// (as decided against the service's clock) means the state hasn't expired
+// yet. Category/CategoryLabel are 0.1 compatibility fields (issue #101):
+// a legacy row serves its stored vocabulary value, a post-#101 mark serves
+// the fixed needsHelpCompatCategory pair — 0.2 clients ignore both and
+// read Comment instead.
 type ActiveAlert struct {
 	Category      string
 	CategoryLabel string
+	Comment       *string
 	CreatedAt     time.Time
 	ExpiresAt     time.Time
 }
@@ -360,6 +425,13 @@ type CatUpdate struct {
 	CreatedAt time.Time
 	UpdatedAt *time.Time
 
+	// NeedsHelp (issue #101) is the flag itself — the field 0.2 clients
+	// read. The four fields below are populated exactly when it is true:
+	// Category/CategoryLabel serve the stored legacy vocabulary value or
+	// the fixed compat pair (0.1 clients require them non-null on a
+	// help-carrying entry); ExpiresAt/Active are the server-decided
+	// lifecycle, never left to a client clock.
+	NeedsHelp              bool
 	NeedsHelpCategory      *string
 	NeedsHelpCategoryLabel *string
 	NeedsHelpExpiresAt     *time.Time
@@ -401,7 +473,6 @@ type CatsStore interface {
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	ListCatUpdates(ctx context.Context, arg repository.ListCatUpdatesParams) ([]repository.ListCatUpdatesRow, error)
 	CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error)
-	CreateNeedsHelpUpdate(ctx context.Context, arg repository.CreateNeedsHelpUpdateParams) (repository.CreateUpdateRow, error)
 	CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOrdinaryUpdateRow, error)
 	DeleteOwnUpdate(ctx context.Context, arg repository.DeleteOwnUpdateParams) (repository.DeleteOwnUpdateRow, error)
 	GetUpdateForCorrectionCheck(ctx context.Context, arg repository.GetUpdateForCorrectionCheckParams) (repository.GetUpdateForCorrectionCheckRow, error)
@@ -459,16 +530,25 @@ func NewCatsService(db CatsStore, opts ...CatsServiceOption) *CatsService {
 // needs the identical map/detail cat-summary shape, per issue #44 — derives
 // active-vs-expired the same way, against its own injected clock, without
 // duplicating this logic.
-func deriveActiveAlert(clock func() time.Time, category pgtype.Text, createdAt, expiresAt pgtype.Timestamptz) *ActiveAlert {
-	if !category.Valid || !expiresAt.Valid {
+func deriveActiveAlert(clock func() time.Time, category, comment pgtype.Text, createdAt, expiresAt pgtype.Timestamptz) *ActiveAlert {
+	// presence is decided by the expiry alone (issue #101): a post-#101
+	// help mark carries no category, so category.Valid can no longer gate
+	// whether an alert exists — only whether the compat fields serve a
+	// stored legacy value or the fixed compat pair.
+	if !expiresAt.Valid {
 		return nil
 	}
 	if !expiresAt.Time.After(clock()) {
 		return nil
 	}
+	alertCategory := needsHelpCompatCategory
+	if category.Valid {
+		alertCategory = category.String
+	}
 	return &ActiveAlert{
-		Category:      category.String,
-		CategoryLabel: needsHelpCategoryLabels[category.String],
+		Category:      alertCategory,
+		CategoryLabel: needsHelpCategoryLabel(alertCategory),
+		Comment:       textPtr(comment),
 		CreatedAt:     createdAt.Time,
 		ExpiresAt:     expiresAt.Time,
 	}
@@ -499,7 +579,7 @@ func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds) ([]CatMarke
 			Lat:          r.Lat,
 			Lng:          r.Lng,
 			AreaLabel:    textPtr(r.AreaLabel),
-			ActiveAlert:  deriveActiveAlert(s.clock, r.NeedsHelpCategory, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt),
+			ActiveAlert:  deriveActiveAlert(s.clock, r.NeedsHelpCategory, r.NeedsHelpComment, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt),
 			LastUpdateAt: timestamptzPtr(r.LastUpdateAt),
 		})
 	}
@@ -585,7 +665,7 @@ func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng 
 			rows = rows[:limit]
 		}
 		for _, r := range rows {
-			items = append(items, toDiscoverCat(fixedClock, r.ID, r.Name, r.PhotoUrl, r.AreaLabel, r.LastUpdateAt, r.NeedsHelpCategory, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt, r.DistanceM))
+			items = append(items, toDiscoverCat(fixedClock, r.ID, r.Name, r.PhotoUrl, r.AreaLabel, r.LastUpdateAt, r.NeedsHelpCategory, r.NeedsHelpComment, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt, r.DistanceM))
 		}
 		if hasMore && len(rows) > 0 {
 			last := rows[len(rows)-1]
@@ -607,7 +687,7 @@ func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng 
 			rows = rows[:limit]
 		}
 		for _, r := range rows {
-			items = append(items, toDiscoverCat(fixedClock, r.ID, r.Name, r.PhotoUrl, r.AreaLabel, r.LastUpdateAt, r.NeedsHelpCategory, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt, r.DistanceM))
+			items = append(items, toDiscoverCat(fixedClock, r.ID, r.Name, r.PhotoUrl, r.AreaLabel, r.LastUpdateAt, r.NeedsHelpCategory, r.NeedsHelpComment, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt, r.DistanceM))
 		}
 		if hasMore && len(rows) > 0 {
 			last := rows[len(rows)-1]
@@ -638,14 +718,14 @@ type discoverRow struct {
 // it per row type. clock is ListDiscover's fixedClock (a single s.clock()
 // reading pinned for the whole call), not s.clock itself — see ListDiscover's
 // own comment on why.
-func toDiscoverCat(clock func() time.Time, id pgtype.UUID, name pgtype.Text, photoURL string, areaLabel pgtype.Text, lastUpdateAt pgtype.Timestamptz, needsHelpCategory pgtype.Text, needsHelpCreatedAt, needsHelpExpiresAt pgtype.Timestamptz, distanceMeters float64) DiscoverCat {
+func toDiscoverCat(clock func() time.Time, id pgtype.UUID, name pgtype.Text, photoURL string, areaLabel pgtype.Text, lastUpdateAt pgtype.Timestamptz, needsHelpCategory, needsHelpComment pgtype.Text, needsHelpCreatedAt, needsHelpExpiresAt pgtype.Timestamptz, distanceMeters float64) DiscoverCat {
 	return DiscoverCat{
 		ID:             uuid.UUID(id.Bytes).String(),
 		Name:           name.String,
 		PrimaryPhoto:   photoURL,
 		AreaLabel:      textPtr(areaLabel),
 		DistanceMeters: distanceMeters,
-		ActiveAlert:    deriveActiveAlert(clock, needsHelpCategory, needsHelpCreatedAt, needsHelpExpiresAt),
+		ActiveAlert:    deriveActiveAlert(clock, needsHelpCategory, needsHelpComment, needsHelpCreatedAt, needsHelpExpiresAt),
 		LastUpdateAt:   timestamptzPtr(lastUpdateAt),
 	}
 }
@@ -731,7 +811,7 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		PrimaryPhoto: nonEmptyStringPtr(row.PhotoUrl),
 		CreatedAt:    row.CreatedAt.Time,
 		LastUpdateAt: timestamptzPtr(row.LastUpdateAt),
-		ActiveAlert:  deriveActiveAlert(s.clock, row.NeedsHelpCategory, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),
+		ActiveAlert:  deriveActiveAlert(s.clock, row.NeedsHelpCategory, row.NeedsHelpComment, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),
 	}, nil
 }
 
@@ -808,15 +888,26 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 	items := make([]CatUpdate, 0, len(rows))
 	for _, r := range rows {
 		item := CatUpdate{
-			ID:        uuid.UUID(r.ID.Bytes).String(),
-			Kind:      r.Kind,
+			ID: uuid.UUID(r.ID.Bytes).String(),
+			// wire kind is derived from the flag (issue #101), not the
+			// stored column: a 0.1 client renders any help-carrying entry
+			// through its needs-help branch (help pill, no statuses, no
+			// correction menu) — the safe degradation for a combined
+			// update — while a 0.2 client reads NeedsHelp/Statuses
+			// directly. The stored kind only still distinguishes a legacy
+			// pre-#101 subtype row below.
+			Kind:      wireUpdateKind(r.NeedsHelp),
 			Statuses:  r.Statuses,
 			Comment:   textPtr(r.Comment),
 			CreatedAt: r.CreatedAt.Time,
+			NeedsHelp: r.NeedsHelp,
 		}
-		if r.Kind == "needs_help" {
-			category := r.NeedsHelpCategory.String
-			label := needsHelpCategoryLabels[category]
+		if r.NeedsHelp {
+			category := needsHelpCompatCategory
+			if r.NeedsHelpCategory.Valid {
+				category = r.NeedsHelpCategory.String
+			}
+			label := needsHelpCategoryLabel(category)
 			expiresAt := r.NeedsHelpExpiresAt.Time
 			active := expiresAt.After(s.clock())
 			item.NeedsHelpCategory = &category
@@ -826,6 +917,11 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 		}
 		if haveCaller && r.AuthorUserID.Valid && uuid.UUID(r.AuthorUserID.Bytes) == callerUUID {
 			item.AuthorIsMe = true
+			// correctability follows the stored kind, not the wire kind: a
+			// legacy pre-#101 subtype row is still not a correctable
+			// resource, while every post-#101 row (help-carrying or not)
+			// is, inside its window (product decision on #101: the author
+			// may remove their own help mark within 10 minutes).
 			if r.Kind == "ordinary" {
 				expiresAt := r.CreatedAt.Time.Add(updateCorrectionWindow)
 				item.CorrectionExpiresAt = &expiresAt
@@ -863,7 +959,13 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 // miss the initial check) is resolved by falling back to the same lookup
 // after a unique-constraint violation on the insert, rather than
 // surfacing a raw database error to either caller.
-func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, deviceID string, idempotencyKey *string, statuses []string, comment *string) (CatUpdate, error) {
+// needsHelp (issue #101, contract issue #100) marks the update as a help
+// call: the 72h expiry is server-computed, the notification fan-out is
+// decided downstream by the worker (suppressed while the cat already had
+// an active help state), and the optional comment doubles as the help note
+// under the contract's 500-rune cap. statuses may then be empty — the
+// create invariant is "at least one status or the help flag".
+func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, deviceID string, idempotencyKey *string, statuses []string, needsHelp bool, comment *string) (CatUpdate, error) {
 	catID, err := parseCatID(id)
 	if err != nil {
 		return CatUpdate{}, err
@@ -889,8 +991,13 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		}
 	}
 
-	if err := validateStatuses(statuses); err != nil {
+	if err := validateStatusSet(statuses, needsHelp); err != nil {
 		return CatUpdate{}, err
+	}
+	if needsHelp {
+		if err := validateNeedsHelpNote(comment); err != nil {
+			return CatUpdate{}, err
+		}
 	}
 
 	// deviceID (from the optional device-token context) may be "".
@@ -907,11 +1014,14 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		return CatUpdate{}, ErrCatNotFound
 	}
 
-	sorted := append([]string(nil), statuses...)
+	// always a non-nil slice: a help-only update has no statuses, but the
+	// response field must marshal as [] (never null) — Flutter's
+	// CatUpdateEntry.fromJson casts statuses as a non-nullable List.
+	sorted := append([]string{}, statuses...)
 	sort.Strings(sorted)
 
 	createdAt := s.clock()
-	row, err := s.db.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+	params := repository.CreateOrdinaryUpdateParams{
 		ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		CatID:          catID,
 		AuthorDeviceID: authorDeviceID,
@@ -920,7 +1030,12 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		CreatedAt:      pgtype.Timestamptz{Time: createdAt, Valid: true},
 		Statuses:       sorted,
 		IdempotencyKey: idemKey,
-	})
+	}
+	if needsHelp {
+		params.NeedsHelp = true
+		params.NeedsHelpExpiresAt = pgtype.Timestamptz{Time: NeedsHelpExpiresAt(createdAt), Valid: true}
+	}
+	row, err := s.db.CreateOrdinaryUpdate(ctx, params)
 	if err != nil {
 		if idemKey.Valid && isUniqueViolation(err) {
 			if existing, getErr := s.fetchIdempotentOrdinaryUpdate(ctx, authorUserID, idemKey); getErr == nil {
@@ -931,12 +1046,13 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 	}
 
 	expiresAt := createdAt.Add(updateCorrectionWindow)
-	return CatUpdate{
+	result := CatUpdate{
 		ID:        uuid.UUID(row.ID.Bytes).String(),
-		Kind:      "ordinary",
+		Kind:      wireUpdateKind(needsHelp),
 		Statuses:  sorted,
 		Comment:   comment,
 		CreatedAt: createdAt,
+		NeedsHelp: needsHelp,
 		// the caller always authored the update they just created, and it
 		// is always freshly inside the correction window at creation time
 		// (issue #80) — never left false/nil the way a zero-value CatUpdate
@@ -944,7 +1060,18 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		// the client immediately after posting until the next full reload.
 		AuthorIsMe:          true,
 		CorrectionExpiresAt: &expiresAt,
-	}, nil
+	}
+	if needsHelp {
+		category := needsHelpCompatCategory
+		label := needsHelpCompatCategoryLabel
+		helpExpires := NeedsHelpExpiresAt(createdAt)
+		active := true
+		result.NeedsHelpCategory = &category
+		result.NeedsHelpCategoryLabel = &label
+		result.NeedsHelpExpiresAt = &helpExpires
+		result.NeedsHelpActive = &active
+	}
+	return result, nil
 }
 
 // fetchIdempotentOrdinaryUpdate resolves a presented Idempotency-Key to the
@@ -964,29 +1091,42 @@ func (s *CatsService) fetchIdempotentOrdinaryUpdate(ctx context.Context, authorU
 	}
 	createdAt := row.CreatedAt.Time
 	expiresAt := createdAt.Add(updateCorrectionWindow)
-	return CatUpdate{
+	result := CatUpdate{
 		ID:                  uuid.UUID(row.ID.Bytes).String(),
-		Kind:                "ordinary",
+		Kind:                wireUpdateKind(row.NeedsHelp),
 		Statuses:            row.Statuses,
 		Comment:             textPtr(row.Comment),
 		CreatedAt:           createdAt,
+		NeedsHelp:           row.NeedsHelp,
 		AuthorIsMe:          true,
 		CorrectionExpiresAt: &expiresAt,
-	}, nil
+	}
+	if row.NeedsHelp {
+		category := needsHelpCompatCategory
+		label := needsHelpCompatCategoryLabel
+		helpExpires := row.NeedsHelpExpiresAt.Time
+		active := helpExpires.After(s.clock())
+		result.NeedsHelpCategory = &category
+		result.NeedsHelpCategoryLabel = &label
+		result.NeedsHelpExpiresAt = &helpExpires
+		result.NeedsHelpActive = &active
+	}
+	return result, nil
 }
 
-// CreateNeedsHelpUpdate records a new needs-help report for cat id,
-// attributed to the authenticated account identified by userID — the same
-// bearer-required, optional-device-association shape as
-// CreateOrdinaryUpdate (issue #78 reuses #65's authorization model
-// unchanged). category must be one of needsHelpCategoryLabels' fixed 5
-// values; comment is optional. expires_at is always computed here as
-// createdAt + NeedsHelpExpiry (issue #4's fixed 72h, no early/manual
-// resolve) — never accepted from the caller. The update row and its
-// notification_outbox enqueue commit as one transaction (see
-// repository.Store.CreateNeedsHelpUpdate); which followers, if any, that
-// outbox row eventually notifies is NotificationService.DispatchPending's
-// decision, not this method's.
+// CreateNeedsHelpUpdate answers the 0.1 compatibility endpoint
+// POST /v1/cats/{cat_id}/needs-help (issue #78; kept through the mixed
+// 0.1/0.2 window by issue #101 so live 0.1 clients keep working
+// unchanged). category must still be one of needsHelpCategoryLabels' fixed
+// 5 values — 0.1 clients only ever send those — and is recorded on the row
+// as legacy metadata only (issue #100: never rendered by the 0.2 ui, never
+// reproduced as a note). The write itself is the unified flag-model write:
+// kind = 'ordinary', needs_help = true, no statuses — so the mark is
+// clearable/deletable by its author exactly like one made through
+// POST .../updates, and the worker's fan-out/suppression logic sees one
+// shape. expires_at is always computed here as createdAt + NeedsHelpExpiry
+// — never accepted from the caller. Retiring this endpoint entirely is
+// deferred until 0.1 clients are retired.
 func (s *CatsService) CreateNeedsHelpUpdate(ctx context.Context, id, userID, deviceID, category string, comment *string) (CatUpdate, error) {
 	catID, err := parseCatID(id)
 	if err != nil {
@@ -995,6 +1135,9 @@ func (s *CatsService) CreateNeedsHelpUpdate(ctx context.Context, id, userID, dev
 
 	if _, ok := needsHelpCategoryLabels[category]; !ok {
 		return CatUpdate{}, ErrInvalidNeedsHelpCategory
+	}
+	if err := validateNeedsHelpNote(comment); err != nil {
+		return CatUpdate{}, err
 	}
 
 	// userID comes from the authenticated bearer context RequireBearer
@@ -1019,14 +1162,15 @@ func (s *CatsService) CreateNeedsHelpUpdate(ctx context.Context, id, userID, dev
 
 	createdAt := s.clock()
 	expiresAt := NeedsHelpExpiresAt(createdAt)
-	row, err := s.db.CreateNeedsHelpUpdate(ctx, repository.CreateNeedsHelpUpdateParams{
+	row, err := s.db.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
 		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		CatID:              catID,
 		AuthorDeviceID:     authorDeviceID,
 		AuthorUserID:       pgtype.UUID{Bytes: authorUserID, Valid: true},
 		Comment:            nullableText(comment),
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
-		NeedsHelpCategory:  category,
+		NeedsHelp:          true,
+		NeedsHelpCategory:  pgtype.Text{String: category, Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
 	})
 	if err != nil {
@@ -1046,6 +1190,7 @@ func (s *CatsService) CreateNeedsHelpUpdate(ctx context.Context, id, userID, dev
 		Statuses:               []string{},
 		Comment:                comment,
 		CreatedAt:              createdAt,
+		NeedsHelp:              true,
 		NeedsHelpCategory:      &category,
 		NeedsHelpCategoryLabel: &label,
 		NeedsHelpExpiresAt:     &expiresAt,
@@ -1071,7 +1216,7 @@ func parseUpdateID(raw string) (pgtype.UUID, error) {
 // idempotent-retry convention for POST /v1/auth/logout and
 // POST /v1/me/notifications/{id}/read). alreadyDeleted is true exactly
 // when the caller should treat the zero-rows outcome as success.
-func (s *CatsService) resolveCorrectionFailure(ctx context.Context, catID, updateID pgtype.UUID, authorUserID uuid.UUID, windowStart time.Time) (alreadyDeleted bool, err error) {
+func (s *CatsService) resolveCorrectionFailure(ctx context.Context, catID, updateID pgtype.UUID, authorUserID uuid.UUID, windowStart time.Time, correction bool) (alreadyDeleted bool, err error) {
 	check, err := s.db.GetUpdateForCorrectionCheck(ctx, repository.GetUpdateForCorrectionCheckParams{ID: updateID, CatID: catID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1091,21 +1236,40 @@ func (s *CatsService) resolveCorrectionFailure(ctx context.Context, catID, updat
 	if !check.CreatedAt.Time.After(windowStart) {
 		return false, ErrCorrectionWindowExpired
 	}
-	// every condition the conditional update itself checks held true here,
-	// yet it still affected zero rows — shouldn't happen outside a genuine
-	// race (e.g. concurrently deleted between the two statements); surface
-	// as "not found" rather than panicking on an assumption that can't hold.
+	// every row-state condition the conditional update itself checks held
+	// true here, yet it still affected zero rows. For a correction (issue
+	// #101) the one remaining cause is the post-state invariant: the
+	// request would have left the row with no statuses and no help flag —
+	// invalid content, same 400 family as any other bad status set (the
+	// author deletes the update instead of hollowing it out). For a delete
+	// there is no such condition; only a genuine race (e.g. concurrently
+	// deleted between the two statements) remains — surface as "not found"
+	// rather than panicking on an assumption that can't hold.
+	if correction {
+		return false, ErrInvalidStatuses
+	}
 	return false, ErrUpdateNotFound
 }
 
 // CorrectOwnUpdate applies an in-window correction to the caller's own
 // ordinary update (issue #80): statuses and/or comment. kind, author
 // identity, and created_at are never alterable through this path — only
-// comment/statuses change, and updated_at is server-derived exactly like
-// CreateOrdinaryUpdate's created_at. windowStart is computed against s.clock,
-// never the caller's own notion of time, matching every other time-relative
-// decision in this service.
-func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, userID string, statuses []string, comment *string) (CatUpdate, error) {
+// comment/statuses (and, issue #101, the help flag — removal only) change,
+// and updated_at is server-derived exactly like CreateOrdinaryUpdate's
+// created_at. windowStart is computed against s.clock, never the caller's
+// own notion of time, matching every other time-relative decision in this
+// service.
+//
+// clearNeedsHelp (issue #101, "işareti koyan kullanıcı 10 dakika içinde
+// kaldırabilir") removes the row's help mark: flag, expiry, and any
+// compat-recorded legacy category are nulled together so the check
+// constraint holds. A correction can never ADD the flag — marking help
+// happens only at creation, so there is never a retroactive notification
+// to fan out. statuses may be empty only when the row keeps its help flag
+// (enforced by the conditional statement's post-state predicate; an
+// obviously-hollow request — no statuses and clearing — is rejected here
+// before touching the database).
+func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, userID string, statuses []string, clearNeedsHelp bool, comment *string) (CatUpdate, error) {
 	catUUID, err := parseCatID(catID)
 	if err != nil {
 		return CatUpdate{}, err
@@ -1114,7 +1278,7 @@ func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, use
 	if err != nil {
 		return CatUpdate{}, err
 	}
-	if err := validateStatuses(statuses); err != nil {
+	if err := validateStatusSet(statuses, !clearNeedsHelp); err != nil {
 		return CatUpdate{}, err
 	}
 	// userID is always a well-formed uuid from RequireBearer's context —
@@ -1130,19 +1294,20 @@ func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, use
 	sort.Strings(sorted)
 
 	row, err := s.db.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
-		ID:           updateUUID,
-		CatID:        catUUID,
-		AuthorUserID: pgtype.UUID{Bytes: authorUserID, Valid: true},
-		Comment:      nullableText(comment),
-		UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
-		WindowStart:  pgtype.Timestamptz{Time: windowStart, Valid: true},
-		Statuses:     sorted,
+		ID:             updateUUID,
+		CatID:          catUUID,
+		AuthorUserID:   pgtype.UUID{Bytes: authorUserID, Valid: true},
+		Comment:        nullableText(comment),
+		UpdatedAt:      pgtype.Timestamptz{Time: now, Valid: true},
+		WindowStart:    pgtype.Timestamptz{Time: windowStart, Valid: true},
+		Statuses:       sorted,
+		ClearNeedsHelp: clearNeedsHelp,
 	})
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return CatUpdate{}, err
 		}
-		if _, resolveErr := s.resolveCorrectionFailure(ctx, catUUID, updateUUID, authorUserID, windowStart); resolveErr != nil {
+		if _, resolveErr := s.resolveCorrectionFailure(ctx, catUUID, updateUUID, authorUserID, windowStart, true); resolveErr != nil {
 			return CatUpdate{}, resolveErr
 		}
 		// an already-deleted row: a correction (unlike delete) has nothing
@@ -1156,16 +1321,28 @@ func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, use
 	updatedAt := row.UpdatedAt.Time
 	createdAt := row.CreatedAt.Time
 	expiresAt := createdAt.Add(updateCorrectionWindow)
-	return CatUpdate{
+	result := CatUpdate{
 		ID:                  uuid.UUID(row.ID.Bytes).String(),
-		Kind:                "ordinary",
+		Kind:                wireUpdateKind(row.NeedsHelp),
 		Statuses:            sorted,
 		Comment:             comment,
 		CreatedAt:           createdAt,
 		UpdatedAt:           &updatedAt,
+		NeedsHelp:           row.NeedsHelp,
 		AuthorIsMe:          true,
 		CorrectionExpiresAt: &expiresAt,
-	}, nil
+	}
+	if row.NeedsHelp {
+		category := needsHelpCompatCategory
+		label := needsHelpCompatCategoryLabel
+		helpExpires := row.NeedsHelpExpiresAt.Time
+		active := helpExpires.After(now)
+		result.NeedsHelpCategory = &category
+		result.NeedsHelpCategoryLabel = &label
+		result.NeedsHelpExpiresAt = &helpExpires
+		result.NeedsHelpActive = &active
+	}
+	return result, nil
 }
 
 // DeleteOwnUpdate soft-deletes the caller's own ordinary update within the
@@ -1202,7 +1379,7 @@ func (s *CatsService) DeleteOwnUpdate(ctx context.Context, catID, updateID, user
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	alreadyDeleted, resolveErr := s.resolveCorrectionFailure(ctx, catUUID, updateUUID, authorUserID, windowStart)
+	alreadyDeleted, resolveErr := s.resolveCorrectionFailure(ctx, catUUID, updateUUID, authorUserID, windowStart, false)
 	if alreadyDeleted {
 		return nil
 	}
@@ -1383,11 +1560,17 @@ func (s *CatsService) recoverFromCreateCatFailure(ctx context.Context, createErr
 	return result, err
 }
 
-// validateStatuses enforces issue #36's status-set rules: at least one
-// status, every value drawn from the closed mvp vocabulary, no duplicates.
-// All three collapse to the same 400 via ErrInvalidStatuses.
-func validateStatuses(statuses []string) error {
+// validateStatusSet enforces issue #36's status-set rules — every value
+// drawn from the closed mvp vocabulary, no duplicates — with the
+// emptiness rule made explicit (issue #101): a help-carrying update may
+// omit statuses entirely ("yardıma ihtiyacı var" alone is a valid update),
+// so those write paths pass allowEmpty. Every violation collapses to the
+// same 400 via ErrInvalidStatuses.
+func validateStatusSet(statuses []string, allowEmpty bool) error {
 	if len(statuses) == 0 {
+		if allowEmpty {
+			return nil
+		}
 		return ErrInvalidStatuses
 	}
 	seen := make(map[string]bool, len(statuses))

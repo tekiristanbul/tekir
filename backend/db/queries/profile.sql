@@ -4,12 +4,17 @@
 -- oldest-to-newest threshold walk (mirrors the approved prototype's
 -- badgeProgress in prototype/data.js). Soft-deleted updates (see migration
 -- 00020) are excluded: a corrected-away update never counts toward a
--- threshold. needs_help rows are listed separately (see
--- ListUserNeedsHelpUpdatesForBadges) since they carry no statuses.
+-- threshold. Legacy needs-help subtype rows (kind = 'needs_help') are
+-- listed separately (see ListUserNeedsHelpUpdatesForBadges); a post-#101
+-- help mark is a kind = 'ordinary' row and appears here, with its
+-- needs_help flag and any compat-recorded category carried along for the
+-- profile's help count and recent-contributions display.
 select
   u.cat_id,
   u.created_at,
   u.seq,
+  u.needs_help,
+  u.needs_help_category,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
@@ -24,15 +29,17 @@ order by u.created_at asc, u.seq asc;
 -- updates, media, or cat creation" condition and the profile's total
 -- contribution/help counts, but never toward the status-based badges
 -- (first_sighting/feeder/water_helper/neighborhood_watcher), which only
--- look at ordinary-update statuses. Needs-help updates are never
--- soft-deleted (issue #80 excludes them from correction entirely), so no
--- deleted_at filter is needed here. needs_help_category is carried along
--- purely for the profile's recent-contributions display (the client
--- composes its own label from category, exactly like the cat-detail
--- timeline already does), not for badge derivation.
+-- look at ordinary-update statuses. Post-#101 this lists only the legacy
+-- pre-migration subtype rows (kind = 'needs_help') — a new help mark is a
+-- kind = 'ordinary' row and comes through ListUserOrdinaryUpdatesForBadges
+-- with its needs_help flag, so no row is ever counted twice.
+-- needs_help_category is carried along purely for the profile's
+-- recent-contributions display, not for badge derivation. Legacy rows
+-- predate deletability, but the deleted_at filter keeps this list's
+-- contract aligned with the ordinary one's.
 select cat_id, created_at, seq, needs_help_category
 from updates
-where author_user_id = sqlc.arg(author_user_id) and kind = 'needs_help'
+where author_user_id = sqlc.arg(author_user_id) and kind = 'needs_help' and deleted_at is null
 order by created_at asc, seq asc;
 
 -- name: ListUserCreatedCatsForBadges :many

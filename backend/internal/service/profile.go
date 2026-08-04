@@ -97,11 +97,13 @@ func (s *ProfileService) gatherContributions(ctx context.Context, userID pgtype.
 	events := make([]contributionEvent, 0, len(ordinary)+len(needsHelp)+len(createdCats))
 	for _, r := range ordinary {
 		events = append(events, contributionEvent{
-			Kind:      contributionOrdinary,
-			CatID:     uuid.UUID(r.CatID.Bytes),
-			CreatedAt: r.CreatedAt.Time,
-			Seq:       r.Seq.Int64,
-			Statuses:  r.Statuses,
+			Kind:              contributionOrdinary,
+			CatID:             uuid.UUID(r.CatID.Bytes),
+			CreatedAt:         r.CreatedAt.Time,
+			Seq:               r.Seq.Int64,
+			Statuses:          r.Statuses,
+			NeedsHelp:         r.NeedsHelp,
+			NeedsHelpCategory: r.NeedsHelpCategory.String,
 		})
 	}
 	for _, r := range needsHelp {
@@ -110,6 +112,7 @@ func (s *ProfileService) gatherContributions(ctx context.Context, userID pgtype.
 			CatID:             uuid.UUID(r.CatID.Bytes),
 			CreatedAt:         r.CreatedAt.Time,
 			Seq:               r.Seq.Int64,
+			NeedsHelp:         true,
 			NeedsHelpCategory: r.NeedsHelpCategory.String,
 		})
 	}
@@ -133,6 +136,11 @@ func contributionTotals(events []contributionEvent) ContributionTotals {
 		switch e.Kind {
 		case contributionOrdinary:
 			t.Updates++
+			// a combined-model help mark (issue #101) is both an update and
+			// a help call — it counts in both totals, once each.
+			if e.NeedsHelp {
+				t.Helps++
+			}
 		case contributionNeedsHelp:
 			t.Helps++
 		case contributionCatAdded:
@@ -218,9 +226,17 @@ func (s *ProfileService) GetProfile(ctx context.Context, userID string) (Profile
 		if e.Kind == contributionOrdinary {
 			rc.Statuses = e.Statuses
 		}
-		if e.Kind == contributionNeedsHelp {
+		if e.NeedsHelp {
+			// display type follows the help mark (issue #101), mirroring
+			// the timeline's wire-kind rule: a 0.1 profile renders the
+			// entry through its help branch with the compat category pair
+			// when the row stored none.
+			rc.Type = contributionNeedsHelp
 			category := e.NeedsHelpCategory
-			label := needsHelpCategoryLabels[category]
+			if category == "" {
+				category = needsHelpCompatCategory
+			}
+			label := needsHelpCategoryLabel(category)
 			rc.NeedsHelpCategory = &category
 			rc.NeedsHelpCategoryLabel = &label
 		}

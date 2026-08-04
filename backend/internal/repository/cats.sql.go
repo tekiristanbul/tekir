@@ -123,14 +123,15 @@ select
   c.created_at,
   c.last_update_at,
   nh.needs_help_category,
+  nh.comment as needs_help_comment,
   nh.created_at as needs_help_created_at,
   nh.needs_help_expires_at
 from cats c
 left join media m on m.id = c.primary_photo_id
 left join lateral (
-  select u.needs_help_category, u.created_at, u.needs_help_expires_at
+  select u.needs_help_category, u.comment, u.created_at, u.needs_help_expires_at
   from updates u
-  where u.cat_id = c.id and u.kind = 'needs_help'
+  where u.cat_id = c.id and u.needs_help and u.deleted_at is null
   order by u.created_at desc, u.seq desc
   limit 1
 ) nh on true
@@ -147,6 +148,7 @@ type GetCatByIDRow struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
+	NeedsHelpComment   pgtype.Text        `json:"needs_help_comment"`
 	NeedsHelpCreatedAt pgtype.Timestamptz `json:"needs_help_created_at"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 }
@@ -170,6 +172,7 @@ func (q *Queries) GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow
 		&i.CreatedAt,
 		&i.LastUpdateAt,
 		&i.NeedsHelpCategory,
+		&i.NeedsHelpComment,
 		&i.NeedsHelpCreatedAt,
 		&i.NeedsHelpExpiresAt,
 	)
@@ -230,21 +233,22 @@ with candidates as (
     c.area_label,
     c.last_update_at,
     nh.needs_help_category,
+    nh.comment as needs_help_comment,
     nh.created_at as needs_help_created_at,
     nh.needs_help_expires_at,
     st_distance(c.area, st_setsrid(st_makepoint($5::float8, $6::float8), 4326)::geography)::float8 as distance_m
   from cats c
   left join media m on m.id = c.primary_photo_id
   left join lateral (
-    select u.needs_help_category, u.created_at, u.needs_help_expires_at
+    select u.needs_help_category, u.comment, u.created_at, u.needs_help_expires_at
     from updates u
-    where u.cat_id = c.id and u.kind = 'needs_help'
+    where u.cat_id = c.id and u.needs_help and u.deleted_at is null
     order by u.created_at desc, u.seq desc
     limit 1
   ) nh on true
   where c.status = 'active'
 )
-select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_created_at, needs_help_expires_at, distance_m
+select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
 where needs_help_expires_at is not null
   and needs_help_expires_at > $1::timestamptz
@@ -273,6 +277,7 @@ type ListActiveNeedsHelpCatsByDistanceRow struct {
 	AreaLabel          pgtype.Text        `json:"area_label"`
 	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
+	NeedsHelpComment   pgtype.Text        `json:"needs_help_comment"`
 	NeedsHelpCreatedAt pgtype.Timestamptz `json:"needs_help_created_at"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	DistanceM          float64            `json:"distance_m"`
@@ -315,6 +320,7 @@ func (q *Queries) ListActiveNeedsHelpCatsByDistance(ctx context.Context, arg Lis
 			&i.AreaLabel,
 			&i.LastUpdateAt,
 			&i.NeedsHelpCategory,
+			&i.NeedsHelpComment,
 			&i.NeedsHelpCreatedAt,
 			&i.NeedsHelpExpiresAt,
 			&i.DistanceM,
@@ -338,21 +344,22 @@ with candidates as (
     c.area_label,
     c.last_update_at,
     nh.needs_help_category,
+    nh.comment as needs_help_comment,
     nh.created_at as needs_help_created_at,
     nh.needs_help_expires_at,
     st_distance(c.area, st_setsrid(st_makepoint($4::float8, $5::float8), 4326)::geography)::float8 as distance_m
   from cats c
   left join media m on m.id = c.primary_photo_id
   left join lateral (
-    select u.needs_help_category, u.created_at, u.needs_help_expires_at
+    select u.needs_help_category, u.comment, u.created_at, u.needs_help_expires_at
     from updates u
-    where u.cat_id = c.id and u.kind = 'needs_help'
+    where u.cat_id = c.id and u.needs_help and u.deleted_at is null
     order by u.created_at desc, u.seq desc
     limit 1
   ) nh on true
   where c.status = 'active'
 )
-select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_created_at, needs_help_expires_at, distance_m
+select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
 where $1::float8 is null
   or distance_m > $1::float8
@@ -376,6 +383,7 @@ type ListCatsByDistanceRow struct {
 	AreaLabel          pgtype.Text        `json:"area_label"`
 	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
+	NeedsHelpComment   pgtype.Text        `json:"needs_help_comment"`
 	NeedsHelpCreatedAt pgtype.Timestamptz `json:"needs_help_created_at"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	DistanceM          float64            `json:"distance_m"`
@@ -426,6 +434,7 @@ func (q *Queries) ListCatsByDistance(ctx context.Context, arg ListCatsByDistance
 			&i.AreaLabel,
 			&i.LastUpdateAt,
 			&i.NeedsHelpCategory,
+			&i.NeedsHelpComment,
 			&i.NeedsHelpCreatedAt,
 			&i.NeedsHelpExpiresAt,
 			&i.DistanceM,
@@ -450,14 +459,15 @@ select
   c.area_label,
   c.last_update_at,
   nh.needs_help_category,
+  nh.comment as needs_help_comment,
   nh.created_at as needs_help_created_at,
   nh.needs_help_expires_at
 from cats c
 left join media m on m.id = c.primary_photo_id
 left join lateral (
-  select u.needs_help_category, u.created_at, u.needs_help_expires_at
+  select u.needs_help_category, u.comment, u.created_at, u.needs_help_expires_at
   from updates u
-  where u.cat_id = c.id and u.kind = 'needs_help'
+  where u.cat_id = c.id and u.needs_help and u.deleted_at is null
   order by u.created_at desc, u.seq desc
   limit 1
 ) nh on true
@@ -485,6 +495,7 @@ type ListCatsInBoundsRow struct {
 	AreaLabel          pgtype.Text        `json:"area_label"`
 	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
+	NeedsHelpComment   pgtype.Text        `json:"needs_help_comment"`
 	NeedsHelpCreatedAt pgtype.Timestamptz `json:"needs_help_created_at"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 }
@@ -523,6 +534,7 @@ func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsPara
 			&i.AreaLabel,
 			&i.LastUpdateAt,
 			&i.NeedsHelpCategory,
+			&i.NeedsHelpComment,
 			&i.NeedsHelpCreatedAt,
 			&i.NeedsHelpExpiresAt,
 		); err != nil {

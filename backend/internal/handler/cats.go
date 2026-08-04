@@ -89,12 +89,15 @@ type areaLatLng struct {
 }
 
 // activeAlertResponse is the map/cat-detail representation of an active
-// needs-help alert (issue #4/#23) — null whenever there isn't one. Always
-// the full category + lifecycle context, never a bare boolean, so a client
-// never has to guess what "needs help" means.
+// help state — null whenever there isn't one. Comment is the reporter's
+// optional note (issue #101, contract issue #100), the field 0.2 clients
+// read; Category/CategoryLabel are 0.1 compatibility fields (that client
+// generation requires them non-null) — a legacy record serves its stored
+// vocabulary value, a post-#101 mark the fixed "unspecified" pair.
 type activeAlertResponse struct {
 	Category      string    `json:"category"`
 	CategoryLabel string    `json:"category_label"`
+	Comment       *string   `json:"comment"`
 	CreatedAt     time.Time `json:"created_at"`
 	ExpiresAt     time.Time `json:"expires_at"`
 }
@@ -110,11 +113,15 @@ type catDetailResponse struct {
 	ActiveAlert  *activeAlertResponse `json:"active_alert"`
 }
 
-// updateResponse is one entry of a cat's newest-first history — either an
-// ordinary status update (Statuses populated, NeedsHelp* all null) or a
-// needs-help one (issue #4/#23: NeedsHelp* populated, Statuses empty).
-// NeedsHelpActive is server-decided (never left for the client to derive
-// from its own clock) and is only meaningful when Kind is "needs_help".
+// updateResponse is one entry of a cat's newest-first history. NeedsHelp
+// (issue #101, contract issue #100) is the combined-model flag 0.2 clients
+// read — an update may carry statuses, the flag, or both. Kind is derived
+// from the flag ("needs_help" whenever it is set) so a 0.1 client renders
+// a help-carrying entry through its needs-help branch; NeedsHelpCategory/
+// -Label are that generation's required compat fields (a legacy record's
+// stored vocabulary value, or the fixed "unspecified" pair). NeedsHelp*
+// lifecycle fields are populated exactly when the flag is set;
+// NeedsHelpActive is server-decided, never left to a client clock.
 type updateResponse struct {
 	ID                     string     `json:"id"`
 	Kind                   string     `json:"kind"`
@@ -122,6 +129,7 @@ type updateResponse struct {
 	Comment                *string    `json:"comment"`
 	CreatedAt              time.Time  `json:"created_at"`
 	UpdatedAt              *time.Time `json:"updated_at,omitempty"`
+	NeedsHelp              bool       `json:"needs_help"`
 	NeedsHelpCategory      *string    `json:"needs_help_category"`
 	NeedsHelpCategoryLabel *string    `json:"needs_help_category_label"`
 	NeedsHelpExpiresAt     *time.Time `json:"needs_help_expires_at"`
@@ -144,6 +152,7 @@ func toActiveAlertResponse(a *service.ActiveAlert) *activeAlertResponse {
 	return &activeAlertResponse{
 		Category:      a.Category,
 		CategoryLabel: a.CategoryLabel,
+		Comment:       a.Comment,
 		CreatedAt:     a.CreatedAt,
 		ExpiresAt:     a.ExpiresAt,
 	}
@@ -445,6 +454,7 @@ func toUpdateResponse(u service.CatUpdate) updateResponse {
 		Comment:                u.Comment,
 		CreatedAt:              u.CreatedAt,
 		UpdatedAt:              u.UpdatedAt,
+		NeedsHelp:              u.NeedsHelp,
 		NeedsHelpCategory:      u.NeedsHelpCategory,
 		NeedsHelpCategoryLabel: u.NeedsHelpCategoryLabel,
 		NeedsHelpExpiresAt:     u.NeedsHelpExpiresAt,
@@ -455,12 +465,15 @@ func toUpdateResponse(u service.CatUpdate) updateResponse {
 }
 
 // createUpdateRequest is the body of POST /v1/cats/{cat_id}/updates
-// (issue #36). DisallowUnknownFields rejects any client-supplied kind,
-// media, needs-help, timestamp, sequence, or author field outright — those
-// are always server-derived, never accepted from the caller.
+// (issue #36; needs_help added by issue #101's combined help model — a
+// bare boolean, no category, per the issue #100 contract).
+// DisallowUnknownFields rejects any client-supplied kind, media, category,
+// expiry, timestamp, sequence, or author field outright — those are always
+// server-derived, never accepted from the caller.
 type createUpdateRequest struct {
-	Statuses []string `json:"statuses"`
-	Comment  *string  `json:"comment"`
+	Statuses  []string `json:"statuses"`
+	NeedsHelp bool     `json:"needs_help"`
+	Comment   *string  `json:"comment"`
 }
 
 // CreateUpdate answers POST /v1/cats/{cat_id}/updates: records a new
@@ -490,7 +503,7 @@ func (h *CatsHandler) CreateUpdate(w http.ResponseWriter, r *http.Request) {
 
 	user := UserFromContext(r.Context())
 	device := DeviceFromContext(r.Context())
-	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, device.DeviceID, idempotencyKey, req.Statuses, req.Comment)
+	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, device.DeviceID, idempotencyKey, req.Statuses, req.NeedsHelp, req.Comment)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return
@@ -537,9 +550,14 @@ func (h *CatsHandler) CreateNeedsHelp(w http.ResponseWriter, r *http.Request) {
 // (issue #80). DisallowUnknownFields rejects any client-supplied kind,
 // author, created_at, or deleted_at — none of those are ever alterable
 // through this path, mirroring createUpdateRequest's own guarantee.
+// NeedsHelp (issue #101) is a three-state field: absent leaves the row's
+// help mark untouched (a 0.1 client's PATCH never carries it), false
+// removes the mark within the same 10-minute window, and true is rejected
+// outright — help is only ever marked at creation, never added by an edit.
 type correctUpdateRequest struct {
-	Statuses []string `json:"statuses"`
-	Comment  *string  `json:"comment"`
+	Statuses  []string `json:"statuses"`
+	NeedsHelp *bool    `json:"needs_help"`
+	Comment   *string  `json:"comment"`
 }
 
 // CorrectUpdate answers PATCH /v1/cats/{cat_id}/updates/{update_id}: the
@@ -556,8 +574,14 @@ func (h *CatsHandler) CorrectUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.NeedsHelp != nil && *req.NeedsHelp {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "needs_help can only be cleared"})
+		return
+	}
+	clearNeedsHelp := req.NeedsHelp != nil && !*req.NeedsHelp
+
 	user := UserFromContext(r.Context())
-	update, err := h.cats.CorrectOwnUpdate(r.Context(), chi.URLParam(r, "cat_id"), chi.URLParam(r, "update_id"), user.UserID, req.Statuses, req.Comment)
+	update, err := h.cats.CorrectOwnUpdate(r.Context(), chi.URLParam(r, "cat_id"), chi.URLParam(r, "update_id"), user.UserID, req.Statuses, clearNeedsHelp, req.Comment)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return
@@ -593,6 +617,8 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid statuses"})
 	case errors.Is(err, service.ErrInvalidNeedsHelpCategory):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid needs-help category"})
+	case errors.Is(err, service.ErrNoteTooLong):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "needs-help note too long"})
 	case errors.Is(err, service.ErrInvalidArea):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid area"})
 	case errors.Is(err, service.ErrInvalidDiscoverFilter):

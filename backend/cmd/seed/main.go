@@ -180,10 +180,14 @@ func run() error {
 	for _, n := range seedNeedsHelp {
 		createdAt := now.Add(-n.createdAgo)
 		update, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
-			ID:                 pgtype.UUID{Bytes: uuid.MustParse(n.id), Valid: true},
-			CatID:              pgtype.UUID{Bytes: uuid.MustParse(n.catID), Valid: true},
+			ID:    pgtype.UUID{Bytes: uuid.MustParse(n.id), Valid: true},
+			CatID: pgtype.UUID{Bytes: uuid.MustParse(n.catID), Valid: true},
+			// seeded in the legacy pre-#101 shape on purpose (kind subtype +
+			// category + flag): this is exactly what a migrated 0.1 row looks
+			// like, so the seed keeps exercising the compat read paths.
 			Kind:               "needs_help",
 			CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
+			NeedsHelp:          true,
 			NeedsHelpCategory:  pgtype.Text{String: n.category, Valid: true},
 			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: service.NeedsHelpExpiresAt(createdAt), Valid: true},
 		})

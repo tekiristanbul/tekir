@@ -40,6 +40,7 @@ func createNeedsHelpUpdate(t *testing.T, ctx context.Context, store *repository.
 		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		CatID:              catID,
 		Kind:               "needs_help",
+		NeedsHelp:          true,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
 		NeedsHelpCategory:  pgtype.Text{String: category, Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
@@ -301,6 +302,7 @@ func TestStore_CreateUpdate_InvalidNeedsHelpCategoryRejected(t *testing.T) {
 		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		CatID:              id,
 		Kind:               "needs_help",
+		NeedsHelp:          true,
 		CreatedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		NeedsHelpCategory:  pgtype.Text{String: "not_a_real_category", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(72 * time.Hour), Valid: true},
@@ -333,16 +335,32 @@ func TestStore_CreateUpdate_NeedsHelpRequiresCategoryAndExpiry(t *testing.T) {
 
 	id := upsertTestCat(t, ctx, store, "incomplete needs-help")
 
-	t.Run("missing category", func(t *testing.T) {
+	t.Run("category-less flag row is the combined model, valid", func(t *testing.T) {
+		// issue #101: a help mark with no category is exactly what the
+		// combined flag model writes — the old "needs_help requires a
+		// category" invariant is retired with the category vocabulary.
+		if _, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
+			ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			CatID:              id,
+			Kind:               "ordinary",
+			NeedsHelp:          true,
+			CreatedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(72 * time.Hour), Valid: true},
+		}); err != nil {
+			t.Fatalf("expected a category-less help mark to be valid, got %v", err)
+		}
+	})
+
+	t.Run("expiry without flag", func(t *testing.T) {
 		_, err := store.CreateUpdate(ctx, repository.CreateUpdateParams{
 			ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 			CatID:              id,
-			Kind:               "needs_help",
+			Kind:               "ordinary",
 			CreatedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			NeedsHelpExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(72 * time.Hour), Valid: true},
 		})
 		if !isCheckViolation(err) {
-			t.Fatalf("expected a check-constraint violation for a needs-help update missing its category, got %v", err)
+			t.Fatalf("expected a check-constraint violation for an expiry without the flag, got %v", err)
 		}
 	})
 
@@ -351,6 +369,7 @@ func TestStore_CreateUpdate_NeedsHelpRequiresCategoryAndExpiry(t *testing.T) {
 			ID:                pgtype.UUID{Bytes: uuid.New(), Valid: true},
 			CatID:             id,
 			Kind:              "needs_help",
+			NeedsHelp:         true,
 			CreatedAt:         pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			NeedsHelpCategory: pgtype.Text{String: "trapped", Valid: true},
 		})
@@ -1057,6 +1076,7 @@ func TestStore_CorrectOwnUpdate_ExactBoundary_StillWithinWindow(t *testing.T) {
 		Comment:      pgtype.Text{String: "at the boundary", Valid: true},
 		UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 		WindowStart:  pgtype.Timestamptz{Time: windowStart, Valid: true},
+		Statuses:     []string{"seen"},
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expected the exact 10-minute boundary to be expired, got err=%v", err)
@@ -1072,6 +1092,7 @@ func TestStore_CorrectOwnUpdate_ExactBoundary_StillWithinWindow(t *testing.T) {
 		Comment:      pgtype.Text{String: "just before the boundary", Valid: true},
 		UpdatedAt:    pgtype.Timestamptz{Time: nowJustBefore, Valid: true},
 		WindowStart:  pgtype.Timestamptz{Time: windowStartJustBefore, Valid: true},
+		Statuses:     []string{"seen"},
 	}); err != nil {
 		t.Fatalf("expected success one nanosecond before the boundary, got %v", err)
 	}
@@ -1092,6 +1113,7 @@ func TestStore_CorrectOwnUpdate_NeedsHelpKindAffectsNoRows(t *testing.T) {
 		ID:                 updateID,
 		CatID:              catID,
 		Kind:               "needs_help",
+		NeedsHelp:          true,
 		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
 		NeedsHelpCategory:  pgtype.Text{String: "trapped", Valid: true},
 		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},

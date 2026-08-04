@@ -39,15 +39,16 @@ select
   c.area_label,
   c.last_update_at,
   nh.needs_help_category,
+  nh.comment as needs_help_comment,
   nh.created_at as needs_help_created_at,
   nh.needs_help_expires_at
 from follows f
 join cats c on c.id = f.cat_id
 left join media m on m.id = c.primary_photo_id
 left join lateral (
-  select u.needs_help_category, u.created_at, u.needs_help_expires_at
+  select u.needs_help_category, u.comment, u.created_at, u.needs_help_expires_at
   from updates u
-  where u.cat_id = c.id and u.kind = 'needs_help'
+  where u.cat_id = c.id and u.needs_help and u.deleted_at is null
   order by u.created_at desc, u.seq desc
   limit 1
 ) nh on true

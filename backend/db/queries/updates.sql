@@ -19,13 +19,14 @@
 -- else does. idempotency_key (issue #80) is nullable and only ever set on
 -- the ordinary-update write path (mirrors cats.idempotency_key/
 -- media.idempotency_key exactly) — needs-help and seed rows leave it null.
-insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id, author_user_id, idempotency_key)
+insert into updates (id, cat_id, kind, comment, created_at, needs_help, needs_help_category, needs_help_expires_at, author_device_id, author_user_id, idempotency_key)
 values (
   sqlc.arg(id),
   sqlc.arg(cat_id),
   sqlc.arg(kind),
   sqlc.arg(comment),
   sqlc.arg(created_at),
+  sqlc.arg(needs_help),
   sqlc.arg(needs_help_category),
   sqlc.arg(needs_help_expires_at),
   sqlc.arg(author_device_id),
@@ -36,6 +37,7 @@ on conflict (id) do update set
   kind = excluded.kind,
   comment = excluded.comment,
   created_at = excluded.created_at,
+  needs_help = excluded.needs_help,
   needs_help_category = excluded.needs_help_category,
   needs_help_expires_at = excluded.needs_help_expires_at,
   author_device_id = excluded.author_device_id,
@@ -55,6 +57,8 @@ select
   u.cat_id,
   u.comment,
   u.created_at,
+  u.needs_help,
+  u.needs_help_expires_at,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
@@ -95,6 +99,7 @@ select
   u.created_at,
   u.seq,
   u.author_user_id,
+  u.needs_help,
   u.needs_help_category,
   u.needs_help_expires_at,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
@@ -116,8 +121,9 @@ limit sqlc.arg(row_limit)::int;
 -- update within the fixed 10-minute window (docs/product/updates.md). The
 -- where clause is the entire authorization + concurrency + expiry check in
 -- one atomic statement: author_user_id must match the caller (never
--- trusted from the request), kind must be 'ordinary' (needs-help has its
--- own fixed 72h lifecycle, not a correctable resource here), deleted_at
+-- trusted from the request), kind must be 'ordinary' (a pre-migration
+-- legacy needs-help subtype row is still not a correctable resource; every
+-- post-#101 row is kind = 'ordinary', help-carrying or not), deleted_at
 -- must still be null (a stale/duplicate retry against an already-deleted
 -- row never resurrects it), and created_at must still be after
 -- window_start (computed by the service against its own injected clock,
@@ -126,15 +132,30 @@ limit sqlc.arg(row_limit)::int;
 -- disambiguates which via GetUpdateForCorrectionCheck below only when that
 -- happens. author_user_id/author_device_id/created_at are never written
 -- here, so a correction can never rewrite authorship or backdate a row.
+--
+-- issue #101: clear_needs_help removes the author's own help mark within
+-- the same window ("işareti koyan kullanıcı 10 dakika içinde kaldırabilir"
+-- — removal only; a correction can never ADD the flag, which would need a
+-- retroactive notification fan-out). Clearing nulls the expiry and any
+-- compat-recorded category so updates_needs_help_fields_ck holds. The
+-- final where predicate enforces the create-invariant on the post-state
+-- (at least one status, or the help flag still set): a patch that would
+-- leave a status-less, flag-less husk affects zero rows and the service
+-- reports it as invalid content — the author deletes the update instead.
 update updates
-set comment = sqlc.arg(comment), updated_at = sqlc.arg(updated_at)
+set comment = sqlc.arg(comment),
+    updated_at = sqlc.arg(updated_at),
+    needs_help = needs_help and not sqlc.arg(clear_needs_help)::bool,
+    needs_help_expires_at = case when sqlc.arg(clear_needs_help)::bool then null else needs_help_expires_at end,
+    needs_help_category = case when sqlc.arg(clear_needs_help)::bool then null else needs_help_category end
 where id = sqlc.arg(id)
   and cat_id = sqlc.arg(cat_id)
   and author_user_id = sqlc.arg(author_user_id)
   and kind = 'ordinary'
   and deleted_at is null
   and created_at > sqlc.arg(window_start)::timestamptz
-returning id, created_at, updated_at;
+  and (sqlc.arg(has_statuses)::bool or (needs_help and not sqlc.arg(clear_needs_help)::bool))
+returning id, created_at, updated_at, needs_help, needs_help_expires_at;
 
 -- name: DeleteOwnUpdate :one
 -- same authorization/concurrency/expiry shape as CorrectOrdinaryUpdate
@@ -153,11 +174,13 @@ returning id, deleted_at;
 -- name: GetUpdateForCorrectionCheck :one
 -- called only when CorrectOrdinaryUpdate/DeleteOwnUpdate affects 0 rows, to
 -- disambiguate why: wrong cat_id/unknown id (404), someone else's update
--- (403), a needs-help row (404 — not a correctable resource at all), an
--- already-deleted row (treated as an idempotent-success retry by the
--- service, not an error), or a window that has closed (410). See
--- docs/architecture/api.md's error taxonomy for this endpoint.
-select id, cat_id, author_user_id, kind, created_at, deleted_at
+-- (403), a legacy needs-help subtype row (404 — not a correctable resource
+-- at all), an already-deleted row (treated as an idempotent-success retry
+-- by the service, not an error), a window that has closed (410), or — for
+-- a correction only (issue #101) — a request whose post-state would carry
+-- neither a status nor the help flag (400; needs_help is selected so the
+-- service can tell this apart from the other zero-rows causes).
+select id, cat_id, author_user_id, kind, needs_help, created_at, deleted_at
 from updates
 where id = sqlc.arg(id) and cat_id = sqlc.arg(cat_id);
 

@@ -39,14 +39,15 @@ select
   c.area_label,
   c.last_update_at,
   nh.needs_help_category,
+  nh.comment as needs_help_comment,
   nh.created_at as needs_help_created_at,
   nh.needs_help_expires_at
 from cats c
 left join media m on m.id = c.primary_photo_id
 left join lateral (
-  select u.needs_help_category, u.created_at, u.needs_help_expires_at
+  select u.needs_help_category, u.comment, u.created_at, u.needs_help_expires_at
   from updates u
-  where u.cat_id = c.id and u.kind = 'needs_help'
+  where u.cat_id = c.id and u.needs_help and u.deleted_at is null
   order by u.created_at desc, u.seq desc
   limit 1
 ) nh on true
@@ -74,14 +75,15 @@ select
   c.created_at,
   c.last_update_at,
   nh.needs_help_category,
+  nh.comment as needs_help_comment,
   nh.created_at as needs_help_created_at,
   nh.needs_help_expires_at
 from cats c
 left join media m on m.id = c.primary_photo_id
 left join lateral (
-  select u.needs_help_category, u.created_at, u.needs_help_expires_at
+  select u.needs_help_category, u.comment, u.created_at, u.needs_help_expires_at
   from updates u
-  where u.cat_id = c.id and u.kind = 'needs_help'
+  where u.cat_id = c.id and u.needs_help and u.deleted_at is null
   order by u.created_at desc, u.seq desc
   limit 1
 ) nh on true
@@ -191,21 +193,22 @@ with candidates as (
     c.area_label,
     c.last_update_at,
     nh.needs_help_category,
+    nh.comment as needs_help_comment,
     nh.created_at as needs_help_created_at,
     nh.needs_help_expires_at,
     st_distance(c.area, st_setsrid(st_makepoint(sqlc.arg(lng)::float8, sqlc.arg(lat)::float8), 4326)::geography)::float8 as distance_m
   from cats c
   left join media m on m.id = c.primary_photo_id
   left join lateral (
-    select u.needs_help_category, u.created_at, u.needs_help_expires_at
+    select u.needs_help_category, u.comment, u.created_at, u.needs_help_expires_at
     from updates u
-    where u.cat_id = c.id and u.kind = 'needs_help'
+    where u.cat_id = c.id and u.needs_help and u.deleted_at is null
     order by u.created_at desc, u.seq desc
     limit 1
   ) nh on true
   where c.status = 'active'
 )
-select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_created_at, needs_help_expires_at, distance_m
+select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
 where sqlc.narg(after_distance_m)::float8 is null
   or distance_m > sqlc.narg(after_distance_m)::float8
@@ -236,21 +239,22 @@ with candidates as (
     c.area_label,
     c.last_update_at,
     nh.needs_help_category,
+    nh.comment as needs_help_comment,
     nh.created_at as needs_help_created_at,
     nh.needs_help_expires_at,
     st_distance(c.area, st_setsrid(st_makepoint(sqlc.arg(lng)::float8, sqlc.arg(lat)::float8), 4326)::geography)::float8 as distance_m
   from cats c
   left join media m on m.id = c.primary_photo_id
   left join lateral (
-    select u.needs_help_category, u.created_at, u.needs_help_expires_at
+    select u.needs_help_category, u.comment, u.created_at, u.needs_help_expires_at
     from updates u
-    where u.cat_id = c.id and u.kind = 'needs_help'
+    where u.cat_id = c.id and u.needs_help and u.deleted_at is null
     order by u.created_at desc, u.seq desc
     limit 1
   ) nh on true
   where c.status = 'active'
 )
-select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_created_at, needs_help_expires_at, distance_m
+select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
 where needs_help_expires_at is not null
   and needs_help_expires_at > sqlc.arg(now)::timestamptz

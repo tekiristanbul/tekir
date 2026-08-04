@@ -31,37 +31,47 @@ func (q *Queries) BackfillUpdatesAuthorUserID(ctx context.Context, arg BackfillU
 
 const correctOrdinaryUpdate = `-- name: CorrectOrdinaryUpdate :one
 update updates
-set comment = $1, updated_at = $2
-where id = $3
-  and cat_id = $4
-  and author_user_id = $5
+set comment = $1,
+    updated_at = $2,
+    needs_help = needs_help and not $3::bool,
+    needs_help_expires_at = case when $3::bool then null else needs_help_expires_at end,
+    needs_help_category = case when $3::bool then null else needs_help_category end
+where id = $4
+  and cat_id = $5
+  and author_user_id = $6
   and kind = 'ordinary'
   and deleted_at is null
-  and created_at > $6::timestamptz
-returning id, created_at, updated_at
+  and created_at > $7::timestamptz
+  and ($8::bool or (needs_help and not $3::bool))
+returning id, created_at, updated_at, needs_help, needs_help_expires_at
 `
 
 type CorrectOrdinaryUpdateParams struct {
-	Comment      pgtype.Text        `json:"comment"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	ID           pgtype.UUID        `json:"id"`
-	CatID        pgtype.UUID        `json:"cat_id"`
-	AuthorUserID pgtype.UUID        `json:"author_user_id"`
-	WindowStart  pgtype.Timestamptz `json:"window_start"`
+	Comment        pgtype.Text        `json:"comment"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ClearNeedsHelp bool               `json:"clear_needs_help"`
+	ID             pgtype.UUID        `json:"id"`
+	CatID          pgtype.UUID        `json:"cat_id"`
+	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
+	WindowStart    pgtype.Timestamptz `json:"window_start"`
+	HasStatuses    bool               `json:"has_statuses"`
 }
 
 type CorrectOrdinaryUpdateRow struct {
-	ID        pgtype.UUID        `json:"id"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID                 pgtype.UUID        `json:"id"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	NeedsHelp          bool               `json:"needs_help"`
+	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 }
 
 // issue #80: server-authoritative correction of the caller's own ordinary
 // update within the fixed 10-minute window (docs/product/updates.md). The
 // where clause is the entire authorization + concurrency + expiry check in
 // one atomic statement: author_user_id must match the caller (never
-// trusted from the request), kind must be 'ordinary' (needs-help has its
-// own fixed 72h lifecycle, not a correctable resource here), deleted_at
+// trusted from the request), kind must be 'ordinary' (a pre-migration
+// legacy needs-help subtype row is still not a correctable resource; every
+// post-#101 row is kind = 'ordinary', help-carrying or not), deleted_at
 // must still be null (a stale/duplicate retry against an already-deleted
 // row never resurrects it), and created_at must still be after
 // window_start (computed by the service against its own injected clock,
@@ -70,22 +80,40 @@ type CorrectOrdinaryUpdateRow struct {
 // disambiguates which via GetUpdateForCorrectionCheck below only when that
 // happens. author_user_id/author_device_id/created_at are never written
 // here, so a correction can never rewrite authorship or backdate a row.
+//
+// issue #101: clear_needs_help removes the author's own help mark within
+// the same window ("işareti koyan kullanıcı 10 dakika içinde kaldırabilir"
+// — removal only; a correction can never ADD the flag, which would need a
+// retroactive notification fan-out). Clearing nulls the expiry and any
+// compat-recorded category so updates_needs_help_fields_ck holds. The
+// final where predicate enforces the create-invariant on the post-state
+// (at least one status, or the help flag still set): a patch that would
+// leave a status-less, flag-less husk affects zero rows and the service
+// reports it as invalid content — the author deletes the update instead.
 func (q *Queries) CorrectOrdinaryUpdate(ctx context.Context, arg CorrectOrdinaryUpdateParams) (CorrectOrdinaryUpdateRow, error) {
 	row := q.db.QueryRow(ctx, correctOrdinaryUpdate,
 		arg.Comment,
 		arg.UpdatedAt,
+		arg.ClearNeedsHelp,
 		arg.ID,
 		arg.CatID,
 		arg.AuthorUserID,
 		arg.WindowStart,
+		arg.HasStatuses,
 	)
 	var i CorrectOrdinaryUpdateRow
-	err := row.Scan(&i.ID, &i.CreatedAt, &i.UpdatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.NeedsHelp,
+		&i.NeedsHelpExpiresAt,
+	)
 	return i, err
 }
 
 const createUpdate = `-- name: CreateUpdate :one
-insert into updates (id, cat_id, kind, comment, created_at, needs_help_category, needs_help_expires_at, author_device_id, author_user_id, idempotency_key)
+insert into updates (id, cat_id, kind, comment, created_at, needs_help, needs_help_category, needs_help_expires_at, author_device_id, author_user_id, idempotency_key)
 values (
   $1,
   $2,
@@ -96,12 +124,14 @@ values (
   $7,
   $8,
   $9,
-  $10
+  $10,
+  $11
 )
 on conflict (id) do update set
   kind = excluded.kind,
   comment = excluded.comment,
   created_at = excluded.created_at,
+  needs_help = excluded.needs_help,
   needs_help_category = excluded.needs_help_category,
   needs_help_expires_at = excluded.needs_help_expires_at,
   author_device_id = excluded.author_device_id,
@@ -116,6 +146,7 @@ type CreateUpdateParams struct {
 	Kind               string             `json:"kind"`
 	Comment            pgtype.Text        `json:"comment"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	NeedsHelp          bool               `json:"needs_help"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	AuthorDeviceID     pgtype.UUID        `json:"author_device_id"`
@@ -155,6 +186,7 @@ func (q *Queries) CreateUpdate(ctx context.Context, arg CreateUpdateParams) (Cre
 		arg.Kind,
 		arg.Comment,
 		arg.CreatedAt,
+		arg.NeedsHelp,
 		arg.NeedsHelpCategory,
 		arg.NeedsHelpExpiresAt,
 		arg.AuthorDeviceID,
@@ -229,6 +261,8 @@ select
   u.cat_id,
   u.comment,
   u.created_at,
+  u.needs_help,
+  u.needs_help_expires_at,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
@@ -244,11 +278,13 @@ type GetUpdateByIdempotencyKeyParams struct {
 }
 
 type GetUpdateByIdempotencyKeyRow struct {
-	ID        pgtype.UUID        `json:"id"`
-	CatID     pgtype.UUID        `json:"cat_id"`
-	Comment   pgtype.Text        `json:"comment"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	Statuses  []string           `json:"statuses"`
+	ID                 pgtype.UUID        `json:"id"`
+	CatID              pgtype.UUID        `json:"cat_id"`
+	Comment            pgtype.Text        `json:"comment"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	NeedsHelp          bool               `json:"needs_help"`
+	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
+	Statuses           []string           `json:"statuses"`
 }
 
 // issue #80: resolves a retried POST /v1/cats/{cat_id}/updates (same
@@ -265,13 +301,15 @@ func (q *Queries) GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateBy
 		&i.CatID,
 		&i.Comment,
 		&i.CreatedAt,
+		&i.NeedsHelp,
+		&i.NeedsHelpExpiresAt,
 		&i.Statuses,
 	)
 	return i, err
 }
 
 const getUpdateForCorrectionCheck = `-- name: GetUpdateForCorrectionCheck :one
-select id, cat_id, author_user_id, kind, created_at, deleted_at
+select id, cat_id, author_user_id, kind, needs_help, created_at, deleted_at
 from updates
 where id = $1 and cat_id = $2
 `
@@ -286,16 +324,19 @@ type GetUpdateForCorrectionCheckRow struct {
 	CatID        pgtype.UUID        `json:"cat_id"`
 	AuthorUserID pgtype.UUID        `json:"author_user_id"`
 	Kind         string             `json:"kind"`
+	NeedsHelp    bool               `json:"needs_help"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
 }
 
 // called only when CorrectOrdinaryUpdate/DeleteOwnUpdate affects 0 rows, to
 // disambiguate why: wrong cat_id/unknown id (404), someone else's update
-// (403), a needs-help row (404 — not a correctable resource at all), an
-// already-deleted row (treated as an idempotent-success retry by the
-// service, not an error), or a window that has closed (410). See
-// docs/architecture/api.md's error taxonomy for this endpoint.
+// (403), a legacy needs-help subtype row (404 — not a correctable resource
+// at all), an already-deleted row (treated as an idempotent-success retry
+// by the service, not an error), a window that has closed (410), or — for
+// a correction only (issue #101) — a request whose post-state would carry
+// neither a status nor the help flag (400; needs_help is selected so the
+// service can tell this apart from the other zero-rows causes).
 func (q *Queries) GetUpdateForCorrectionCheck(ctx context.Context, arg GetUpdateForCorrectionCheckParams) (GetUpdateForCorrectionCheckRow, error) {
 	row := q.db.QueryRow(ctx, getUpdateForCorrectionCheck, arg.ID, arg.CatID)
 	var i GetUpdateForCorrectionCheckRow
@@ -304,6 +345,7 @@ func (q *Queries) GetUpdateForCorrectionCheck(ctx context.Context, arg GetUpdate
 		&i.CatID,
 		&i.AuthorUserID,
 		&i.Kind,
+		&i.NeedsHelp,
 		&i.CreatedAt,
 		&i.DeletedAt,
 	)
@@ -318,6 +360,7 @@ select
   u.created_at,
   u.seq,
   u.author_user_id,
+  u.needs_help,
   u.needs_help_category,
   u.needs_help_expires_at,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
@@ -349,6 +392,7 @@ type ListCatUpdatesRow struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	Seq                pgtype.Int8        `json:"seq"`
 	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	NeedsHelp          bool               `json:"needs_help"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	Statuses           []string           `json:"statuses"`
@@ -387,6 +431,7 @@ func (q *Queries) ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) 
 			&i.CreatedAt,
 			&i.Seq,
 			&i.AuthorUserID,
+			&i.NeedsHelp,
 			&i.NeedsHelpCategory,
 			&i.NeedsHelpExpiresAt,
 			&i.Statuses,

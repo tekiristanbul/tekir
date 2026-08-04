@@ -143,7 +143,7 @@ func (s *FollowsService) ListFollows(ctx context.Context, userID string) ([]CatM
 			Lat:          r.Lat,
 			Lng:          r.Lng,
 			AreaLabel:    textPtr(r.AreaLabel),
-			ActiveAlert:  deriveActiveAlert(s.clock, r.NeedsHelpCategory, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt),
+			ActiveAlert:  deriveActiveAlert(s.clock, r.NeedsHelpCategory, r.NeedsHelpComment, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt),
 			LastUpdateAt: timestamptzPtr(r.LastUpdateAt),
 		})
 	}

@@ -88,7 +88,16 @@ type contributionEvent struct {
 	Seq       int64 // tie-breaker among updates sharing a timestamp; 0 for cat_added
 	// Statuses is only ever populated for Kind == contributionOrdinary.
 	Statuses []string
-	// NeedsHelpCategory is only ever populated for Kind == contributionNeedsHelp.
+	// NeedsHelp (issue #101) marks a combined-model help mark on a
+	// Kind == contributionOrdinary event (a post-#101 row); always true for
+	// Kind == contributionNeedsHelp (a legacy pre-#101 subtype row). It
+	// counts toward the profile's help total and flips the recent-
+	// contributions display type to "help", while the event's statuses (if
+	// any) still count toward the status badges — one row, both aspects.
+	NeedsHelp bool
+	// NeedsHelpCategory is the stored legacy category, when the row has one
+	// (a pre-#101 row or a compat-endpoint write); empty for a combined-
+	// model mark, which serves the fixed compat pair on display instead.
 	NeedsHelpCategory string
 }
 

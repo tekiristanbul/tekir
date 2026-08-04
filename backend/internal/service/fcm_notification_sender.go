@@ -194,11 +194,14 @@ func (f *FCMNotificationSender) Send(ctx context.Context, msg PushMessage) error
 	// data mirrors what the in-app notification record carries, so the tap
 	// handler can deep-link to the same cat detail the notifications screen
 	// would (issue #84). Only the recipient's own device ever sees this.
+	// The category key was dropped by issue #101 (the #100 contract retires
+	// the category vocabulary; the 0.1 push handler never read it) — the
+	// note is deliberately not included either: the payload stays minimal
+	// and free of user-generated content.
 	body.Message.Data = map[string]string{
 		"type":      "needs_help",
 		"cat_id":    msg.CatID,
 		"update_id": msg.UpdateID,
-		"category":  msg.Category,
 	}
 	// high priority: a needs-help alert is the one push this product sends
 	// (docs/product/notifications.md) and it is time-sensitive by nature.
