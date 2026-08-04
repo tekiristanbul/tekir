@@ -161,13 +161,14 @@ func TestStore_CorrectOwnUpdate_ClearNeedsHelp(t *testing.T) {
 	markID := createHelpMark(t, ctx, store, catID, userID, createdAt, []string{"seen"})
 
 	row, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
-		ID:             markID,
-		CatID:          catID,
-		AuthorUserID:   userID,
-		UpdatedAt:      pgtype.Timestamptz{Time: createdAt.Add(time.Minute), Valid: true},
-		WindowStart:    pgtype.Timestamptz{Time: createdAt.Add(time.Minute).Add(-10 * time.Minute), Valid: true},
-		Statuses:       []string{"seen"},
-		ClearNeedsHelp: true,
+		ID:              markID,
+		CatID:           catID,
+		AuthorUserID:    userID,
+		UpdatedAt:       pgtype.Timestamptz{Time: createdAt.Add(time.Minute), Valid: true},
+		WindowStart:     pgtype.Timestamptz{Time: createdAt.Add(time.Minute).Add(-10 * time.Minute), Valid: true},
+		ReplaceStatuses: true,
+		Statuses:        []string{"seen"},
+		ClearNeedsHelp:  true,
 	})
 	if err != nil {
 		t.Fatalf("clear help mark: %v", err)
@@ -211,10 +212,89 @@ func TestStore_CorrectOwnUpdate_ClearNeedsHelp(t *testing.T) {
 	}
 }
 
+// TestStore_CorrectOwnUpdate_PartialPatchPreserves (issue #105) proves the
+// presence-aware statement: a patch carrying only the clear leaves the
+// combined update's statuses and comment untouched (and returns them so
+// the response can echo them), and a comment-only patch likewise preserves
+// the statuses.
+func TestStore_CorrectOwnUpdate_PartialPatchPreserves(t *testing.T) {
+	store := newTestStore(t)
+	pool := rawPool(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "partial patch cat")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Now()
+	note := "çeşmenin orada, su kabı boş"
+	markID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:                 markID,
+		CatID:              catID,
+		AuthorUserID:       userID,
+		Comment:            pgtype.Text{String: note, Valid: true},
+		CreatedAt:          pgtype.Timestamptz{Time: createdAt, Valid: true},
+		Statuses:           []string{"seen", "water_provided"},
+		NeedsHelp:          true,
+		NeedsHelpExpiresAt: pgtype.Timestamptz{Time: createdAt.Add(72 * time.Hour), Valid: true},
+	}); err != nil {
+		t.Fatalf("create combined update: %v", err)
+	}
+
+	// clear-only patch: no ReplaceStatuses, no SetComment.
+	row, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
+		ID:             markID,
+		CatID:          catID,
+		AuthorUserID:   userID,
+		UpdatedAt:      pgtype.Timestamptz{Time: createdAt.Add(time.Minute), Valid: true},
+		WindowStart:    pgtype.Timestamptz{Time: createdAt.Add(-time.Minute), Valid: true},
+		ClearNeedsHelp: true,
+	})
+	if err != nil {
+		t.Fatalf("clear-only patch: %v", err)
+	}
+	if row.NeedsHelp {
+		t.Error("expected the flag cleared")
+	}
+	if len(row.Statuses) != 2 || row.Statuses[0] != "seen" || row.Statuses[1] != "water_provided" {
+		t.Errorf("expected preserved statuses [seen water_provided] returned, got %v", row.Statuses)
+	}
+	if !row.Comment.Valid || row.Comment.String != note {
+		t.Errorf("expected preserved comment returned, got %v", row.Comment)
+	}
+	var statusCount int
+	if err := pool.QueryRow(ctx, "select count(*) from update_statuses where update_id = $1", markID).Scan(&statusCount); err != nil {
+		t.Fatalf("count statuses: %v", err)
+	}
+	if statusCount != 2 {
+		t.Errorf("expected both status rows to survive the clear-only patch, got %d", statusCount)
+	}
+
+	// comment-only patch: statuses still untouched.
+	newNote := "düzeltildi"
+	row, err = store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
+		ID:           markID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		SetComment:   true,
+		Comment:      pgtype.Text{String: newNote, Valid: true},
+		UpdatedAt:    pgtype.Timestamptz{Time: createdAt.Add(2 * time.Minute), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: createdAt.Add(-time.Minute), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("comment-only patch: %v", err)
+	}
+	if !row.Comment.Valid || row.Comment.String != newNote {
+		t.Errorf("expected the replaced comment, got %v", row.Comment)
+	}
+	if len(row.Statuses) != 2 {
+		t.Errorf("expected statuses preserved by a comment-only patch, got %v", row.Statuses)
+	}
+}
+
 // TestStore_ClaimNotificationOutboxBatch_SuppressionSemantics proves the
-// re-marking decision: a mark made while another mark's 72h window was
-// still open reports needs_help_already_active; one made after every
-// earlier mark expired does not.
+// re-marking decision through the enqueue-frozen eligibility flag (issue
+// #105): a mark made while another mark's 72h window was still open is
+// ineligible; one made after every earlier mark expired is eligible.
 func TestStore_ClaimNotificationOutboxBatch_SuppressionSemantics(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -241,13 +321,13 @@ func TestStore_ClaimNotificationOutboxBatch_SuppressionSemantics(t *testing.T) {
 		claimed[r.UpdateID] = r
 	}
 
-	if row, ok := claimed[firstID]; !ok || !row.NeedsHelp || row.NeedsHelpAlreadyActive {
+	if row, ok := claimed[firstID]; !ok || !row.NeedsHelp || !row.NeedsHelpEligible {
 		t.Errorf("first mark: expected fan-out (no suppression), got %+v", row)
 	}
-	if row, ok := claimed[secondID]; !ok || !row.NeedsHelpAlreadyActive {
+	if row, ok := claimed[secondID]; !ok || row.NeedsHelpEligible {
 		t.Errorf("second mark: expected suppression while the first was active, got %+v", row)
 	}
-	if row, ok := claimed[thirdID]; !ok || row.NeedsHelpAlreadyActive {
+	if row, ok := claimed[thirdID]; !ok || !row.NeedsHelpEligible {
 		t.Errorf("third mark: expected fan-out after earlier marks expired, got %+v", row)
 	}
 }

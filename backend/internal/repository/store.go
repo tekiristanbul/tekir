@@ -166,10 +166,7 @@ func (s *Store) CreateOrdinaryUpdate(ctx context.Context, arg CreateOrdinaryUpda
 		}); err != nil {
 			return err
 		}
-		return q.CreateNotificationOutbox(ctx, CreateNotificationOutboxParams{
-			UpdateID: row.ID,
-			CatID:    arg.CatID,
-		})
+		return q.CreateNotificationOutbox(ctx, row.ID)
 	})
 	return row, err
 }
@@ -183,15 +180,32 @@ type CorrectOwnUpdateParams struct {
 	ID           pgtype.UUID
 	CatID        pgtype.UUID
 	AuthorUserID pgtype.UUID
-	Comment      pgtype.Text
-	UpdatedAt    pgtype.Timestamptz
-	WindowStart  pgtype.Timestamptz
-	Statuses     []string
+	// SetComment/Comment and ReplaceStatuses/Statuses are presence-aware
+	// (issue #105): a PATCH body that omitted the field leaves the row's
+	// existing value untouched — SetComment/ReplaceStatuses false means
+	// Comment/Statuses carry no meaning and nothing is written.
+	SetComment      bool
+	Comment         pgtype.Text
+	UpdatedAt       pgtype.Timestamptz
+	WindowStart     pgtype.Timestamptz
+	ReplaceStatuses bool
+	Statuses        []string
 	// ClearNeedsHelp (issue #101) removes the row's help mark inside the
 	// same conditional statement — see CorrectOrdinaryUpdate in
 	// db/queries/updates.sql, including its post-state invariant (at least
-	// one status, or the flag survives), which is fed from Statuses below.
+	// one status, or the flag survives), which is fed from Statuses when
+	// ReplaceStatuses is set and from the row's existing update_statuses
+	// otherwise.
 	ClearNeedsHelp bool
+}
+
+// CorrectOwnUpdateRow is CorrectOrdinaryUpdateRow plus the statuses the
+// corrected row actually carries after the write — the replacement set
+// when one was supplied, the preserved existing set otherwise, read
+// inside the same transaction either way.
+type CorrectOwnUpdateRow struct {
+	CorrectOrdinaryUpdateRow
+	Statuses []string
 }
 
 // CorrectOwnUpdate applies an in-window correction to the caller's own
@@ -201,25 +215,39 @@ type CorrectOwnUpdateParams struct {
 // caller (service.CatsService.CorrectOwnUpdate) that it affected zero rows
 // and must disambiguate why via GetUpdateForCorrectionCheck. Statuses are
 // replaced (delete-then-reinsert, mirroring CreateOrdinaryUpdate's own
-// insert loop) only once the conditional update itself succeeds, inside
-// the same transaction.
-func (s *Store) CorrectOwnUpdate(ctx context.Context, arg CorrectOwnUpdateParams) (CorrectOrdinaryUpdateRow, error) {
-	var row CorrectOrdinaryUpdateRow
+// insert loop) only when the request carried a replacement set, only once
+// the conditional update itself succeeds, inside the same transaction;
+// an omitted set is instead read back so the caller can echo what the
+// row still carries (issue #105).
+func (s *Store) CorrectOwnUpdate(ctx context.Context, arg CorrectOwnUpdateParams) (CorrectOwnUpdateRow, error) {
+	var row CorrectOwnUpdateRow
 	err := s.withTx(ctx, func(q *Queries) error {
-		var err error
-		row, err = q.CorrectOrdinaryUpdate(ctx, CorrectOrdinaryUpdateParams{
-			Comment:        arg.Comment,
-			UpdatedAt:      arg.UpdatedAt,
-			ClearNeedsHelp: arg.ClearNeedsHelp,
-			ID:             arg.ID,
-			CatID:          arg.CatID,
-			AuthorUserID:   arg.AuthorUserID,
-			WindowStart:    arg.WindowStart,
-			HasStatuses:    len(arg.Statuses) > 0,
+		updated, err := q.CorrectOrdinaryUpdate(ctx, CorrectOrdinaryUpdateParams{
+			SetComment:      arg.SetComment,
+			Comment:         arg.Comment,
+			UpdatedAt:       arg.UpdatedAt,
+			ClearNeedsHelp:  arg.ClearNeedsHelp,
+			ID:              arg.ID,
+			CatID:           arg.CatID,
+			AuthorUserID:    arg.AuthorUserID,
+			WindowStart:     arg.WindowStart,
+			ReplaceStatuses: arg.ReplaceStatuses,
+			HasStatuses:     len(arg.Statuses) > 0,
 		})
 		if err != nil {
 			return err
 		}
+		row.CorrectOrdinaryUpdateRow = updated
+
+		if !arg.ReplaceStatuses {
+			statuses, err := q.ListUpdateStatuses(ctx, arg.ID)
+			if err != nil {
+				return err
+			}
+			row.Statuses = statuses
+			return nil
+		}
+
 		if err := q.ReplaceUpdateStatuses(ctx, arg.ID); err != nil {
 			return err
 		}
@@ -228,6 +256,7 @@ func (s *Store) CorrectOwnUpdate(ctx context.Context, arg CorrectOwnUpdateParams
 				return err
 			}
 		}
+		row.Statuses = arg.Statuses
 		return nil
 	})
 	return row, err

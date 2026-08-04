@@ -55,7 +55,7 @@ type fakeCatsLister struct {
 	// CreateCatWithMedia call received, mirroring captured above.
 	capturedCreateCat *repository.CreateCatWithMediaParams
 
-	correctRow repository.CorrectOrdinaryUpdateRow
+	correctRow repository.CorrectOwnUpdateRow
 	correctErr error
 	// capturedCorrect mirrors captured above, for CorrectOwnUpdate.
 	capturedCorrect *repository.CorrectOwnUpdateParams
@@ -130,7 +130,7 @@ func (f fakeCatsLister) CreateCatWithMedia(ctx context.Context, arg repository.C
 	return f.createCatWithMediaRow, f.createCatWithMediaErr
 }
 
-func (f fakeCatsLister) CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOrdinaryUpdateRow, error) {
+func (f fakeCatsLister) CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOwnUpdateRow, error) {
 	if f.capturedCorrect != nil {
 		*f.capturedCorrect = arg
 	}
@@ -1213,6 +1213,12 @@ func TestCatsService_ListNearbyDuplicates_InvalidArea(t *testing.T) {
 	}
 }
 
+// statusCorrection builds the presence-aware correction most tests need:
+// an explicit status replacement with no comment or help-flag change.
+func statusCorrection(statuses ...string) UpdateCorrection {
+	return UpdateCorrection{Statuses: &statuses}
+}
+
 func TestCatsService_CorrectOwnUpdate_Success(t *testing.T) {
 	catID := uuid.New()
 	updateID := uuid.New()
@@ -1222,16 +1228,24 @@ func TestCatsService_CorrectOwnUpdate_Success(t *testing.T) {
 
 	var captured repository.CorrectOwnUpdateParams
 	svc := NewCatsService(fakeCatsLister{
-		correctRow: repository.CorrectOrdinaryUpdateRow{
-			ID:        pgtype.UUID{Bytes: updateID, Valid: true},
-			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
-			UpdatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+		correctRow: repository.CorrectOwnUpdateRow{
+			CorrectOrdinaryUpdateRow: repository.CorrectOrdinaryUpdateRow{
+				ID:        pgtype.UUID{Bytes: updateID, Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+				UpdatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+			},
+			Statuses: []string{"fed", "water_provided"},
 		},
 		capturedCorrect: &captured,
 	}, WithClock(func() time.Time { return fixedNow }))
 
 	comment := "düzeltildi"
-	update, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"water_provided", "fed"}, false, &comment)
+	statuses := []string{"water_provided", "fed"}
+	update, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), UpdateCorrection{
+		Statuses:   &statuses,
+		SetComment: true,
+		Comment:    &comment,
+	})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -1252,6 +1266,15 @@ func TestCatsService_CorrectOwnUpdate_Success(t *testing.T) {
 		t.Errorf("expected sorted statuses [fed water_provided], got %v", update.Statuses)
 	}
 
+	if !captured.ReplaceStatuses {
+		t.Error("expected ReplaceStatuses true when the request supplied a status set")
+	}
+	if len(captured.Statuses) != 2 || captured.Statuses[0] != "fed" || captured.Statuses[1] != "water_provided" {
+		t.Errorf("expected repository statuses sorted [fed water_provided], got %v", captured.Statuses)
+	}
+	if !captured.SetComment {
+		t.Error("expected SetComment true when the request supplied a comment")
+	}
 	if uuid.UUID(captured.AuthorUserID.Bytes).String() != userID.String() {
 		t.Errorf("unexpected repository author user id: %v", captured.AuthorUserID)
 	}
@@ -1263,7 +1286,7 @@ func TestCatsService_CorrectOwnUpdate_Success(t *testing.T) {
 
 func TestCatsService_CorrectOwnUpdate_InvalidStatusesNeverReachesStore(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
-	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"not_a_real_status"}, false, nil)
+	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), statusCorrection("not_a_real_status"))
 	if !errors.Is(err, ErrInvalidStatuses) {
 		t.Fatalf("expected ErrInvalidStatuses, got %v", err)
 	}
@@ -1287,7 +1310,7 @@ func TestCatsService_CorrectOwnUpdate_WrongAuthor(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return createdAt.Add(time.Minute) }))
 
-	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), stranger.String(), []string{"seen"}, false, nil)
+	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), stranger.String(), statusCorrection("seen"))
 	if !errors.Is(err, ErrNotUpdateAuthor) {
 		t.Fatalf("expected ErrNotUpdateAuthor, got %v", err)
 	}
@@ -1311,7 +1334,7 @@ func TestCatsService_CorrectOwnUpdate_WindowExpired(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return fixedNow }))
 
-	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"seen"}, false, nil)
+	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), statusCorrection("seen"))
 	if !errors.Is(err, ErrCorrectionWindowExpired) {
 		t.Fatalf("expected ErrCorrectionWindowExpired, got %v", err)
 	}
@@ -1334,7 +1357,7 @@ func TestCatsService_CorrectOwnUpdate_NeedsHelpKindIsNotFound(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return createdAt.Add(time.Minute) }))
 
-	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), []string{"seen"}, false, nil)
+	_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), statusCorrection("seen"))
 	if !errors.Is(err, ErrUpdateNotFound) {
 		t.Fatalf("expected ErrUpdateNotFound for a needs-help update, got %v", err)
 	}
@@ -1346,7 +1369,7 @@ func TestCatsService_CorrectOwnUpdate_UnknownUpdateIsNotFound(t *testing.T) {
 		correctionCheckErr: pgx.ErrNoRows,
 	})
 
-	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), []string{"seen"}, false, nil)
+	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), statusCorrection("seen"))
 	if !errors.Is(err, ErrUpdateNotFound) {
 		t.Fatalf("expected ErrUpdateNotFound for an unknown update id, got %v", err)
 	}

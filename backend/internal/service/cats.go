@@ -473,7 +473,7 @@ type CatsStore interface {
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	ListCatUpdates(ctx context.Context, arg repository.ListCatUpdatesParams) ([]repository.ListCatUpdatesRow, error)
 	CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error)
-	CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOrdinaryUpdateRow, error)
+	CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOwnUpdateRow, error)
 	DeleteOwnUpdate(ctx context.Context, arg repository.DeleteOwnUpdateParams) (repository.DeleteOwnUpdateRow, error)
 	GetUpdateForCorrectionCheck(ctx context.Context, arg repository.GetUpdateForCorrectionCheckParams) (repository.GetUpdateForCorrectionCheckRow, error)
 	GetUpdateByIdempotencyKey(ctx context.Context, arg repository.GetUpdateByIdempotencyKeyParams) (repository.GetUpdateByIdempotencyKeyRow, error)
@@ -1251,6 +1251,19 @@ func (s *CatsService) resolveCorrectionFailure(ctx context.Context, catID, updat
 	return false, ErrUpdateNotFound
 }
 
+// UpdateCorrection carries a PATCH body's presence-aware fields into
+// CorrectOwnUpdate (issue #105): a nil Statuses means "preserve the
+// existing set" (an empty non-nil slice is an explicit clear, valid only
+// while the help flag survives), and Comment is written only when
+// SetComment is true (an explicit JSON null clears it; an omitted field
+// preserves it). ClearNeedsHelp (issue #101) removes the row's help mark.
+type UpdateCorrection struct {
+	Statuses       *[]string
+	ClearNeedsHelp bool
+	SetComment     bool
+	Comment        *string
+}
+
 // CorrectOwnUpdate applies an in-window correction to the caller's own
 // ordinary update (issue #80): statuses and/or comment. kind, author
 // identity, and created_at are never alterable through this path — only
@@ -1260,16 +1273,22 @@ func (s *CatsService) resolveCorrectionFailure(ctx context.Context, catID, updat
 // own notion of time, matching every other time-relative decision in this
 // service.
 //
-// clearNeedsHelp (issue #101, "işareti koyan kullanıcı 10 dakika içinde
+// The request is presence-aware (issue #105): a field the PATCH body
+// omitted preserves the row's existing value — patching only
+// {"needs_help": false} must not erase the update's statuses or comment.
+// Validation therefore only runs against a status set the caller actually
+// supplied; the post-state invariant (at least one status, or the flag
+// survives) is enforced by the conditional statement against whichever
+// set — replacement or preserved — the row ends up with.
+//
+// ClearNeedsHelp (issue #101, "işareti koyan kullanıcı 10 dakika içinde
 // kaldırabilir") removes the row's help mark: flag, expiry, and any
 // compat-recorded legacy category are nulled together so the check
 // constraint holds. A correction can never ADD the flag — marking help
 // happens only at creation, so there is never a retroactive notification
-// to fan out. statuses may be empty only when the row keeps its help flag
-// (enforced by the conditional statement's post-state predicate; an
-// obviously-hollow request — no statuses and clearing — is rejected here
-// before touching the database).
-func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, userID string, statuses []string, clearNeedsHelp bool, comment *string) (CatUpdate, error) {
+// to fan out. An obviously-hollow request — an explicit empty status set
+// while clearing — is rejected here before touching the database.
+func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, userID string, correction UpdateCorrection) (CatUpdate, error) {
 	catUUID, err := parseCatID(catID)
 	if err != nil {
 		return CatUpdate{}, err
@@ -1278,8 +1297,10 @@ func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, use
 	if err != nil {
 		return CatUpdate{}, err
 	}
-	if err := validateStatusSet(statuses, !clearNeedsHelp); err != nil {
-		return CatUpdate{}, err
+	if correction.Statuses != nil {
+		if err := validateStatusSet(*correction.Statuses, !correction.ClearNeedsHelp); err != nil {
+			return CatUpdate{}, err
+		}
 	}
 	// userID is always a well-formed uuid from RequireBearer's context —
 	// never client-supplied input to re-validate against a sentinel error.
@@ -1290,18 +1311,23 @@ func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, use
 
 	now := s.clock()
 	windowStart := now.Add(-updateCorrectionWindow)
-	sorted := append([]string(nil), statuses...)
-	sort.Strings(sorted)
+	var sorted []string
+	if correction.Statuses != nil {
+		sorted = append([]string(nil), *correction.Statuses...)
+		sort.Strings(sorted)
+	}
 
 	row, err := s.db.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
-		ID:             updateUUID,
-		CatID:          catUUID,
-		AuthorUserID:   pgtype.UUID{Bytes: authorUserID, Valid: true},
-		Comment:        nullableText(comment),
-		UpdatedAt:      pgtype.Timestamptz{Time: now, Valid: true},
-		WindowStart:    pgtype.Timestamptz{Time: windowStart, Valid: true},
-		Statuses:       sorted,
-		ClearNeedsHelp: clearNeedsHelp,
+		ID:              updateUUID,
+		CatID:           catUUID,
+		AuthorUserID:    pgtype.UUID{Bytes: authorUserID, Valid: true},
+		SetComment:      correction.SetComment,
+		Comment:         nullableText(correction.Comment),
+		UpdatedAt:       pgtype.Timestamptz{Time: now, Valid: true},
+		WindowStart:     pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReplaceStatuses: correction.Statuses != nil,
+		Statuses:        sorted,
+		ClearNeedsHelp:  correction.ClearNeedsHelp,
 	})
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -1321,11 +1347,20 @@ func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, use
 	updatedAt := row.UpdatedAt.Time
 	createdAt := row.CreatedAt.Time
 	expiresAt := createdAt.Add(updateCorrectionWindow)
+	// row.Statuses/row.Comment are the row's post-correction values whether
+	// the request replaced them or preserved them (issue #105) — echoing
+	// them, not the request fields, keeps the response truthful for a
+	// partial patch. Statuses must marshal as [] (never null), matching
+	// CreateOrdinaryUpdate's own guarantee.
+	statuses := row.Statuses
+	if statuses == nil {
+		statuses = []string{}
+	}
 	result := CatUpdate{
 		ID:                  uuid.UUID(row.ID.Bytes).String(),
 		Kind:                wireUpdateKind(row.NeedsHelp),
-		Statuses:            sorted,
-		Comment:             comment,
+		Statuses:            statuses,
+		Comment:             textPtr(row.Comment),
 		CreatedAt:           createdAt,
 		UpdatedAt:           &updatedAt,
 		NeedsHelp:           row.NeedsHelp,

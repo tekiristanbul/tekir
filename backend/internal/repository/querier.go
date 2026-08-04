@@ -39,15 +39,18 @@ type Querier interface {
 	// only notifies for needs-help), so the caller marks it processed with no
 	// recipients rather than skipping it here.
 	//
-	// needs_help_already_active (issue #101, product-owner decision on the
-	// #100 contract's open re-marking question): a help mark made while the
-	// cat already had an active help state must not notify followers again —
-	// the state silently continues (its 72h window restarts via the newer
-	// mark's own expiry). Evaluated against the marked update's own
-	// created_at, not dispatch time, so a delayed worker reaches the same
-	// verdict a prompt one would; a mark deleted/cleared after this one was
-	// created no longer suppresses (bounded, accepted edge — the state it
-	// provided was live when this mark was made).
+	// needs_help_eligible (issue #105, superseding #101's claim-time
+	// computation): whether a help mark notifies followers was decided once,
+	// inside the transaction that created it (see CreateNotificationOutbox
+	// above), and is read back verbatim here — this query never re-derives it
+	// from the mutable updates rows, so an earlier active mark being deleted
+	// or corrected away between the newer mark's creation and this dispatch
+	// can no longer flip the verdict. The re-marking product decision (#101,
+	// on the #100 contract) is unchanged: an already-active cat's newer mark
+	// saves and restarts the 72h window but is never eligible to notify.
+	// needs_help still reads the mark's own live row (flag and deleted_at):
+	// an author retracting their mark in-window before dispatch cancels the
+	// send — that is the mark itself, not the cat's aggregate help state.
 	ClaimNotificationOutboxBatch(ctx context.Context, rowLimit int32) ([]ClaimNotificationOutboxBatchRow, error)
 	// issue #84: retires a token fcm permanently rejected (unregistered/
 	// invalid). The `and push_token = sqlc.arg(push_token)` guard makes the
@@ -88,11 +91,18 @@ type Querier interface {
 	// the same window ("işareti koyan kullanıcı 10 dakika içinde kaldırabilir"
 	// — removal only; a correction can never ADD the flag, which would need a
 	// retroactive notification fan-out). Clearing nulls the expiry and any
-	// compat-recorded category so updates_needs_help_fields_ck holds. The
-	// final where predicate enforces the create-invariant on the post-state
-	// (at least one status, or the help flag still set): a patch that would
-	// leave a status-less, flag-less husk affects zero rows and the service
-	// reports it as invalid content — the author deletes the update instead.
+	// compat-recorded category so updates_needs_help_fields_ck holds.
+	//
+	// issue #105: the statement is presence-aware. set_comment/replace_statuses
+	// are false when the PATCH body omitted the field, and an omitted field
+	// preserves the row's existing value — a patch carrying only
+	// {"needs_help": false} must not erase statuses or comment. The final
+	// where predicate enforces the create-invariant on the post-state (at
+	// least one status, or the help flag still set), evaluated against the
+	// replacement set when one was supplied and against the row's existing
+	// update_statuses otherwise: a patch that would leave a status-less,
+	// flag-less husk affects zero rows and the service reports it as invalid
+	// content — the author deletes the update instead.
 	CorrectOrdinaryUpdate(ctx context.Context, arg CorrectOrdinaryUpdateParams) (CorrectOrdinaryUpdateRow, error)
 	// issue #70: created_by_user_id is required (resolved from the
 	// authenticated bearer session, never client-supplied); created_by_device_id
@@ -153,7 +163,17 @@ type Querier interface {
 	// work. notification_outbox.update_id is unique, so retrying or repeating
 	// an enqueue for the same update fails loudly (and rolls the whole
 	// transaction back) instead of duplicating work.
-	CreateNotificationOutbox(ctx context.Context, arg CreateNotificationOutboxParams) error
+	//
+	// needs_help_eligible (issue #105): notification eligibility is decided
+	// here, atomically with the update insert, and frozen into the outbox row
+	// — never re-derived at dispatch time. A help mark is eligible exactly
+	// when the cat had no other active help state at the mark's creation
+	// (inactive → active transition); a mark made while an earlier unexpired,
+	// undeleted mark existed is ineligible forever, even if that earlier mark
+	// is later corrected away or deleted before the worker runs (the issue
+	// #105 race). Evaluated inside the creating transaction, so it sees
+	// exactly the state the mark was made against.
+	CreateNotificationOutbox(ctx context.Context, updateID pgtype.UUID) error
 	CreateOtpCode(ctx context.Context, arg CreateOtpCodeParams) (CreateOtpCodeRow, error)
 	// only the hash is ever persisted; the raw token is returned to the
 	// caller once and never stored (mirrors CreateDevice's convention).
@@ -384,6 +404,12 @@ type Querier interface {
 	// in-app notifications row (the source of truth independent of push —
 	// issue #84), it just isn't pushed to.
 	ListNeedsHelpRecipientDevices(ctx context.Context, arg ListNeedsHelpRecipientDevicesParams) ([]ListNeedsHelpRecipientDevicesRow, error)
+	// issue #105: read back a row's existing statuses inside
+	// Store.CorrectOwnUpdate's transaction when a presence-aware PATCH omitted
+	// the field — the response must echo the preserved set, and reading it in
+	// the same transaction keeps it consistent with the row just corrected.
+	// Ordered to match ListCatUpdates' own array_agg(order by s.status).
+	ListUpdateStatuses(ctx context.Context, updateID pgtype.UUID) ([]string, error)
 	// a created cat counts toward cats_of_istanbul the same way a media/update
 	// contribution does (docs/product/badges.md's cats_of_istanbul condition).
 	ListUserCreatedCatsForBadges(ctx context.Context, createdByUserID pgtype.UUID) ([]ListUserCreatedCatsForBadgesRow, error)

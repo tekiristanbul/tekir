@@ -82,7 +82,7 @@ type fakeCatsLister struct {
 	createCatWithMediaRow repository.CreateCatWithMediaRow
 	createCatWithMediaErr error
 
-	correctRow repository.CorrectOrdinaryUpdateRow
+	correctRow repository.CorrectOwnUpdateRow
 	// capturedCorrect mirrors captured above, for CorrectOwnUpdate.
 	capturedCorrect *repository.CorrectOwnUpdateParams
 	correctErr      error
@@ -149,7 +149,7 @@ func (f fakeCatsLister) CreateCatWithMedia(ctx context.Context, arg repository.C
 	return f.createCatWithMediaRow, f.createCatWithMediaErr
 }
 
-func (f fakeCatsLister) CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOrdinaryUpdateRow, error) {
+func (f fakeCatsLister) CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOwnUpdateRow, error) {
 	if f.capturedCorrect != nil {
 		*f.capturedCorrect = arg
 	}
@@ -1194,10 +1194,13 @@ func TestCatsHandler_CorrectUpdate_Success(t *testing.T) {
 	createdAt := time.Date(2026, 1, 5, 8, 0, 0, 0, time.UTC)
 	fixedNow := createdAt.Add(2 * time.Minute)
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
-		correctRow: repository.CorrectOrdinaryUpdateRow{
-			ID:        pgtype.UUID{Bytes: updateID, Valid: true},
-			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
-			UpdatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+		correctRow: repository.CorrectOwnUpdateRow{
+			CorrectOrdinaryUpdateRow: repository.CorrectOrdinaryUpdateRow{
+				ID:        pgtype.UUID{Bytes: updateID, Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+				UpdatedAt: pgtype.Timestamptz{Time: fixedNow, Valid: true},
+			},
+			Statuses: []string{"seen"},
 		},
 	}, service.WithClock(func() time.Time { return fixedNow })), testMaxUploadBytes)
 

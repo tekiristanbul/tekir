@@ -67,11 +67,12 @@ type Notification struct {
 }
 
 type NotificationOutbox struct {
-	ID          pgtype.UUID        `json:"id"`
-	UpdateID    pgtype.UUID        `json:"update_id"`
-	CatID       pgtype.UUID        `json:"cat_id"`
-	ProcessedAt pgtype.Timestamptz `json:"processed_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ID                pgtype.UUID        `json:"id"`
+	UpdateID          pgtype.UUID        `json:"update_id"`
+	CatID             pgtype.UUID        `json:"cat_id"`
+	ProcessedAt       pgtype.Timestamptz `json:"processed_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	NeedsHelpEligible bool               `json:"needs_help_eligible"`
 }
 
 type OtpCode struct {

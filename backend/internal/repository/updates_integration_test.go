@@ -953,13 +953,15 @@ func TestStore_CorrectOwnUpdate_HappyPath(t *testing.T) {
 	updatedAt := createdAt.Add(2 * time.Minute)
 	windowStart := createdAt.Add(-1 * time.Minute) // request arrives well inside the window
 	row, err := store.CorrectOwnUpdate(ctx, repository.CorrectOwnUpdateParams{
-		ID:           updateID,
-		CatID:        catID,
-		AuthorUserID: userID,
-		Comment:      pgtype.Text{String: "düzeltildi", Valid: true},
-		UpdatedAt:    pgtype.Timestamptz{Time: updatedAt, Valid: true},
-		WindowStart:  pgtype.Timestamptz{Time: windowStart, Valid: true},
-		Statuses:     []string{"fed", "water_provided"},
+		ID:              updateID,
+		CatID:           catID,
+		AuthorUserID:    userID,
+		SetComment:      true,
+		Comment:         pgtype.Text{String: "düzeltildi", Valid: true},
+		UpdatedAt:       pgtype.Timestamptz{Time: updatedAt, Valid: true},
+		WindowStart:     pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReplaceStatuses: true,
+		Statuses:        []string{"fed", "water_provided"},
 	})
 	if err != nil {
 		t.Fatalf("correct own update: %v", err)
