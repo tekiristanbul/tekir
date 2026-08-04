@@ -233,8 +233,6 @@ void main() {
               primaryPhoto: '',
               distanceMeters: 900,
               activeAlert: ActiveAlert(
-                category: 'food_needed',
-                categoryLabel: 'mamaya ihtiyacı var',
                 createdAt: DateTime.now(),
                 expiresAt: DateTime.now().add(const Duration(hours: 1)),
               ),
@@ -391,8 +389,6 @@ void main() {
             primaryPhoto: '',
             distanceMeters: 15,
             activeAlert: ActiveAlert(
-              category: 'trapped',
-              categoryLabel: 'mahsur kalmış',
               createdAt: DateTime.now(),
               expiresAt: DateTime.now().add(const Duration(hours: 2)),
             ),

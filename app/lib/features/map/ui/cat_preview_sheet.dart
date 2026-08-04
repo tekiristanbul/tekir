@@ -141,8 +141,9 @@ class CatPreviewSheet extends StatelessWidget {
   }
 }
 
-/// Active needs-help mark (issue #4/#23): category + expiry context in
-/// turkish, in the help color family — never blended with the primary
+/// Active `yardıma ihtiyacı var` mark (issue #4/#23; category-free since
+/// the #100 simplified help contract): one fixed label + expiry context
+/// in turkish, in the help color family — never blended with the primary
 /// accent (docs/product/alerts.md), so a cat in trouble reads distinctly
 /// from a routine freshness highlight.
 class _NeedsHelpBadge extends StatelessWidget {
@@ -172,7 +173,7 @@ class _NeedsHelpBadge extends StatelessWidget {
           const SizedBox(width: 4),
           Flexible(
             child: Text(
-              '${alert.categoryLabel} · ${expiresInTr(alert.expiresAt)}',
+              'Yardıma ihtiyacı var · ${expiresInTr(alert.expiresAt)}',
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: AppColors.helpInk,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/identity/session_identity.dart';
@@ -23,7 +25,8 @@ enum UpdateCorrectionError {
 /// exclamation marks).
 String updateCorrectionErrorMessageTr(UpdateCorrectionError error) {
   return switch (error) {
-    UpdateCorrectionError.validation => 'En az bir durum seçmelisin.',
+    UpdateCorrectionError.validation =>
+      'Güncelleme boş kalamaz: bir durum seç ya da güncellemeyi sil.',
     UpdateCorrectionError.unauthorized => 'Kimlik doğrulanamadı, tekrar dene.',
     UpdateCorrectionError.notAuthor => 'Bu güncelleme sana ait değil.',
     UpdateCorrectionError.notFound => 'Bu güncelleme artık bulunamıyor.',
@@ -44,20 +47,46 @@ class UpdateCorrectionState {
   const UpdateCorrectionState({
     this.statuses = const [],
     this.comment = '',
+    this.hadNeedsHelp = false,
+    this.needsHelp = false,
+    this.createdAt,
     this.isSubmitting = false,
     this.error,
   });
 
   final List<String> statuses;
   final String comment;
+
+  /// Whether the seeded entry carried the help mark when the sheet opened
+  /// — the mark can only ever be removed by a correction, never added
+  /// (docs/architecture/api.md: PATCH `needs_help: true` is a 400), so
+  /// the toggle below only exists at all when this is true.
+  final bool hadNeedsHelp;
+
+  /// The mark's edited value. Only meaningful while [hadNeedsHelp].
+  final bool needsHelp;
+
+  /// The seeded entry's created_at — kept so a successful mark removal
+  /// (cleared or deleted) can tell [CatDetailNotifier] which mark the
+  /// cat's active state may have lost.
+  final DateTime? createdAt;
   final bool isSubmitting;
   final UpdateCorrectionError? error;
 
-  bool get canSubmit => statuses.isNotEmpty && !isSubmitting;
+  /// The server's post-state invariant (issue #101): at least one status,
+  /// or the help mark survives — a patch that would hollow the row out is
+  /// rejected, so don't offer to submit one; the author deletes instead.
+  bool get canSubmit => (statuses.isNotEmpty || needsHelp) && !isSubmitting;
+
+  /// True when saving would remove the entry's help mark.
+  bool get clearsNeedsHelp => hadNeedsHelp && !needsHelp;
 
   UpdateCorrectionState copyWith({
     List<String>? statuses,
     String? comment,
+    bool? hadNeedsHelp,
+    bool? needsHelp,
+    DateTime? createdAt,
     bool? isSubmitting,
     UpdateCorrectionError? error,
     bool clearError = false,
@@ -65,6 +94,9 @@ class UpdateCorrectionState {
     return UpdateCorrectionState(
       statuses: statuses ?? this.statuses,
       comment: comment ?? this.comment,
+      hadNeedsHelp: hadNeedsHelp ?? this.hadNeedsHelp,
+      needsHelp: needsHelp ?? this.needsHelp,
+      createdAt: createdAt ?? this.createdAt,
       isSubmitting: isSubmitting ?? this.isSubmitting,
       error: clearError ? null : (error ?? this.error),
     );
@@ -95,6 +127,9 @@ class UpdateCorrectionNotifier extends Notifier<UpdateCorrectionState> {
     state = UpdateCorrectionState(
       statuses: entry.statuses,
       comment: entry.comment ?? '',
+      hadNeedsHelp: entry.needsHelp,
+      needsHelp: entry.needsHelp,
+      createdAt: entry.createdAt,
     );
   }
 
@@ -107,6 +142,15 @@ class UpdateCorrectionNotifier extends Notifier<UpdateCorrectionState> {
       statuses.add(status);
     }
     state = state.copyWith(statuses: statuses, clearError: true);
+  }
+
+  /// Toggles the entry's help mark off (or back on, before saving) — only
+  /// ever offered on an entry that already carried it: a correction can
+  /// remove the mark within the window but never add one
+  /// (docs/product/updates.md).
+  void toggleNeedsHelp() {
+    if (state.isSubmitting || !state.hadNeedsHelp) return;
+    state = state.copyWith(needsHelp: !state.needsHelp, clearError: true);
   }
 
   void setComment(String value) {
@@ -126,6 +170,7 @@ class UpdateCorrectionNotifier extends Notifier<UpdateCorrectionState> {
         return null;
       }
       final trimmedComment = state.comment.trim();
+      final cleared = state.clearsNeedsHelp;
       final entry = await ref
           .read(catDetailApiProvider)
           .correctUpdate(
@@ -133,8 +178,17 @@ class UpdateCorrectionNotifier extends Notifier<UpdateCorrectionState> {
             updateId,
             statuses: state.statuses,
             comment: trimmedComment.isEmpty ? null : trimmedComment,
+            clearNeedsHelp: cleared,
           );
-      ref.read(catDetailProvider(catId).notifier).replaceUpdate(entry);
+      final detailNotifier = ref.read(catDetailProvider(catId).notifier);
+      detailNotifier.replaceUpdate(entry);
+      // Removing the mark may change the cat's active help state — the
+      // server alone decides the fallback, so reconcile in the background
+      // rather than holding the sheet open on a second round trip.
+      final createdAt = state.createdAt;
+      if (cleared && createdAt != null) {
+        unawaited(detailNotifier.reconcileAfterHelpRemoval(createdAt));
+      }
       state = state.copyWith(isSubmitting: false);
       return UpdateCorrectionOutcome.saved;
     } catch (e) {
@@ -156,7 +210,14 @@ class UpdateCorrectionNotifier extends Notifier<UpdateCorrectionState> {
         return null;
       }
       await ref.read(catDetailApiProvider).deleteUpdate(catId, updateId);
-      ref.read(catDetailProvider(catId).notifier).removeUpdate(updateId);
+      final detailNotifier = ref.read(catDetailProvider(catId).notifier);
+      detailNotifier.removeUpdate(updateId);
+      // Deleting a help-carrying update removes its mark with it (issue
+      // #101) — reconcile the active state the same way a clear does.
+      final createdAt = state.createdAt;
+      if (state.hadNeedsHelp && createdAt != null) {
+        unawaited(detailNotifier.reconcileAfterHelpRemoval(createdAt));
+      }
       state = state.copyWith(isSubmitting: false);
       return UpdateCorrectionOutcome.deleted;
     } catch (e) {
@@ -167,7 +228,12 @@ class UpdateCorrectionNotifier extends Notifier<UpdateCorrectionState> {
       // delete attempt as "already gone" rather than a hard failure: the
       // end state (this update is gone) is exactly what the user wanted.
       if (e is UpdateCorrectionNotFoundException) {
-        ref.read(catDetailProvider(catId).notifier).removeUpdate(updateId);
+        final detailNotifier = ref.read(catDetailProvider(catId).notifier);
+        detailNotifier.removeUpdate(updateId);
+        final createdAt = state.createdAt;
+        if (state.hadNeedsHelp && createdAt != null) {
+          unawaited(detailNotifier.reconcileAfterHelpRemoval(createdAt));
+        }
         state = state.copyWith(isSubmitting: false);
         return UpdateCorrectionOutcome.alreadyGone;
       }

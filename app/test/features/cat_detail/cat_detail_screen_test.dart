@@ -222,7 +222,7 @@ void main() {
   });
 
   testWidgets(
-    'an active needs-help alert shows a prominent category + expiry banner',
+    'an active help state shows the fixed title, the note, and expiry — never a category',
     (tester) async {
       final now = DateTime.now();
       final detail = CatDetail(
@@ -235,8 +235,7 @@ void main() {
         createdAt: DateTime.utc(2026, 1, 1),
         lastUpdateAt: null,
         activeAlert: ActiveAlert(
-          category: 'injured_or_sick',
-          categoryLabel: 'yaralı / hasta',
+          comment: 'kabı bomboştu ve halsizdi',
           createdAt: now.subtract(const Duration(hours: 1)),
           expiresAt: now.add(const Duration(hours: 71)),
         ),
@@ -246,25 +245,94 @@ void main() {
         CatDetailState(detail: detail, updates: const [], hasLoadedOnce: true),
       );
 
-      expect(find.textContaining('yaralı / hasta'), findsOneWidget);
+      expect(find.text('Yardıma ihtiyacı var'), findsOneWidget);
+      expect(find.text('kabı bomboştu ve halsizdi'), findsOneWidget);
       expect(find.textContaining('sona eriyor'), findsOneWidget);
     },
   );
 
-  testWidgets('no active alert shows no alert banner', (tester) async {
+  testWidgets('an active help state without a note omits the note line', (
+    tester,
+  ) async {
+    final now = DateTime.now();
+    final detail = CatDetail(
+      id: _catId,
+      name: 'duman',
+      lat: 41.0256,
+      lng: 28.9744,
+      areaLabel: null,
+      primaryPhoto: null,
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastUpdateAt: null,
+      activeAlert: ActiveAlert(
+        comment: null,
+        createdAt: now.subtract(const Duration(hours: 1)),
+        expiresAt: now.add(const Duration(hours: 71)),
+      ),
+    );
+    await _pump(
+      tester,
+      CatDetailState(detail: detail, updates: const [], hasLoadedOnce: true),
+    );
+
+    expect(find.text('Yardıma ihtiyacı var'), findsOneWidget);
+    expect(find.textContaining('sona eriyor'), findsOneWidget);
+  });
+
+  testWidgets('no active alert shows no alert banner or warm callout', (
+    tester,
+  ) async {
     await _pump(
       tester,
       CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
     );
 
-    // The needs-help entry callout (issue #78) always renders and reuses
-    // this same icon (matching the approved prototype's go-help button) —
-    // exactly one instance means no banner is additionally shown.
-    expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+    // The 0.1 needs-help callout is gone (issue #102: help lives inside
+    // the update sheet), so with no active alert nothing on this screen
+    // renders the warning icon at all.
+    expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+    expect(find.text('Yardıma ihtiyacı var'), findsNothing);
   });
 
   testWidgets(
-    'a needs-help timeline entry shows its category, expired without active emphasis',
+    'a legacy category-bearing help entry renders the fixed chip, expired without active emphasis — never its category',
+    (tester) async {
+      final now = DateTime.now();
+      // The wire shape a legacy record arrives in through the
+      // compatibility window: kind-based, category fields present, no
+      // needs_help flag. It must stay renderable, category-free.
+      final legacy = CatUpdateEntry.fromJson({
+        'id': 'u1',
+        'kind': 'needs_help',
+        'statuses': const <String>[],
+        'comment': null,
+        'created_at': now
+            .subtract(const Duration(hours: 100))
+            .toIso8601String(),
+        'needs_help_category': 'water_needed',
+        'needs_help_category_label': 'suya ihtiyacı var',
+        'needs_help_expires_at': now
+            .subtract(const Duration(hours: 28))
+            .toIso8601String(),
+        'needs_help_active': false,
+      });
+      await _pump(
+        tester,
+        CatDetailState(detail: _detail, updates: [legacy], hasLoadedOnce: true),
+      );
+
+      expect(find.text('yardım gerekiyor'), findsOneWidget);
+      expect(find.text('suya ihtiyacı var'), findsNothing);
+      expect(find.textContaining('su'), findsNothing);
+      // an expired entry must never render with the active help color —
+      // that emphasis is reserved for the active-alert banner alone, and
+      // this fixture has no active alert at all.
+      expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'a combined status + help update renders as one event: help chip, status tag, and help-tinted note',
     (tester) async {
       final now = DateTime.now();
       await _pump(
@@ -274,28 +342,24 @@ void main() {
           updates: [
             CatUpdateEntry(
               id: 'u1',
-              kind: 'needs_help',
-              statuses: const [],
-              comment: null,
-              createdAt: now.subtract(const Duration(hours: 100)),
-              needsHelpCategory: 'water_needed',
-              needsHelpCategoryLabel: 'suya ihtiyacı var',
-              needsHelpExpiresAt: now.subtract(const Duration(hours: 28)),
-              needsHelpActive: false,
+              needsHelp: true,
+              statuses: const ['water_provided'],
+              comment: 'su bıraktım ama akşam biri daha bakabilir mi?',
+              createdAt: now.subtract(const Duration(hours: 1)),
+              needsHelpExpiresAt: now.add(const Duration(hours: 71)),
+              needsHelpActive: true,
             ),
           ],
           hasLoadedOnce: true,
         ),
       );
 
-      expect(find.text('suya ihtiyacı var'), findsOneWidget);
-      // an expired entry must never render with the active help color —
-      // that emphasis is reserved for the active-alert banner alone, and
-      // this fixture has no active alert at all. The needs-help entry
-      // callout (issue #78) always renders and reuses this same icon
-      // (matching the approved prototype's go-help button) — exactly one
-      // instance means no banner is additionally shown.
-      expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+      expect(find.text('yardım gerekiyor'), findsOneWidget);
+      expect(find.text('su verildi'), findsOneWidget);
+      expect(
+        find.text('su bıraktım ama akşam biri daha bakabilir mi?'),
+        findsOneWidget,
+      );
     },
   );
 }

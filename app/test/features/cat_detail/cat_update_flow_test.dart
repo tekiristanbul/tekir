@@ -47,6 +47,25 @@ CatUpdateEntry _entry(
   correctionExpiresAt: correctionExpiresAt,
 );
 
+/// The server's answer to a help-carrying submission: flag set, expiry 72h
+/// out, active on arrival, the comment doubling as the note.
+CatUpdateEntry _helpEntry(
+  String id, {
+  List<String> statuses = const [],
+  String? comment,
+}) {
+  final now = DateTime.now();
+  return CatUpdateEntry(
+    id: id,
+    needsHelp: true,
+    statuses: statuses,
+    comment: comment,
+    createdAt: now,
+    needsHelpExpiresAt: now.add(const Duration(hours: 72)),
+    needsHelpActive: true,
+  );
+}
+
 // ── fakes ────────────────────────────────────────────────────────────────
 
 class _FakeStorage implements DeviceKeyValueStorage {
@@ -65,6 +84,7 @@ class _FakeStorage implements DeviceKeyValueStorage {
 class _FakeCatDetailApi implements CatDetailApi {
   int createUpdateCalls = 0;
   List<String>? lastStatuses;
+  bool? lastNeedsHelp;
   String? lastComment;
 
   Completer<void>? gate;
@@ -82,11 +102,13 @@ class _FakeCatDetailApi implements CatDetailApi {
   Future<CatUpdateEntry> createUpdate(
     String catId, {
     required List<String> statuses,
+    bool needsHelp = false,
     String? comment,
     String idempotencyKey = '',
   }) async {
     createUpdateCalls++;
     lastStatuses = statuses;
+    lastNeedsHelp = needsHelp;
     lastComment = comment;
     if (gate != null) await gate!.future;
     if (nextError != null) throw nextError!;
@@ -99,6 +121,7 @@ class _FakeCatDetailApi implements CatDetailApi {
     String updateId, {
     required List<String> statuses,
     String? comment,
+    bool clearNeedsHelp = false,
   }) => throw UnimplementedError();
 
   @override
@@ -736,6 +759,303 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  // ── yardıma ihtiyacı var (issue #100/#102) ─────────────────────────────
+
+  group('help mark in the composer sheet', () {
+    testWidgets(
+      'before marking: the yardım option renders unselected — no banner, plain note invitation, primary submit',
+      (tester) async {
+        await _pump(tester, api: _FakeCatDetailApi());
+        await _openComposer(tester);
+
+        expect(find.text('yardım'), findsOneWidget);
+        expect(find.text('takipçilere bildirim gider'), findsNothing);
+        expect(
+          find.text('ne oldu? kısaca yaz — yardıma gelen anlasın'),
+          findsNothing,
+        );
+        expect(find.widgetWithText(ElevatedButton, 'Paylaş'), findsOneWidget);
+        // no category choice exists anywhere in the flow.
+        expect(find.text('Yaralı veya hasta'), findsNothing);
+        expect(find.text('Mama gerekiyor'), findsNothing);
+        expect(find.text('Su gerekiyor'), findsNothing);
+        expect(find.text('Güvensiz bir yerde'), findsNothing);
+        expect(find.text('Mahsur kalmış'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'selecting yardım reveals the notification banner, the note invitation, and the help submit — no status required',
+      (tester) async {
+        await _pump(tester, api: _FakeCatDetailApi());
+        await _openComposer(tester);
+
+        await tester.tap(find.text('yardım'));
+        await tester.pump();
+
+        expect(find.text('takipçilere bildirim gider'), findsOneWidget);
+        expect(
+          find.text('ne oldu? kısaca yaz — yardıma gelen anlasın'),
+          findsOneWidget,
+        );
+        final submitButton = tester.widget<ElevatedButton>(
+          find.widgetWithText(ElevatedButton, 'yardım çağrısıyla paylaş'),
+        );
+        expect(
+          submitButton.onPressed,
+          isNotNull,
+          reason: 'the help mark alone satisfies the create invariant',
+        );
+      },
+    );
+
+    testWidgets(
+      'a help-only submit sends the flag without statuses and lands as one timeline event with the active banner',
+      (tester) async {
+        final api = _FakeCatDetailApi()
+          ..nextResult = _helpEntry('upd-1', comment: 'kabı bomboştu');
+        await _pump(tester, api: api);
+        await _openComposer(tester);
+
+        await tester.tap(find.text('yardım'));
+        await tester.pump();
+        await tester.enterText(find.byType(TextField).last, 'kabı bomboştu');
+        await tester.pump();
+        await tester.tap(
+          find.widgetWithText(ElevatedButton, 'yardım çağrısıyla paylaş'),
+        );
+        await tester.pumpAndSettle();
+
+        expect(api.createUpdateCalls, 1);
+        expect(api.lastNeedsHelp, isTrue);
+        expect(api.lastStatuses, isEmpty);
+        expect(api.lastComment, 'kabı bomboştu');
+        // sheet closed, success feedback shown, one event on the timeline.
+        expect(find.byType(CatUpdateSheet), findsNothing);
+        expect(find.text('Güncelleme paylaşıldı'), findsOneWidget);
+        expect(find.text('yardım gerekiyor'), findsOneWidget);
+        // the active state now renders on the profile, note included.
+        expect(find.text('Yardıma ihtiyacı var'), findsOneWidget);
+        expect(find.text('kabı bomboştu'), findsWidgets);
+      },
+    );
+
+    testWidgets(
+      'a combined su verildi + yardım submit is a single request and a single timeline event',
+      (tester) async {
+        final api = _FakeCatDetailApi()
+          ..nextResult = _helpEntry(
+            'upd-1',
+            statuses: const ['water_provided'],
+          );
+        await _pump(tester, api: api);
+        await _openComposer(tester);
+
+        await tester.tap(find.text('Su verildi'));
+        await tester.tap(find.text('yardım'));
+        await tester.pump();
+        await tester.tap(
+          find.widgetWithText(ElevatedButton, 'yardım çağrısıyla paylaş'),
+        );
+        await tester.pumpAndSettle();
+
+        expect(api.createUpdateCalls, 1);
+        expect(api.lastStatuses, ['water_provided']);
+        expect(api.lastNeedsHelp, isTrue);
+        expect(find.text('yardım gerekiyor'), findsOneWidget);
+        expect(find.text('su verildi'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'while a help submission is in flight the button spins and blocks a duplicate',
+      (tester) async {
+        final gate = Completer<void>();
+        final api = _FakeCatDetailApi()
+          ..nextResult = _helpEntry('upd-1')
+          ..gate = gate;
+        await _pump(tester, api: api);
+        await _openComposer(tester);
+
+        final sheetSubmitButton = find.descendant(
+          of: find.byType(CatUpdateSheet),
+          matching: find.byType(ElevatedButton),
+        );
+
+        await tester.tap(find.text('yardım'));
+        await tester.pump();
+        await tester.tap(sheetSubmitButton);
+        await tester.pump();
+
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        expect(
+          tester.widget<ElevatedButton>(sheetSubmitButton).onPressed,
+          isNull,
+        );
+        await tester.tap(sheetSubmitButton, warnIfMissed: false);
+        await tester.pump();
+        expect(api.createUpdateCalls, 1);
+
+        gate.complete();
+        await tester.pumpAndSettle();
+      },
+    );
+
+    testWidgets(
+      'a failed help submission keeps the note in the field and offers retry, which succeeds',
+      (tester) async {
+        final api = _FakeCatDetailApi()
+          ..nextError = const UpdateNetworkException();
+        await _pump(tester, api: api);
+        await _openComposer(tester);
+
+        await tester.tap(find.text('yardım'));
+        await tester.pump();
+        await tester.enterText(
+          find.byType(TextField).last,
+          'kabı bomboştu ve halsizdi',
+        );
+        await tester.pump();
+        await tester.tap(
+          find.widgetWithText(ElevatedButton, 'yardım çağrısıyla paylaş'),
+        );
+        // the pulsing banner never settles — pump fixed frames instead.
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(
+          find.text(updateSubmitErrorMessageTr(UpdateSubmitError.network)),
+          findsOneWidget,
+        );
+        // the typed note is still in the field, ready to retry.
+        expect(find.text('kabı bomboştu ve halsizdi'), findsOneWidget);
+        final retryButton = find.widgetWithText(ElevatedButton, 'Tekrar dene');
+        expect(retryButton, findsOneWidget);
+
+        api
+          ..nextError = null
+          ..nextResult = _helpEntry(
+            'upd-1',
+            comment: 'kabı bomboştu ve halsizdi',
+          );
+        await tester.tap(retryButton);
+        await tester.pumpAndSettle();
+
+        expect(api.createUpdateCalls, 2);
+        expect(api.lastComment, 'kabı bomboştu ve halsizdi');
+        expect(find.text('Güncelleme paylaşıldı'), findsOneWidget);
+      },
+    );
+
+    testWidgets('the yardım option meets the 44px tap target', (tester) async {
+      await _pump(tester, api: _FakeCatDetailApi());
+      await _openComposer(tester);
+
+      final inkWell = find
+          .ancestor(of: find.text('yardım'), matching: find.byType(InkWell))
+          .first;
+      expect(tester.getSize(inkWell).height, greaterThanOrEqualTo(kTapMin));
+    });
+
+    testWidgets(
+      'the sheet with help selected renders without overflow on a small screen with scaled text',
+      (tester) async {
+        addTearDown(() => tester.view.resetPhysicalSize());
+        tester.view.physicalSize = const Size(320, 560);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() => tester.view.resetDevicePixelRatio());
+
+        final api = _FakeCatDetailApi();
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              catDetailApiProvider.overrideWithValue(api),
+              deviceIdentityServiceProvider.overrideWithValue(
+                DeviceIdentityService(
+                  storage: _FakeStorage(),
+                  dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080')),
+                ),
+              ),
+              catDetailProvider(_catId).overrideWith(
+                () => _FixedCatDetailNotifier(
+                  _catId,
+                  CatDetailState(detail: _detail, hasLoadedOnce: true),
+                ),
+              ),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.light,
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(1.6)),
+                child: child!,
+              ),
+              home: const Scaffold(body: CatUpdateSheet(catId: _catId)),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        await tester.tap(find.text('yardım'), warnIfMissed: false);
+        await tester.pump();
+        await tester.enterText(
+          find.byType(TextField).last,
+          'uzun bir yardım notu yazıyorum burada, satır sayısı artsın diye',
+        );
+        await tester.pump();
+
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'reduced motion: the notification banner renders statically and the sheet settles',
+      (tester) async {
+        final api = _FakeCatDetailApi();
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              catDetailApiProvider.overrideWithValue(api),
+              deviceIdentityServiceProvider.overrideWithValue(
+                DeviceIdentityService(
+                  storage: _FakeStorage(),
+                  dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080')),
+                ),
+              ),
+              catDetailProvider(_catId).overrideWith(
+                () => _FixedCatDetailNotifier(
+                  _catId,
+                  CatDetailState(detail: _detail, hasLoadedOnce: true),
+                ),
+              ),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.light,
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(disableAnimations: true),
+                child: child!,
+              ),
+              home: const Scaffold(body: CatUpdateSheet(catId: _catId)),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        await tester.tap(find.text('yardım'));
+        // With animations disabled, the pulsing dot must not keep the
+        // frame pipeline busy — settle within a tight budget or fail.
+        await tester.pumpAndSettle(
+          const Duration(milliseconds: 100),
+          EnginePhase.sendSemanticsUpdate,
+          const Duration(seconds: 5),
+        );
+
+        expect(find.text('takipçilere bildirim gider'), findsOneWidget);
+      },
+    );
+  });
 
   // ── gate-at-intent (issue #65) ─────────────────────────────────────────
 

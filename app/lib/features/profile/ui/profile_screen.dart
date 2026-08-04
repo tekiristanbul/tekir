@@ -344,12 +344,9 @@ class _ContributionRow extends StatelessWidget {
 
   String get _label {
     if (contribution.isCatAdded) return 'yeni kedi eklendi';
-    if (contribution.isHelp) {
-      final label = contribution.needsHelpCategoryLabel;
-      return label != null
-          ? 'yardım bildirimi · ${label.toLowerCase()}'
-          : 'yardım bildirimi';
-    }
+    // Category-free since the #100 simplified help contract — a legacy
+    // record's stored category is never reproduced here.
+    if (contribution.isHelp) return 'yardım bildirimi';
     return contribution.statuses.map((s) => _statusLabelsTr[s] ?? s).join(', ');
   }
 

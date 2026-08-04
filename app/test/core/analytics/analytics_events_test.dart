@@ -2,9 +2,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/core/analytics/analytics.dart';
 
-/// The full required 0.1 event-name vocabulary from issue #84 — kept
-/// verbatim here so a rename in the contract file fails a test instead of
-/// silently splitting the funnel in the analytics backend.
+/// The full required event-name vocabulary from issue #84 (names
+/// unchanged by the #100 simplified help contract) — kept verbatim here so
+/// a rename in the contract file fails a test instead of silently
+/// splitting the funnel in the analytics backend.
 const requiredEventNames = {
   'onboarding_completed',
   'location_permission_result',
@@ -40,7 +41,7 @@ List<AnalyticsEvent> allEvents() => [
   AnalyticsEvent.followCreated(AnalyticsSource.map),
   AnalyticsEvent.followRemoved(null),
   AnalyticsEvent.ordinaryUpdateCreated(AnalyticsUpdateStatus.waterProvided),
-  AnalyticsEvent.needsHelpCreated(AnalyticsNeedsHelpCategory.trapped),
+  const AnalyticsEvent.needsHelpCreated(),
   const AnalyticsEvent.catCreated(),
   AnalyticsEvent.discoverViewSelected(AnalyticsDiscoverView.following),
   AnalyticsEvent.notificationPermissionResult(AnalyticsResult.success),
@@ -57,7 +58,6 @@ Set<String> allowedParamValues() => {
   for (final v in AnalyticsAuthIntent.values) v.wire,
   for (final v in AnalyticsResult.values) v.wire,
   for (final v in AnalyticsUpdateStatus.values) v.wire,
-  for (final v in AnalyticsNeedsHelpCategory.values) v.wire,
   for (final v in AnalyticsNotificationState.values) v.wire,
 };
 
@@ -68,7 +68,6 @@ const allowedParamKeys = {
   'auth_intent',
   'result',
   'update_status',
-  'needs_help_category',
   'notification_state',
 };
 
@@ -103,20 +102,11 @@ void main() {
     });
   });
 
-  test('needs-help categories clamp unknown ids to unknown', () {
-    expect(
-      AnalyticsNeedsHelpCategory.fromId('injured_or_sick'),
-      AnalyticsNeedsHelpCategory.injuredOrSick,
-    );
-    expect(
-      AnalyticsNeedsHelpCategory.fromId('free text from somewhere'),
-      AnalyticsNeedsHelpCategory.unknown,
-    );
-    // 'unknown' itself is not a product category id — only the clamp target.
-    expect(
-      AnalyticsNeedsHelpCategory.fromId('unknown'),
-      AnalyticsNeedsHelpCategory.unknown,
-    );
+  test('needs_help_created carries no parameters (issue #100/#101)', () {
+    // The retired category enum must be structurally unrepresentable: the
+    // event has no parameter at all, so no legacy vocabulary value — and
+    // never the free-text note — can reach the analytics provider.
+    expect(const AnalyticsEvent.needsHelpCreated().params, isEmpty);
   });
 
   test('noop service swallows events without error', () {

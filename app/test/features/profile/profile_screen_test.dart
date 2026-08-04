@@ -312,8 +312,6 @@ void main() {
             catName: 'Tekir',
             catPrimaryPhoto: null,
             statuses: const ['seen'],
-            needsHelpCategory: null,
-            needsHelpCategoryLabel: null,
             createdAt: DateTime.utc(2026, 1, 1),
           ),
         ],

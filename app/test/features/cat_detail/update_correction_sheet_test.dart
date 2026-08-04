@@ -19,10 +19,12 @@ const _session = SessionIdentity(
 CatUpdateEntry _entry({
   String id = 'upd-1',
   List<String> statuses = const ['seen'],
+  bool needsHelp = false,
   String? comment,
   DateTime? correctionExpiresAt,
 }) => CatUpdateEntry(
   id: id,
+  needsHelp: needsHelp,
   statuses: statuses,
   comment: comment,
   createdAt: DateTime.utc(2026, 1, 1),
@@ -57,6 +59,8 @@ class _FakeCatDetailApi implements CatDetailApi {
   Object? deleteError;
   int correctCalls = 0;
   int deleteCalls = 0;
+  List<String>? lastStatuses;
+  bool? lastClearNeedsHelp;
 
   @override
   Future<CatDetail> fetchDetail(String catId) => throw UnimplementedError();
@@ -69,6 +73,7 @@ class _FakeCatDetailApi implements CatDetailApi {
   Future<CatUpdateEntry> createUpdate(
     String catId, {
     required List<String> statuses,
+    bool needsHelp = false,
     String? comment,
     String idempotencyKey = '',
   }) => throw UnimplementedError();
@@ -79,8 +84,11 @@ class _FakeCatDetailApi implements CatDetailApi {
     String updateId, {
     required List<String> statuses,
     String? comment,
+    bool clearNeedsHelp = false,
   }) async {
     correctCalls++;
+    lastStatuses = statuses;
+    lastClearNeedsHelp = clearNeedsHelp;
     if (correctError != null) throw correctError!;
     return correctResult!;
   }
@@ -301,5 +309,156 @@ void main() {
       find.widgetWithText(ElevatedButton, 'Kaydet'),
     );
     expect(saveButton.onPressed, isNull);
+  });
+  group('help mark removal (issue #101/#102)', () {
+    testWidgets('an ordinary entry never shows the yardım pill', (
+      tester,
+    ) async {
+      await _pumpAndOpen(tester, api: _FakeCatDetailApi(), entry: _entry());
+
+      expect(find.text('yardım'), findsNothing);
+    });
+
+    testWidgets(
+      'a help-carrying entry shows its pill selected; saving untouched never sends needs_help',
+      (tester) async {
+        final api = _FakeCatDetailApi(
+          correctResult: _entry(
+            needsHelp: true,
+            statuses: const ['water_provided'],
+          ),
+        );
+        await _pumpAndOpen(
+          tester,
+          api: api,
+          entry: _entry(needsHelp: true, statuses: const ['water_provided']),
+        );
+
+        expect(find.text('yardım'), findsOneWidget);
+        expect(
+          find.text('Kaydedince yardım işareti kaldırılır.'),
+          findsNothing,
+        );
+
+        await tester.tap(find.text('Kaydet'));
+        await tester.pumpAndSettle();
+
+        expect(api.correctCalls, 1);
+        expect(
+          api.lastClearNeedsHelp,
+          isFalse,
+          reason:
+              'an untouched mark must be omitted from the PATCH, never '
+              'sent as true (the server answers 400 to adding it)',
+        );
+      },
+    );
+
+    testWidgets(
+      'toggling the mark off shows the removal hint and saving sends the clear',
+      (tester) async {
+        final api = _FakeCatDetailApi(
+          correctResult: _entry(statuses: const ['water_provided']),
+        );
+        final outcomeBox = _OutcomeBox();
+        await _pumpAndOpen(
+          tester,
+          api: api,
+          entry: _entry(needsHelp: true, statuses: const ['water_provided']),
+          outcomeBox: outcomeBox,
+        );
+
+        await tester.tap(find.text('yardım'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Kaydedince yardım işareti kaldırılır.'),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.text('Kaydet'));
+        await tester.pumpAndSettle();
+
+        expect(api.correctCalls, 1);
+        expect(api.lastClearNeedsHelp, isTrue);
+        expect(api.lastStatuses, ['water_provided']);
+        expect(outcomeBox.value, UpdateCorrectionOutcome.saved);
+      },
+    );
+
+    testWidgets(
+      'toggling the mark back on before saving reverts to an untouched PATCH',
+      (tester) async {
+        final api = _FakeCatDetailApi(
+          correctResult: _entry(
+            needsHelp: true,
+            statuses: const ['water_provided'],
+          ),
+        );
+        await _pumpAndOpen(
+          tester,
+          api: api,
+          entry: _entry(needsHelp: true, statuses: const ['water_provided']),
+        );
+
+        await tester.tap(find.text('yardım'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('yardım'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Kaydedince yardım işareti kaldırılır.'),
+          findsNothing,
+        );
+
+        await tester.tap(find.text('Kaydet'));
+        await tester.pumpAndSettle();
+
+        expect(api.lastClearNeedsHelp, isFalse);
+      },
+    );
+
+    testWidgets(
+      'removing the mark from a help-only entry disables save — the post-state '
+      'would be hollow; deleting remains available',
+      (tester) async {
+        await _pumpAndOpen(
+          tester,
+          api: _FakeCatDetailApi(),
+          entry: _entry(needsHelp: true, statuses: const []),
+        );
+
+        // mark still on: the help flag alone satisfies the invariant.
+        var saveButton = tester.widget<ElevatedButton>(
+          find.widgetWithText(ElevatedButton, 'Kaydet'),
+        );
+        expect(saveButton.onPressed, isNotNull);
+
+        await tester.tap(find.text('yardım'));
+        await tester.pumpAndSettle();
+
+        saveButton = tester.widget<ElevatedButton>(
+          find.widgetWithText(ElevatedButton, 'Kaydet'),
+        );
+        expect(saveButton.onPressed, isNull);
+        final deleteButton = tester.widget<OutlinedButton>(
+          find.widgetWithText(OutlinedButton, 'Güncellemeyi sil'),
+        );
+        expect(deleteButton.onPressed, isNotNull);
+      },
+    );
+
+    testWidgets('the yardım pill meets the 44px tap target', (tester) async {
+      await _pumpAndOpen(
+        tester,
+        api: _FakeCatDetailApi(),
+        entry: _entry(needsHelp: true, statuses: const []),
+      );
+
+      final inkWell = find
+          .ancestor(of: find.text('yardım'), matching: find.byType(InkWell))
+          .first;
+      expect(tester.getSize(inkWell).height, greaterThanOrEqualTo(kTapMin));
+    });
   });
 }
