@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:app/core/analytics/analytics.dart';
 import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
+import 'package:app/core/states/optimistic_inline_row.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/data/cat_detail_api.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
@@ -881,6 +882,28 @@ void main() {
       },
     );
 
+    test('a help submit never creates an optimistic pending row', () async {
+      final gate = Completer<void>();
+      final api = _FakeCatDetailApi()
+        ..nextResult = _helpEntry('upd-1')
+        ..gate = gate;
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      notifier.toggleNeedsHelp();
+      final future = notifier.submit();
+
+      expect(container.read(catUpdateComposerProvider(_catId)).pending, isNull);
+
+      gate.complete();
+      await future;
+      expect(container.read(catUpdateComposerProvider(_catId)).pending, isNull);
+    });
+
     test('submitSeen never carries a dismissed help mark', () async {
       final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
       final container = _containerWith(api);
@@ -898,6 +921,186 @@ void main() {
       expect(ok, isTrue);
       expect(api.lastNeedsHelp, isFalse);
       expect(api.lastStatuses, ['seen']);
+    });
+  });
+
+  group('optimistic pending row (issue #109, mutation affordances)', () {
+    test('an ordinary submit drops a saving pending row in the same '
+        'synchronous state change as the tap', () async {
+      final gate = Completer<void>();
+      final api = _FakeCatDetailApi()
+        ..nextResult = _entry('upd-1')
+        ..gate = gate;
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      final future = notifier.submitSeen();
+
+      final pending = container.read(catUpdateComposerProvider(_catId)).pending;
+      expect(pending, isNotNull);
+      expect(pending!.status, InlineSaveStatus.saving);
+      expect(pending.statuses, ['seen']);
+
+      gate.complete();
+      await future;
+    });
+
+    test('success clears the pending row in the same state change that '
+        'prepends the confirmed entry', () async {
+      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final ok = await container
+          .read(catUpdateComposerProvider(_catId).notifier)
+          .submitSeen();
+
+      expect(ok, isTrue);
+      expect(container.read(catUpdateComposerProvider(_catId)).pending, isNull);
+      expect(
+        container.read(catDetailProvider(_catId)).updates.map((u) => u.id),
+        ['upd-1'],
+      );
+    });
+
+    test('failure flips the row to failed and keeps it; the retry replaces it '
+        'with a fresh saving row until success clears it', () async {
+      final api = _FakeCatDetailApi()
+        ..nextError = const UpdateNetworkException();
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      await notifier.submitSeen();
+
+      var pending = container.read(catUpdateComposerProvider(_catId)).pending;
+      expect(pending, isNotNull);
+      expect(pending!.status, InlineSaveStatus.failed);
+      expect(pending.statuses, ['seen']);
+
+      final gate = Completer<void>();
+      api
+        ..nextError = null
+        ..nextResult = _entry('upd-1')
+        ..gate = gate;
+      final retry = notifier.submitSeen();
+      pending = container.read(catUpdateComposerProvider(_catId)).pending;
+      expect(pending!.status, InlineSaveStatus.saving);
+
+      gate.complete();
+      await retry;
+      expect(container.read(catUpdateComposerProvider(_catId)).pending, isNull);
+    });
+
+    test(
+      'reset keeps a failed attempt whole: the row, the draft, and its error '
+      'all survive a sheet remount',
+      () async {
+        final api = _FakeCatDetailApi()
+          ..nextError = const UpdateNetworkException();
+        final container = _containerWith(api);
+        addTearDown(container.dispose);
+        await container.read(catDetailProvider(_catId).notifier).load();
+
+        final notifier = container.read(
+          catUpdateComposerProvider(_catId).notifier,
+        );
+        notifier.toggleStatus('water_provided');
+        notifier.setComment('kabı doldurdum');
+        await notifier.submit();
+
+        notifier.reset();
+
+        final state = container.read(catUpdateComposerProvider(_catId));
+        expect(state.pending?.status, InlineSaveStatus.failed);
+        expect(state.selectedStatuses, {'water_provided'});
+        expect(state.comment, 'kabı doldurdum');
+        expect(state.error, UpdateSubmitError.network);
+      },
+    );
+
+    test('reset after a draftless failed attempt (one-tap seen) keeps only the '
+        'row — the sheet opens clean', () async {
+      final api = _FakeCatDetailApi()
+        ..nextError = const UpdateNetworkException();
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      await notifier.submitSeen();
+
+      notifier.reset();
+
+      final state = container.read(catUpdateComposerProvider(_catId));
+      expect(state.pending?.status, InlineSaveStatus.failed);
+      expect(state.selectedStatuses, isEmpty);
+      expect(state.error, isNull);
+    });
+
+    test('reset never touches an in-flight submission', () async {
+      final gate = Completer<void>();
+      final api = _FakeCatDetailApi()
+        ..nextResult = _entry('upd-1')
+        ..gate = gate;
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      final future = notifier.submitSeen();
+
+      notifier.reset();
+
+      final state = container.read(catUpdateComposerProvider(_catId));
+      expect(state.isSubmitting, isTrue);
+      expect(state.pending?.status, InlineSaveStatus.saving);
+
+      gate.complete();
+      await future;
+    });
+
+    test('the row label extends the contract copy across statuses and both '
+        'states', () {
+      expect(
+        optimisticUpdateLabelTr(
+          const PendingUpdate(
+            statuses: ['water_provided'],
+            status: InlineSaveStatus.saving,
+          ),
+        ),
+        'su verdin · kaydediliyor',
+      );
+      expect(
+        optimisticUpdateLabelTr(
+          const PendingUpdate(
+            statuses: ['seen'],
+            status: InlineSaveStatus.failed,
+          ),
+        ),
+        'gördün · kaydedilemedi',
+      );
+      expect(
+        optimisticUpdateLabelTr(
+          const PendingUpdate(
+            statuses: ['fed', 'water_provided'],
+            status: InlineSaveStatus.saving,
+          ),
+        ),
+        'mama verdin · su verdin · kaydediliyor',
+      );
     });
   });
 }

@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
+import 'package:app/core/states/optimistic_inline_row.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/auth/data/auth_api.dart';
 import 'package:app/features/auth/ui/login_screen.dart';
@@ -291,19 +292,33 @@ void main() {
   });
 
   testWidgets(
-    'one tap on Gördüm submits seen without opening a form, and shows success feedback',
+    'one tap on Gördüm drops the optimistic row immediately, which settles '
+    'into the confirmed timeline entry',
     (tester) async {
-      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+      final gate = Completer<void>();
+      final api = _FakeCatDetailApi()
+        ..nextResult = _entry('upd-1')
+        ..gate = gate;
       await _pump(tester, api: api);
 
       await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
-      await tester.pumpAndSettle();
+      // Bounded pumps: the saving row's InlineSpinner animates
+      // indefinitely, so pumpAndSettle would hang while it's visible.
+      await tester.pump();
 
       expect(api.createUpdateCalls, 1);
       expect(api.lastStatuses, ['seen']);
-      expect(find.text('Güncelleme paylaşıldı'), findsOneWidget);
-      // The new entry lands in the timeline without a page reload.
+      expect(find.text('gördün · kaydediliyor'), findsOneWidget);
+      expect(find.byType(OptimisticInlineRow), findsOneWidget);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      // The row is replaced by the server-confirmed entry — and the old
+      // success toast is gone: the row itself was the feedback.
+      expect(find.byType(OptimisticInlineRow), findsNothing);
       expect(find.text('görüldü'), findsOneWidget);
+      expect(find.text('Güncelleme paylaşıldı'), findsNothing);
     },
   );
 
@@ -494,9 +509,12 @@ void main() {
       expect(api.createUpdateCalls, 1);
       expect(api.lastStatuses, ['seen', 'fed']);
       expect(api.lastComment, isNull);
-      // Sheet closed and the success toast is shown by the parent screen.
+      // Sheet closed immediately; the confirmed entry is on the timeline
+      // and no success toast fires for the optimistic path.
       expect(find.text('Paylaş'), findsNothing);
-      expect(find.text('Güncelleme paylaşıldı'), findsOneWidget);
+      expect(find.text('görüldü'), findsOneWidget);
+      expect(find.text('mama verildi'), findsOneWidget);
+      expect(find.text('Güncelleme paylaşıldı'), findsNothing);
     },
   );
 
@@ -517,154 +535,153 @@ void main() {
     expect(api.createUpdateCalls, 0);
   });
 
-  testWidgets('submitting shows a spinner and disables the submit button', (
-    tester,
-  ) async {
-    final gate = Completer<void>();
-    final api = _FakeCatDetailApi()
-      ..nextResult = _entry('upd-1')
-      ..gate = gate;
-    await _pump(tester, api: api);
-    await _openComposer(tester);
+  testWidgets(
+    'an ordinary sheet submit closes the sheet in the same tap and shows '
+    'the saving row beneath',
+    (tester) async {
+      final gate = Completer<void>();
+      final api = _FakeCatDetailApi()
+        ..nextResult = _entry('upd-1', statuses: const ['water_provided'])
+        ..gate = gate;
+      await _pump(tester, api: api);
+      await _openComposer(tester);
 
-    await tester.tap(find.text('Görüldü'));
-    await tester.pump();
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
-    await tester.pump();
+      await tester.tap(find.text('Su verildi'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
+      // Bounded pumps while the saving row's spinner animates.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    final sheetSubmitButton = find.descendant(
-      of: find.byType(CatUpdateSheet),
-      matching: find.byType(ElevatedButton),
+      expect(find.byType(CatUpdateSheet), findsNothing);
+      expect(find.text('su verdin · kaydediliyor'), findsOneWidget);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(find.byType(OptimisticInlineRow), findsNothing);
+      expect(find.text('su verildi'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'while a background submission is in flight both entry points are '
+    'disabled — at most one request',
+    (tester) async {
+      final gate = Completer<void>();
+      final api = _FakeCatDetailApi()
+        ..nextResult = _entry('upd-1')
+        ..gate = gate;
+      await _pump(tester, api: api);
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
+      await tester.pump();
+
+      expect(
+        tester
+            .widget<ElevatedButton>(
+              find.widgetWithText(ElevatedButton, 'Gördüm'),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Güncelleme ekle'),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(
+        find.widgetWithText(ElevatedButton, 'Gördüm'),
+        warnIfMissed: false,
+      );
+      await tester.pump();
+      expect(api.createUpdateCalls, 1);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+    },
+  );
+
+  for (final entry in {
+    const UpdateValidationException(): UpdateSubmitError.validation,
+    const UpdateUnauthorizedException(): UpdateSubmitError.unauthorized,
+    const CatNotFoundException(): UpdateSubmitError.notFound,
+    const UpdateNetworkException(): UpdateSubmitError.network,
+    const UpdateServerException(): UpdateSubmitError.server,
+  }.entries) {
+    testWidgets(
+      '${entry.key.runtimeType}: the optimistic row flips to failed and '
+      'stays, and the cause surfaces via a snack bar',
+      (tester) async {
+        final api = _FakeCatDetailApi()..nextError = entry.key;
+        await _pump(tester, api: api);
+        await _openComposer(tester);
+
+        await tester.tap(find.text('Görüldü'));
+        await tester.pump();
+        await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('gördün · kaydedilemedi'), findsOneWidget);
+        expect(
+          find.text(updateSubmitErrorMessageTr(entry.value)),
+          findsOneWidget,
+        );
+
+        // The failed row never disappears on its own — still there after
+        // the snack bar's lifetime.
+        await tester.pump(const Duration(seconds: 6));
+        await tester.pumpAndSettle();
+        expect(find.text('gördün · kaydedilemedi'), findsOneWidget);
+      },
     );
-    final submitButton = tester.widget<ElevatedButton>(sheetSubmitButton);
-    expect(submitButton.onPressed, isNull);
+  }
 
-    gate.complete();
-    await tester.pumpAndSettle();
-  });
+  testWidgets(
+    'reopening the sheet after a failed submission restores the draft, and '
+    'retrying replaces the failed row until success clears it',
+    (tester) async {
+      final api = _FakeCatDetailApi()
+        ..nextError = const UpdateNetworkException();
+      await _pump(tester, api: api);
+      await _openComposer(tester);
 
-  testWidgets('a second tap while submitting creates at most one request', (
-    tester,
-  ) async {
-    final gate = Completer<void>();
-    final api = _FakeCatDetailApi()
-      ..nextResult = _entry('upd-1')
-      ..gate = gate;
-    await _pump(tester, api: api);
-    await _openComposer(tester);
+      await tester.tap(find.text('Su verildi'));
+      await tester.enterText(find.byType(TextField), 'kabı doldurdum');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
+      await tester.pumpAndSettle();
 
-    final sheetSubmitButton = find.descendant(
-      of: find.byType(CatUpdateSheet),
-      matching: find.byType(ElevatedButton),
-    );
+      expect(find.text('su verdin · kaydedilemedi'), findsOneWidget);
 
-    await tester.tap(find.text('Görüldü'));
-    await tester.pump();
-    await tester.tap(sheetSubmitButton);
-    await tester.pump();
-    // Button is now disabled; a warnIfMissed tap here would still only
-    // resolve to the disabled button, never a second submit.
-    await tester.tap(sheetSubmitButton, warnIfMissed: false);
-    await tester.pump();
+      // Let the failure snack bar expire so the inline banner is the only
+      // place the message appears once the sheet reopens.
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pumpAndSettle();
 
-    expect(api.createUpdateCalls, 1);
+      // Reopen: the draft survived the failure — selection, comment, and
+      // the inline error with its retry label.
+      await _openComposer(tester);
+      expect(find.text('kabı doldurdum'), findsOneWidget);
+      expect(
+        find.text(updateSubmitErrorMessageTr(UpdateSubmitError.network)),
+        findsOneWidget,
+      );
 
-    gate.complete();
-    await tester.pumpAndSettle();
-  });
+      api
+        ..nextError = null
+        ..nextResult = _entry('upd-1', statuses: const ['water_provided']);
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Tekrar dene'));
+      await tester.pumpAndSettle();
 
-  testWidgets('validation failure shows its turkish message inline', (
-    tester,
-  ) async {
-    final api = _FakeCatDetailApi()
-      ..nextError = const UpdateValidationException();
-    await _pump(tester, api: api);
-    await _openComposer(tester);
-
-    await tester.tap(find.text('Görüldü'));
-    await tester.pump();
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text(updateSubmitErrorMessageTr(UpdateSubmitError.validation)),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('unauthorized failure shows its turkish message inline', (
-    tester,
-  ) async {
-    final api = _FakeCatDetailApi()
-      ..nextError = const UpdateUnauthorizedException();
-    await _pump(tester, api: api);
-    await _openComposer(tester);
-
-    await tester.tap(find.text('Görüldü'));
-    await tester.pump();
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text(updateSubmitErrorMessageTr(UpdateSubmitError.unauthorized)),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('not-found failure shows its turkish message inline', (
-    tester,
-  ) async {
-    final api = _FakeCatDetailApi()..nextError = const CatNotFoundException();
-    await _pump(tester, api: api);
-    await _openComposer(tester);
-
-    await tester.tap(find.text('Görüldü'));
-    await tester.pump();
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text(updateSubmitErrorMessageTr(UpdateSubmitError.notFound)),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('offline/network failure shows its turkish message inline', (
-    tester,
-  ) async {
-    final api = _FakeCatDetailApi()..nextError = const UpdateNetworkException();
-    await _pump(tester, api: api);
-    await _openComposer(tester);
-
-    await tester.tap(find.text('Görüldü'));
-    await tester.pump();
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text(updateSubmitErrorMessageTr(UpdateSubmitError.network)),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('server failure shows its turkish message inline', (
-    tester,
-  ) async {
-    final api = _FakeCatDetailApi()..nextError = const UpdateServerException();
-    await _pump(tester, api: api);
-    await _openComposer(tester);
-
-    await tester.tap(find.text('Görüldü'));
-    await tester.pump();
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text(updateSubmitErrorMessageTr(UpdateSubmitError.server)),
-      findsOneWidget,
-    );
-  });
+      expect(api.createUpdateCalls, 2);
+      expect(api.lastComment, 'kabı doldurdum');
+      expect(find.byType(OptimisticInlineRow), findsNothing);
+      expect(find.text('su verildi'), findsOneWidget);
+    },
+  );
 
   testWidgets('one-tap seen failure surfaces via a snack bar, not silently', (
     tester,
@@ -1153,7 +1170,9 @@ void main() {
       expect(find.byType(LoginScreen), findsNothing);
       expect(api.createUpdateCalls, 1);
       expect(api.lastStatuses, ['seen']);
-      expect(find.text('Güncelleme paylaşıldı'), findsOneWidget);
+      // The optimistic row settled into the confirmed timeline entry.
+      expect(find.text('görüldü'), findsOneWidget);
+      expect(find.byType(OptimisticInlineRow), findsNothing);
     },
   );
 }

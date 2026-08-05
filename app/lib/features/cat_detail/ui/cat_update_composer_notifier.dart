@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/device_identity.dart';
 import '../../../core/identity/session_identity.dart';
+import '../../../core/states/optimistic_inline_row.dart';
 import '../data/cat_detail_api.dart';
 import 'cat_detail_notifier.dart';
 
@@ -33,6 +34,41 @@ String updateSubmitErrorMessageTr(UpdateSubmitError error) {
   };
 }
 
+/// One ordinary submission's optimistic timeline presence (docs/design/
+/// app-states.md, mutation affordances): dropped into the list in the same
+/// frame as the tap, settled into the server-confirmed entry on success,
+/// flipped to [InlineSaveStatus.failed] on failure — where it never
+/// disappears until a retry succeeds. Help-carrying submissions never
+/// create one: their feedback is the sheet's own submitting button, and
+/// the active-alert banner is always built from the server-confirmed
+/// entry (expiry is server-computed), never optimistically.
+class PendingUpdate {
+  const PendingUpdate({required this.statuses, required this.status});
+
+  final List<String> statuses;
+  final InlineSaveStatus status;
+}
+
+/// Second-person past-tense forms for the optimistic row, extending the
+/// contract's one bound example "su verdin · kaydediliyor" to the other
+/// two approved statuses.
+const _statusDoneTr = {
+  'seen': 'gördün',
+  'fed': 'mama verdin',
+  'water_provided': 'su verdin',
+};
+
+/// The optimistic row's full label — statuses joined with the contract's
+/// " · " separator, closed by "kaydediliyor" while saving and its direct
+/// negation "kaydedilemedi" once failed.
+String optimisticUpdateLabelTr(PendingUpdate pending) {
+  final parts = pending.statuses.map((s) => _statusDoneTr[s] ?? s);
+  final tail = pending.status == InlineSaveStatus.saving
+      ? 'kaydediliyor'
+      : 'kaydedilemedi';
+  return [...parts, tail].join(' · ');
+}
+
 class CatUpdateComposerState {
   const CatUpdateComposerState({
     this.selectedStatuses = const {},
@@ -40,6 +76,7 @@ class CatUpdateComposerState {
     this.comment = '',
     this.isSubmitting = false,
     this.error,
+    this.pending,
   });
 
   final Set<String> selectedStatuses;
@@ -51,6 +88,11 @@ class CatUpdateComposerState {
   final String comment;
   final bool isSubmitting;
   final UpdateSubmitError? error;
+
+  /// The ordinary submission currently shown as an optimistic timeline
+  /// row — saving while in flight, failed (and kept) after a failure,
+  /// null once no attempt is pending.
+  final PendingUpdate? pending;
 
   /// The create invariant (docs/architecture/api.md): at least one status
   /// or the help flag; comment-only submissions stay invalid.
@@ -64,6 +106,8 @@ class CatUpdateComposerState {
     bool? isSubmitting,
     UpdateSubmitError? error,
     bool clearError = false,
+    PendingUpdate? pending,
+    bool clearPending = false,
   }) {
     return CatUpdateComposerState(
       selectedStatuses: selectedStatuses ?? this.selectedStatuses,
@@ -71,6 +115,7 @@ class CatUpdateComposerState {
       comment: comment ?? this.comment,
       isSubmitting: isSubmitting ?? this.isSubmitting,
       error: clearError ? null : (error ?? this.error),
+      pending: clearPending ? null : (pending ?? this.pending),
     );
   }
 }
@@ -79,9 +124,17 @@ class CatUpdateComposerState {
 /// sheet's multi-select + optional comment, and cat_detail_screen's
 /// one-tap "seen" shortcut — so a submission from either surface shares
 /// the same in-flight guard ([submit] is a no-op while already
-/// submitting) and the same success side effect: prepending the
-/// server-confirmed entry onto [CatDetailNotifier], never an optimistic
-/// one, per issue #43's "do not implement optimistic persistence" note.
+/// submitting).
+///
+/// Ordinary submissions are optimistic per the adopted application-state
+/// contract (docs/design/app-states.md, mutation affordances, superseding
+/// issue #43's earlier "no optimistic persistence" note): a [PendingUpdate]
+/// row appears in the same synchronous state change as the tap, and only
+/// the server-confirmed entry ever lands on [CatDetailNotifier] — on
+/// success the pending row is replaced by it in the same frame. A
+/// help-carrying submission stays synchronous in the sheet: its note is
+/// visibly retained there on failure ("data is never lost"), and the
+/// active alert is never shown before the server confirms it.
 ///
 /// One instance per cat id, matching [catDetailProvider]'s family.
 class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
@@ -118,8 +171,21 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   /// Clears any selection, draft comment, and stale error from a previous
   /// open of the composition sheet — called when the sheet mounts so a
   /// dismissed-without-submitting draft never leaks into the next open.
+  ///
+  /// Never touches an in-flight background submission, and keeps a failed
+  /// attempt's draft: reopening the sheet after an optimistic failure must
+  /// show the retained values and their error, ready to retry ("data is
+  /// never lost"). A failed one-tap "seen" attempt carries no draft, so
+  /// only its row survives — the sheet still opens clean.
   void reset() {
-    state = const CatUpdateComposerState();
+    if (state.isSubmitting) return;
+    final pending = state.pending;
+    final hasDraft =
+        state.selectedStatuses.isNotEmpty ||
+        state.needsHelp ||
+        state.comment.isNotEmpty;
+    if (pending?.status == InlineSaveStatus.failed && hasDraft) return;
+    state = CatUpdateComposerState(pending: pending);
   }
 
   /// Submits the current selection, help mark, and draft comment from the
@@ -149,7 +215,17 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     bool needsHelp = false,
   }) async {
     if (state.isSubmitting) return false;
-    state = state.copyWith(isSubmitting: true, clearError: true);
+    // An ordinary submission drops its optimistic row here, in the same
+    // synchronous state change as the in-flight guard — feedback starts in
+    // the frame of the tap. A help-carrying one never gets a row (see the
+    // class doc); its feedback is the sheet's submitting button.
+    state = state.copyWith(
+      isSubmitting: true,
+      clearError: true,
+      pending: needsHelp
+          ? null
+          : PendingUpdate(statuses: statuses, status: InlineSaveStatus.saving),
+    );
     try {
       // Defense-in-depth (issue #65): the caller is expected to have
       // already gone through AuthGate before reaching this method, so a
@@ -159,10 +235,7 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
       // boundary (RequireBearer); this is purely a fast, local check to
       // avoid a doomed round trip.
       if (ref.read(sessionIdentityServiceProvider).cached == null) {
-        state = state.copyWith(
-          isSubmitting: false,
-          error: UpdateSubmitError.unauthorized,
-        );
+        _fail(UpdateSubmitError.unauthorized);
         return false;
       }
       // Lazily initializes (or awaits an in-flight, or retries a
@@ -207,10 +280,7 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
       _idempotencyKey = _generateIdempotencyKey();
       return true;
     } on UpdateValidationException {
-      state = state.copyWith(
-        isSubmitting: false,
-        error: UpdateSubmitError.validation,
-      );
+      _fail(UpdateSubmitError.validation);
     } on UpdateUnauthorizedException {
       // The stored credential looked valid locally but the server rejected
       // it — replaying the same token on retry would just 401 again, so
@@ -223,27 +293,34 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
         // Ignored — falling through still surfaces the unauthorized error
         // and re-enables submission below.
       }
-      state = state.copyWith(
-        isSubmitting: false,
-        error: UpdateSubmitError.unauthorized,
-      );
+      _fail(UpdateSubmitError.unauthorized);
     } on CatNotFoundException {
-      state = state.copyWith(
-        isSubmitting: false,
-        error: UpdateSubmitError.notFound,
-      );
+      _fail(UpdateSubmitError.notFound);
     } on UpdateNetworkException {
-      state = state.copyWith(
-        isSubmitting: false,
-        error: UpdateSubmitError.network,
-      );
+      _fail(UpdateSubmitError.network);
     } catch (_) {
-      state = state.copyWith(
-        isSubmitting: false,
-        error: UpdateSubmitError.server,
-      );
+      _fail(UpdateSubmitError.server);
     }
     return false;
+  }
+
+  /// Surfaces a failed attempt: re-enables submission, records the mapped
+  /// error, and — when the attempt had an optimistic row — flips that row
+  /// to failed, keeping it mounted (the contract's "it never disappears").
+  /// The draft itself is untouched, so a retry re-submits the same values
+  /// under the same idempotency key.
+  void _fail(UpdateSubmitError error) {
+    final pending = state.pending;
+    state = state.copyWith(
+      isSubmitting: false,
+      error: error,
+      pending: pending == null
+          ? null
+          : PendingUpdate(
+              statuses: pending.statuses,
+              status: InlineSaveStatus.failed,
+            ),
+    );
   }
 }
 

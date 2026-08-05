@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/analytics/analytics.dart';
+import '../../../core/states/optimistic_inline_row.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../../auth/ui/auth_gate.dart';
@@ -116,6 +117,27 @@ class _CatDetailBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // The optimistic timeline row (docs/design/app-states.md, mutation
+    // affordances): an ordinary submission from either entry point drops
+    // in here in the same frame as the tap, and on failure flips to the
+    // help palette without ever disappearing.
+    final pending = ref.watch(
+      catUpdateComposerProvider(detail.id).select((s) => s.pending),
+    );
+    // A background submission's failure cause still surfaces once, as the
+    // same snackbar the one-tap path always used — the row itself only
+    // says "kaydedilemedi". Help failures never carry a pending row; the
+    // sheet shows their error inline itself.
+    ref.listen(catUpdateComposerProvider(detail.id), (previous, next) {
+      final failedNow =
+          previous?.pending?.status == InlineSaveStatus.saving &&
+          next.pending?.status == InlineSaveStatus.failed;
+      final error = next.error;
+      if (!failedNow || error == null) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(updateSubmitErrorMessageTr(error))),
+      );
+    });
     return ListView(
       padding: EdgeInsets.zero,
       children: [
@@ -150,9 +172,16 @@ class _CatDetailBody extends ConsumerWidget {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: AppSpacing.s2),
-              if (state.updates.isEmpty)
+              if (pending != null) ...[
+                OptimisticInlineRow(
+                  label: optimisticUpdateLabelTr(pending),
+                  status: pending.status,
+                ),
+                const SizedBox(height: AppSpacing.s3),
+              ],
+              if (state.updates.isEmpty && pending == null)
                 const _EmptyHistory()
-              else ...[
+              else if (state.updates.isNotEmpty) ...[
                 for (var i = 0; i < state.updates.length; i++)
                   _TimelineItem(
                     catId: detail.id,
@@ -542,7 +571,11 @@ class _UpdateActionsRow extends ConsumerWidget {
       ref,
       contextText: 'Güncelleme paylaşmak için giriş yap',
       intent: AnalyticsAuthIntent.ordinaryUpdate,
-      onAuthenticated: () => unawaited(_submitSeen(context, ref)),
+      // Optimistic: the pending row is the success feedback, and a failure
+      // surfaces via _CatDetailBody's pending listener — nothing to await.
+      onAuthenticated: () => unawaited(
+        ref.read(catUpdateComposerProvider(catId).notifier).submitSeen(),
+      ),
     );
   }
 
@@ -556,25 +589,6 @@ class _UpdateActionsRow extends ConsumerWidget {
     );
   }
 
-  Future<void> _submitSeen(BuildContext context, WidgetRef ref) async {
-    final notifier = ref.read(catUpdateComposerProvider(catId).notifier);
-    final ok = await notifier.submitSeen();
-    if (!context.mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    if (ok) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Güncelleme paylaşıldı')),
-      );
-      return;
-    }
-    final error = ref.read(catUpdateComposerProvider(catId)).error;
-    if (error != null) {
-      messenger.showSnackBar(
-        SnackBar(content: Text(updateSubmitErrorMessageTr(error))),
-      );
-    }
-  }
-
   Future<void> _openComposer(BuildContext context) async {
     final result = await showModalBottomSheet<bool>(
       context: context,
@@ -582,6 +596,8 @@ class _UpdateActionsRow extends ConsumerWidget {
       backgroundColor: Colors.transparent,
       builder: (_) => CatUpdateSheet(catId: catId),
     );
+    // Only a synchronous help submission pops true — an ordinary one pops
+    // immediately and its optimistic row carries the feedback instead.
     if (result == true && context.mounted) {
       ScaffoldMessenger.of(
         context,
