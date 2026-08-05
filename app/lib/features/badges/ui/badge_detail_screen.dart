@@ -89,7 +89,9 @@ class _BadgeDetailScreenState extends ConsumerState<BadgeDetailScreen> {
               Icon(
                 badgeIconFor(badge.icon),
                 size: 44,
-                color: badge.earned ? AppColors.primaryStrong : AppColors.faint,
+                // muted, not faint (issue #109, badge contrast): faint on
+                // surfaceAlt is ~2.4:1, below the 3:1 non-text minimum.
+                color: badge.earned ? AppColors.primaryStrong : AppColors.muted,
               ),
               const SizedBox(height: AppSpacing.s3),
               Text(badge.name, style: Theme.of(context).textTheme.titleLarge),
