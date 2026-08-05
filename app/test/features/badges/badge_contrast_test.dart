@@ -51,27 +51,32 @@ BadgeStatus _badge(String id, {bool earned = false}) => BadgeStatus(
 
 void main() {
   // The badge icon is the element that carries the earned/unearned state,
-  // so every color it takes must clear WCAG's 3:1 non-text minimum
-  // against every surface the badge ui places it on (issue #109, "fix
-  // badge contrast" — AppColors.faint sat at ~2.4–3.0:1 and failed).
-  test('badge icon colors clear 3:1 on every badge surface', () {
-    const surfaces = {
-      'surface': AppColors.surface, // badges list rows
-      'surfaceAlt': AppColors.surfaceAlt, // unearned strip/detail hero
-      'primarySoft': AppColors.primarySoft, // earned strip/detail hero
+  // so every icon/surface pairing the badge ui actually renders must clear
+  // WCAG's 3:1 non-text minimum (issue #109, "fix badge contrast" —
+  // AppColors.faint sat at ~2.4–3.0:1 and failed). Exactly these pairs
+  // exist across the three call sites; unused combinations are deliberately
+  // not asserted.
+  test('every rendered badge icon/surface pair clears 3:1', () {
+    const pairs = {
+      // badges list rows sit on a white surface, both states.
+      'primaryStrong (earned) on surface': (
+        AppColors.primaryStrong,
+        AppColors.surface,
+      ),
+      'muted (unearned) on surface': (AppColors.muted, AppColors.surface),
+      // profile strip / detail hero tint their ground by state.
+      'primaryStrong (earned) on primarySoft': (
+        AppColors.primaryStrong,
+        AppColors.primarySoft,
+      ),
+      'muted (unearned) on surfaceAlt': (AppColors.muted, AppColors.surfaceAlt),
     };
-    const iconColors = {
-      'primaryStrong (earned)': AppColors.primaryStrong,
-      'muted (unearned)': AppColors.muted,
-    };
-    for (final surface in surfaces.entries) {
-      for (final icon in iconColors.entries) {
-        expect(
-          _contrast(icon.value, surface.value),
-          greaterThanOrEqualTo(3.0),
-          reason: '${icon.key} on ${surface.key}',
-        );
-      }
+    for (final pair in pairs.entries) {
+      expect(
+        _contrast(pair.value.$1, pair.value.$2),
+        greaterThanOrEqualTo(3.0),
+        reason: pair.key,
+      );
     }
   });
 
