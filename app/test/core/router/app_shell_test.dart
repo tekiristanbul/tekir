@@ -27,9 +27,12 @@ class _DeniedDiscoverLocationService extends DiscoverLocationService {
 
 const _catId = '00000000-0000-4000-8000-000000000010';
 
+// Idle pre-fetch state: not loading, nothing loaded. hasLoadedOnce would
+// put the map into state 07's empty-radius card (map_states.dart), whose
+// own add icon these chrome-only assertions must not count.
 class _EmptyCatsMapNotifier extends CatsMapNotifier {
   @override
-  CatsMapState build() => const CatsMapState(hasLoadedOnce: true);
+  CatsMapState build() => const CatsMapState();
 }
 
 // A guest session (never restored) — these tests are about the shell's

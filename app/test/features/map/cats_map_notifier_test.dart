@@ -101,6 +101,62 @@ void main() {
     },
   );
 
+  test(
+    'a successful fetch records the request bounds\' real search radius',
+    () async {
+      final api = _ControllableCatsApi();
+      final container = ProviderContainer(
+        overrides: [catsApiProvider.overrideWithValue(api)],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catsMapProvider.notifier);
+      final future = notifier.fetchForBounds(_boundsA);
+      api.resolve(_boundsA, const [_cat]);
+      await future;
+
+      final state = container.read(catsMapProvider);
+      // boundsA spans 1° of latitude (~111 km); center-to-nearest-edge is
+      // the smaller half-span — well under 60 km, well over 30 km.
+      expect(state.searchRadiusMeters, isNotNull);
+      expect(state.searchRadiusMeters, greaterThan(30000));
+      expect(state.searchRadiusMeters, lessThan(60000));
+      expect(state.searchRadiusMeters, searchRadiusOf(_boundsA));
+    },
+  );
+
+  test('only explicit retries bump the attempt counter, never plain '
+      'fetches', () async {
+    final api = _ControllableCatsApi();
+    final container = ProviderContainer(
+      overrides: [catsApiProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+
+    final notifier = container.read(catsMapProvider.notifier);
+
+    // plain fetches — the first read and camera-idle refetches — leave
+    // the counter alone so the initial-read gate is never remounted by
+    // panning the map.
+    final first = notifier.fetchForBounds(_boundsA);
+    expect(container.read(catsMapProvider).attempt, 0);
+    api.resolve(_boundsA, const []);
+    await first;
+    expect(container.read(catsMapProvider).attempt, 0);
+
+    final second = notifier.fetchForBounds(_boundsB);
+    expect(container.read(catsMapProvider).attempt, 0);
+    api._pending[_boundsB]!.removeAt(0).completeError(Exception('down'));
+    await second;
+    expect(container.read(catsMapProvider).attempt, 0);
+
+    final retry = notifier.retryForBounds(_boundsB);
+    expect(container.read(catsMapProvider).attempt, 1);
+    api._pending[_boundsB]!.removeAt(0).completeError(Exception('down'));
+    await retry;
+    expect(container.read(catsMapProvider).attempt, 1);
+  });
+
   test('selectCat sets the selected marker; clearSelection clears it', () {
     final container = ProviderContainer(
       overrides: [catsApiProvider.overrideWithValue(_ControllableCatsApi())],

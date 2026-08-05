@@ -45,13 +45,13 @@ void main() {
 
       expect(find.byType(GoogleMap), findsOneWidget);
       expect(
-        find.text('location unavailable — showing istanbul'),
+        find.text('konum alınamadı — istanbul gösteriliyor'),
         findsOneWidget,
       );
     },
   );
 
-  testWidgets('shows the empty-state banner once loaded with no cats in view', (
+  testWidgets('shows the empty-radius card once loaded with no cats in view', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -65,7 +65,11 @@ void main() {
           ),
           catsMapProvider.overrideWith(
             () => _FixedCatsMapNotifier(
-              const CatsMapState(hasLoadedOnce: true, markers: []),
+              const CatsMapState(
+                hasLoadedOnce: true,
+                markers: [],
+                searchRadiusMeters: 300,
+              ),
             ),
           ),
         ],
@@ -75,6 +79,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('no cats in this area yet'), findsOneWidget);
+    expect(find.text('bu 300 metrede henüz kayıtlı kedi yok'), findsOneWidget);
+    expect(find.text('ilk kediyi ekle'), findsOneWidget);
+    expect(find.text('alanı genişlet'), findsOneWidget);
   });
 }

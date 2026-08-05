@@ -71,9 +71,12 @@ class _FakeAuthApi implements AuthApi {
   Future<void> setDisplayName(String displayName) async {}
 }
 
+// Idle pre-fetch state — hasLoadedOnce with zero markers would mount
+// state 07's empty-radius card (map_states.dart), whose sonar pulse
+// repeats forever and would hang every pumpAndSettle below.
 class _EmptyCatsMapNotifier extends CatsMapNotifier {
   @override
-  CatsMapState build() => const CatsMapState(hasLoadedOnce: true);
+  CatsMapState build() => const CatsMapState();
 }
 
 Future<void> _pumpMap(
