@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -161,6 +162,16 @@ class _CatDetailBody extends ConsumerWidget {
     WidgetRef ref,
     PendingUpdate? pending,
   ) {
+    // Clearance for the fixed "+ update" bar, derived from its actual
+    // layout rather than a constant: the device's bottom safe-area inset,
+    // the bar's own vertical padding, and the button's minimum height —
+    // scaled with the text scaler, since the single-line label grows the
+    // button beyond kTapMin at large system text.
+    final barClearance =
+        MediaQuery.paddingOf(context).bottom +
+        AppSpacing.s3 +
+        AppSpacing.s5 +
+        math.max(kTapMin, MediaQuery.textScalerOf(context).scale(kTapMin));
     return ListView(
       padding: EdgeInsets.zero,
       children: [
@@ -168,11 +179,11 @@ class _CatDetailBody extends ConsumerWidget {
         Padding(
           // The extra bottom padding keeps the last timeline entry
           // scrollable clear of the fixed "+ update" bar.
-          padding: const EdgeInsets.fromLTRB(
+          padding: EdgeInsets.fromLTRB(
             AppSpacing.s5,
             AppSpacing.s4,
             AppSpacing.s5,
-            AppSpacing.s6 + 96,
+            AppSpacing.s6 + barClearance,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -386,13 +397,13 @@ class _FullScreenPhoto extends StatelessWidget {
               child: Material(
                 color: Colors.white.withValues(alpha: 0.14),
                 shape: const CircleBorder(),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: () => Navigator.of(context).pop(),
-                  child: const SizedBox(
-                    width: kTapMin,
-                    height: kTapMin,
-                    child: Icon(Icons.close, color: Colors.white),
+                child: IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: 'Kapat',
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  constraints: const BoxConstraints(
+                    minWidth: kTapMin,
+                    minHeight: kTapMin,
                   ),
                 ),
               ),
