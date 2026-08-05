@@ -113,7 +113,10 @@ class _SplashGateState extends ConsumerState<SplashGate> {
               onEnd: () {
                 if (mounted) setState(() => _removed = true);
               },
-              child: _SplashView(showStatus: _statusElapsed),
+              // The status line is tied to a still-pending launch: if the
+              // session settles just before the 1.6 s timer fires, the
+              // line must not pop in during the fade-out.
+              child: _SplashView(showStatus: _statusElapsed && !settled),
             ),
           ),
       ],
@@ -249,7 +252,8 @@ class _SplashViewState extends State<_SplashView>
 }
 
 /// Progress of the [a, b] slice of the timeline, clamped to 0..1.
-double _seg(double t, double a, double b) => ((t - a) / (b - a)).clamp(0, 1);
+double _seg(double t, double a, double b) =>
+    ((t - a) / (b - a)).clamp(0.0, 1.0).toDouble();
 
 class _Keyframed extends StatelessWidget {
   const _Keyframed({

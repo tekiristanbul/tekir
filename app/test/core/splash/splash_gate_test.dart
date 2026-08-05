@@ -100,6 +100,27 @@ void main() {
     expect(find.text('yakındaki kediler getiriliyor…'), findsNothing);
   });
 
+  testWidgets(
+    'the status line never pops in during the fade when restore settles '
+    'just before 1.6 s',
+    (tester) async {
+      final service = _ControlledSessionService();
+      await tester.pumpWidget(_app(service));
+
+      await tester.pump(const Duration(milliseconds: 1500));
+      service.complete();
+      await tester.pump(); // restore future resolves
+      await tester.pump(); // AsyncData lands, fade starts
+      // The 1.6 s timer fires mid-fade — the line must stay absent.
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(find.text('yakındaki kediler getiriliyor…'), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+      expect(find.text('tekir'), findsNothing);
+    },
+  );
+
   testWidgets('never outlives the cap when restore hangs', (tester) async {
     final service = _ControlledSessionService();
     await tester.pumpWidget(_app(service));

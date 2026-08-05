@@ -4,7 +4,7 @@
     "start_url": ".",
     "display": "standalone",
     "background_color": "#FDF8F0",
-    "theme_color": "#A44732",
+    "theme_color": "#FDF8F0",
     "description": "tekir mobile app — cats of istanbul",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
