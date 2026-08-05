@@ -574,9 +574,13 @@ class _LastUpdateRow extends StatelessWidget {
             color: AppColors.primaryStrong,
           ),
           const SizedBox(width: AppSpacing.s2),
-          Text(
-            'Son güncelleme: ${relativeTimeTr(time)}',
-            style: const TextStyle(fontSize: 13, color: AppColors.muted),
+          // Wraps instead of overflowing when the label outgrows the pill
+          // (large text scale on a narrow phone — app-states global rules).
+          Flexible(
+            child: Text(
+              'Son güncelleme: ${relativeTimeTr(time)}',
+              style: const TextStyle(fontSize: 13, color: AppColors.muted),
+            ),
           ),
         ],
       ),
@@ -923,9 +927,11 @@ class _EmptyHistory extends StatelessWidget {
         children: [
           Icon(Icons.history_toggle_off, color: AppColors.faint, size: 22),
           SizedBox(width: AppSpacing.s3),
-          Text(
-            'Henüz güncelleme yok',
-            style: TextStyle(color: AppColors.muted),
+          Expanded(
+            child: Text(
+              'Henüz güncelleme yok',
+              style: TextStyle(color: AppColors.muted),
+            ),
           ),
         ],
       ),

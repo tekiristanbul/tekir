@@ -271,10 +271,15 @@ class _BadgeStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The strip's height must track text scale: the tile shows two
+    // 11px lines under the icon, and a fixed 84 clips them the moment the
+    // system font grows (app-states global rules: no overflow at large
+    // text scale). 1.4 covers the font's real line height.
+    final scaledTextHeight = MediaQuery.textScalerOf(context).scale(11) * 1.4;
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.s4),
       child: SizedBox(
-        height: 84,
+        height: 84 + (scaledTextHeight - 11 * 1.4) * 2,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           itemCount: badges.length,
@@ -402,37 +407,47 @@ class _GuestBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(Icons.person_outline, size: 40, color: AppColors.faint),
-        const SizedBox(height: AppSpacing.s3),
-        Text('Giriş yapmadın', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: AppSpacing.s2),
-        const Text(
-          'Katkı geçmişini ve rozetlerini görmek, kedi eklemek ve güncelleme paylaşmak için giriş yapman gerekir. Haritayı ve kedi detaylarını girişsiz gezebilirsin.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: AppColors.muted, height: 1.5),
-        ),
-        const SizedBox(height: AppSpacing.s5),
-        SizedBox(
-          height: kTapMin,
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: () => context.push('/login'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: AppColors.primaryInk,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppRadius.md),
+    // Scrollable so large text scale can't push the sign-in action off a
+    // small screen (app-states global rules: no state overflows at large
+    // system text scale).
+    return Center(
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.person_outline, size: 40, color: AppColors.faint),
+            const SizedBox(height: AppSpacing.s3),
+            Text(
+              'Giriş yapmadın',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.s2),
+            const Text(
+              'Katkı geçmişini ve rozetlerini görmek, kedi eklemek ve güncelleme paylaşmak için giriş yapman gerekir. Haritayı ve kedi detaylarını girişsiz gezebilirsin.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.muted, height: 1.5),
+            ),
+            const SizedBox(height: AppSpacing.s5),
+            SizedBox(
+              height: kTapMin,
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => context.push('/login'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.primaryInk,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                ),
+                child: const Text('Giriş yap'),
               ),
             ),
-            child: const Text('Giriş yap'),
-          ),
+            const SizedBox(height: AppSpacing.s6),
+            const FeedbackEntry(),
+          ],
         ),
-        const SizedBox(height: AppSpacing.s6),
-        const FeedbackEntry(),
-      ],
+      ),
     );
   }
 }
