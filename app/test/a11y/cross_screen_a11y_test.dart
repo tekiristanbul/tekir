@@ -26,6 +26,7 @@ import 'package:go_router/go_router.dart';
 import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/network/api_client.dart';
 import 'package:app/core/identity/session_identity.dart';
+import 'package:app/core/router/app_shell.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/account/data/account_api.dart';
 import 'package:app/features/account/ui/account_screen.dart';
@@ -267,58 +268,113 @@ class _ScreenCase {
   final bool usesPlatformView;
 }
 
+final _stubRoutes = <GoRoute>[
+  GoRoute(
+    path: '/cats/:id',
+    builder: (context, state) => const Scaffold(body: Text('cat detail')),
+  ),
+  GoRoute(
+    path: '/login',
+    builder: (context, state) => const Scaffold(body: Text('login')),
+  ),
+  GoRoute(
+    path: '/badges',
+    builder: (context, state) => const Scaffold(body: Text('badges')),
+  ),
+  GoRoute(
+    path: '/badges/:id',
+    builder: (context, state) => const Scaffold(body: Text('badge detail')),
+  ),
+  GoRoute(
+    path: '/account',
+    builder: (context, state) => const Scaffold(body: Text('account')),
+  ),
+  GoRoute(
+    path: '/add-cat',
+    builder: (context, state) => const Scaffold(body: Text('add cat')),
+  ),
+  GoRoute(
+    path: '/notifications',
+    builder: (context, state) => const Scaffold(body: Text('notifications')),
+  ),
+];
+
 GoRouter _router(Widget home) => GoRouter(
   routes: [
     GoRoute(path: '/', builder: (context, state) => home),
-    GoRoute(
-      path: '/cats/:id',
-      builder: (context, state) => const Scaffold(body: Text('cat detail')),
+    ..._stubRoutes,
+  ],
+);
+
+/// Tab routes (`/discover`, `/profile`) settle inside the real [AppShell]
+/// via a StatefulShellRoute mirroring appRouter's, so the bottom-nav chrome
+/// is part of the checked composition. The map branch stays a stub: shell
+/// branches mount lazily, so it never builds, and the shell-with-real-map
+/// composition already has its own case pumping [CatsOfIstanbulApp].
+GoRouter _shellRouter(String initialLocation) => GoRouter(
+  initialLocation: initialLocation,
+  routes: [
+    StatefulShellRoute.indexedStack(
+      builder: (context, state, navigationShell) =>
+          AppShell(navigationShell: navigationShell),
+      branches: [
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/',
+              builder: (context, state) => const Scaffold(body: Text('map')),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/discover',
+              builder: (context, state) => const DiscoverScreen(),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/profile',
+              builder: (context, state) => const ProfileScreen(),
+            ),
+          ],
+        ),
+      ],
     ),
-    GoRoute(
-      path: '/login',
-      builder: (context, state) => const Scaffold(body: Text('login')),
-    ),
-    GoRoute(
-      path: '/badges',
-      builder: (context, state) => const Scaffold(body: Text('badges')),
-    ),
-    GoRoute(
-      path: '/badges/:id',
-      builder: (context, state) => const Scaffold(body: Text('badge detail')),
-    ),
-    GoRoute(
-      path: '/account',
-      builder: (context, state) => const Scaffold(body: Text('account')),
-    ),
-    GoRoute(
-      path: '/add-cat',
-      builder: (context, state) => const Scaffold(body: Text('add cat')),
-    ),
-    GoRoute(
-      path: '/notifications',
-      builder: (context, state) => const Scaffold(body: Text('notifications')),
-    ),
+    ..._stubRoutes,
   ],
 );
 
 // The overrides parameter is untyped and re-cast on use: riverpod 3 no
 // longer exports the Override type by name, and inference fills it back in
 // from ProviderScope's own parameter type.
-Future<void> _pumpRouted(
+Future<void> _pumpApp(
   WidgetTester tester,
-  Widget home,
+  GoRouter router,
   List<Object> overrides,
 ) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: overrides.cast(),
-      child: MaterialApp.router(
-        theme: AppTheme.light,
-        routerConfig: _router(home),
-      ),
+      child: MaterialApp.router(theme: AppTheme.light, routerConfig: router),
     ),
   );
 }
+
+Future<void> _pumpRouted(
+  WidgetTester tester,
+  Widget home,
+  List<Object> overrides,
+) => _pumpApp(tester, _router(home), overrides);
+
+Future<void> _pumpShellRouted(
+  WidgetTester tester,
+  String initialLocation,
+  List<Object> overrides,
+) => _pumpApp(tester, _shellRouter(initialLocation), overrides);
 
 final _cases = <_ScreenCase>[
   _ScreenCase('app shell with the map empty-radius state', (tester) async {
@@ -345,8 +401,8 @@ final _cases = <_ScreenCase>[
       ),
     );
   }, usesPlatformView: true),
-  _ScreenCase('discover nearby list', (tester) async {
-    await _pumpRouted(tester, const DiscoverScreen(), [
+  _ScreenCase('discover nearby list in the app shell', (tester) async {
+    await _pumpShellRouted(tester, '/discover', [
       sessionIdentityServiceProvider.overrideWithValue(
         _FakeSessionIdentityService(),
       ),
@@ -377,8 +433,8 @@ final _cases = <_ScreenCase>[
       ),
     ]);
   }),
-  _ScreenCase('profile signed in', (tester) async {
-    await _pumpRouted(tester, const ProfileScreen(), [
+  _ScreenCase('signed-in profile in the app shell', (tester) async {
+    await _pumpShellRouted(tester, '/profile', [
       sessionIdentityServiceProvider.overrideWithValue(
         _FakeSessionIdentityService(_session),
       ),
@@ -530,11 +586,11 @@ void main() {
       testWidgets('every tap target is at least 44 logical px', (tester) async {
         _usePhoneViewport(tester);
         final handle = tester.ensureSemantics();
+        addTearDown(handle.dispose);
         await screenCase.pump(tester);
         await _settle(tester, screenCase);
 
         await expectLater(tester, meetsGuideline(iOSTapTargetGuideline));
-        handle.dispose();
       });
 
       testWidgets('does not overflow at 2.0 text scale', (tester) async {
@@ -559,6 +615,15 @@ void main() {
         await _settle(tester, screenCase);
 
         expect(tester.takeException(), isNull);
+        // The injected accessibility features must actually reach the app's
+        // own MediaQuery — otherwise this test settles a normal-motion tree
+        // and proves nothing.
+        expect(
+          MediaQuery.disableAnimationsOf(
+            tester.element(find.byType(Scaffold).first),
+          ),
+          isTrue,
+        );
       });
     });
   }
