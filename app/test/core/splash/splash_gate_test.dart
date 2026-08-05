@@ -28,27 +28,35 @@ class _ControlledSessionService implements SessionIdentityService {
   Future<void> logout({String? deviceToken}) async {}
 }
 
-Widget _app(SessionIdentityService service) {
+Widget _app(SessionIdentityService service, {bool reduceMotion = false}) {
   return ProviderScope(
     overrides: [sessionIdentityServiceProvider.overrideWithValue(service)],
     child: MaterialApp(
       theme: AppTheme.light,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(disableAnimations: reduceMotion),
+        child: child!,
+      ),
       home: const SplashGate(child: Text('underlying app')),
     ),
   );
 }
 
 void main() {
-  testWidgets('shows the prototype splash composition while restoring', (
+  testWidgets('shows the 12b lockup composition while restoring', (
     tester,
   ) async {
     final service = _ControlledSessionService();
     await tester.pumpWidget(_app(service));
+    // Let the ~820 ms sequence finish so the settled frame is asserted.
+    await tester.pump(const Duration(milliseconds: 900));
 
     expect(find.text('tekir'), findsOneWidget);
+    expect(find.text('kim görüldü, kim beslendi'), findsOneWidget);
+    // issue #85's superseded composition is gone.
     expect(
       find.text("İstanbul'un sokak kedilerini keşfet, onlara göz kulak ol."),
-      findsOneWidget,
+      findsNothing,
     );
 
     service.complete();
@@ -70,18 +78,82 @@ void main() {
     expect(find.text('underlying app'), findsOneWidget);
   });
 
+  testWidgets('the status line appears only when launch exceeds 1.6 s', (
+    tester,
+  ) async {
+    final service = _ControlledSessionService();
+    await tester.pumpWidget(_app(service));
+
+    await tester.pump(const Duration(milliseconds: 1500));
+    expect(find.text('yakındaki kediler getiriliyor…'), findsNothing);
+
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('yakındaki kediler getiriliyor…'), findsOneWidget);
+
+    service.complete();
+    // Bounded pumps: the status dots breathe on a repeating controller,
+    // so pumpAndSettle would hang while they're visible.
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump();
+    expect(find.text('yakındaki kediler getiriliyor…'), findsNothing);
+  });
+
+  testWidgets(
+    'the status line never pops in during the fade when restore settles '
+    'just before 1.6 s',
+    (tester) async {
+      final service = _ControlledSessionService();
+      await tester.pumpWidget(_app(service));
+
+      await tester.pump(const Duration(milliseconds: 1500));
+      service.complete();
+      await tester.pump(); // restore future resolves
+      await tester.pump(); // AsyncData lands, fade starts
+      // The 1.6 s timer fires mid-fade — the line must stay absent.
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(find.text('yakındaki kediler getiriliyor…'), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+      expect(find.text('tekir'), findsNothing);
+    },
+  );
+
   testWidgets('never outlives the cap when restore hangs', (tester) async {
     final service = _ControlledSessionService();
     await tester.pumpWidget(_app(service));
 
-    await tester.pump(const Duration(milliseconds: 1900));
+    await tester.pump(const Duration(milliseconds: 1500));
     expect(find.text('tekir'), findsOneWidget);
 
-    await tester.pump(const Duration(milliseconds: 200)); // cap at 2s
+    await tester.pump(const Duration(milliseconds: 600)); // cap at 2s
     await tester.pump(const Duration(milliseconds: 250)); // fade
     await tester.pump();
 
     expect(find.text('tekir'), findsNothing);
     expect(find.text('underlying app'), findsOneWidget);
   });
+
+  testWidgets(
+    'reduced motion: the settled composition renders with no animation and '
+    'the overlay jumps away without a fade',
+    (tester) async {
+      final service = _ControlledSessionService();
+      await tester.pumpWidget(_app(service, reduceMotion: true));
+      // No pending frames: nothing animates under reduced motion.
+      await tester.pump();
+      expect(tester.hasRunningAnimations, isFalse);
+      expect(find.text('tekir'), findsOneWidget);
+      expect(find.text('kim görüldü, kim beslendi'), findsOneWidget);
+
+      service.complete();
+      await tester.pump(); // restore future resolves
+      await tester.pump(); // AsyncData lands — overlay jumps, no fade
+
+      expect(find.text('tekir'), findsNothing);
+      expect(find.text('underlying app'), findsOneWidget);
+    },
+  );
 }

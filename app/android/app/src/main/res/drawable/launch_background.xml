@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- native launch: terracotta with the centered splash mark tile — the
+<!-- native launch: the 12b lockup centered on the cream ground - the
      same composition the flutter splash (SplashGate) takes over from.
      splash_mark.png densities are generated from the canonical source by
      `uv run assets/scripts/generate.py`. -->
