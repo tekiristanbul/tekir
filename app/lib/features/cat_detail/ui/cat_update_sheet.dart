@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -34,20 +36,47 @@ class CatUpdateSheet extends ConsumerStatefulWidget {
 }
 
 class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
+  final TextEditingController _commentController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
     // A previous open dismissed without submitting (or a stale error from
-    // one) must not leak into this fresh open.
-    Future.microtask(
-      () => ref.read(catUpdateComposerProvider(widget.catId).notifier).reset(),
-    );
+    // one) must not leak into this fresh open. A failed optimistic attempt
+    // is the exception — reset() keeps that draft, and the field text is
+    // restored from it here so the retained comment is actually visible
+    // ("data is never lost").
+    Future.microtask(() {
+      if (!mounted) return;
+      ref.read(catUpdateComposerProvider(widget.catId).notifier).reset();
+      _commentController.text = ref
+          .read(catUpdateComposerProvider(widget.catId))
+          .comment;
+    });
+  }
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
   }
 
   Future<void> _submit() async {
-    final ok = await ref
-        .read(catUpdateComposerProvider(widget.catId).notifier)
-        .submit();
+    final notifier = ref.read(catUpdateComposerProvider(widget.catId).notifier);
+    final state = ref.read(catUpdateComposerProvider(widget.catId));
+    // An ordinary submission is optimistic (docs/design/app-states.md,
+    // mutation affordances): the sheet closes in the same tap and the
+    // entry drops onto the timeline as a pending row while the request
+    // runs in the background — the parent screen owns the row and any
+    // failure surface. A help-carrying submission stays synchronous here:
+    // its note must remain visible in this sheet if it fails, and the
+    // active alert only ever renders from the server-confirmed entry.
+    if (!state.needsHelp) {
+      unawaited(notifier.submit());
+      Navigator.of(context).pop(false);
+      return;
+    }
+    final ok = await notifier.submit();
     if (ok && mounted) Navigator.of(context).pop(true);
   }
 
@@ -144,6 +173,7 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
                 ),
                 const SizedBox(height: AppSpacing.s2),
                 TextField(
+                  controller: _commentController,
                   enabled: !state.isSubmitting,
                   minLines: 2,
                   maxLines: 4,
