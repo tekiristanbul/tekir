@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/analytics/analytics.dart';
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/states/optimistic_inline_row.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
@@ -17,8 +19,6 @@ import 'cat_update_composer_notifier.dart';
 import 'cat_update_sheet.dart';
 import 'update_correction_sheet.dart';
 
-const _heroHeight = 280.0;
-
 const _statusLabelsTr = {
   'seen': 'görüldü',
   'fed': 'mama verildi',
@@ -27,12 +27,15 @@ const _statusLabelsTr = {
 
 /// Cat-detail view reached from the map's marker-preview sheet
 /// (docs/product/map.md, docs/design/implementation-contract.md): an
-/// edge-to-edge hero photo, a compact last-update line, a follow toggle,
-/// and a newest-first status-update timeline. Posting an update (issue
-/// #43, one-tap "seen" or the compact composition sheet — which since
-/// issue #102 also carries the single `yardıma ihtiyacı var` mark, per
-/// the #100 simplified help contract) and following the cat (issue #65)
-/// are in scope; editing the cat remains out of scope. Every contribution
+/// edge-to-edge 16:9 cover photo (tappable for an uncropped full-screen
+/// view), a compact last-update line, a follow toggle, and a newest-first
+/// status-update timeline. The screen has exactly one primary action —
+/// the "+ update" bar opening the composition sheet — per the binding
+/// design (docs/design/screens/cat-profile.html): "gördüm" is an option
+/// inside that sheet, never a competing button on the screen itself.
+/// The sheet also carries the single `yardıma ihtiyacı var` mark since
+/// issue #102, per the #100 simplified help contract. Following the cat
+/// (issue #65) is in scope; editing the cat remains out of scope. Every contribution
 /// action is gated at the point of intent via [AuthGate] — a guest never
 /// sees the composer or mutates follow state before signing in.
 /// Permanent trait chips are not part of the mvp surface (issue #42) —
@@ -138,16 +141,49 @@ class _CatDetailBody extends ConsumerWidget {
         SnackBar(content: Text(updateSubmitErrorMessageTr(error))),
       );
     });
+    return Stack(
+      children: [
+        _buildScroll(context, ref, pending),
+        // The binding design's fixed action bar: the screen's single
+        // primary action floats over the scroll on a gradient into the
+        // background, so it is reachable from any scroll position.
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: _UpdateBar(catId: detail.id),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildScroll(
+    BuildContext context,
+    WidgetRef ref,
+    PendingUpdate? pending,
+  ) {
+    // Clearance for the fixed "+ update" bar, derived from its actual
+    // layout rather than a constant: the device's bottom safe-area inset,
+    // the bar's own vertical padding, and the button's minimum height —
+    // scaled with the text scaler, since the single-line label grows the
+    // button beyond kTapMin at large system text.
+    final barClearance =
+        MediaQuery.paddingOf(context).bottom +
+        AppSpacing.s3 +
+        AppSpacing.s5 +
+        math.max(kTapMin, MediaQuery.textScalerOf(context).scale(kTapMin));
     return ListView(
       padding: EdgeInsets.zero,
       children: [
         _HeroPhoto(detail: detail),
         Padding(
-          padding: const EdgeInsets.fromLTRB(
+          // The extra bottom padding keeps the last timeline entry
+          // scrollable clear of the fixed "+ update" bar.
+          padding: EdgeInsets.fromLTRB(
             AppSpacing.s5,
             AppSpacing.s4,
             AppSpacing.s5,
-            AppSpacing.s6,
+            AppSpacing.s6 + barClearance,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -164,8 +200,6 @@ class _CatDetailBody extends ConsumerWidget {
                 alignment: Alignment.centerLeft,
                 child: FollowButton(catId: detail.id, source: openSource),
               ),
-              const SizedBox(height: AppSpacing.s4),
-              _UpdateActionsRow(catId: detail.id),
               const SizedBox(height: AppSpacing.s6),
               Text(
                 'Son güncellemeler',
@@ -206,6 +240,13 @@ class _CatDetailBody extends ConsumerWidget {
   }
 }
 
+/// The cover photo (binding design docs/design/screens/cat-profile.html):
+/// full width at a fixed 16:9, controlled crop (`cover`) — the ratio is
+/// never distorted and the height never depends on the source image.
+/// Tapping it opens the uncropped full-screen view; the design marks
+/// tappability with a media counter, but its count must come from a real
+/// total whose source field the design leaves unverified ("açık kalan"),
+/// so no counter is rendered yet.
 class _HeroPhoto extends StatelessWidget {
   const _HeroPhoto({required this.detail});
 
@@ -214,85 +255,158 @@ class _HeroPhoto extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final photo = detail.primaryPhoto;
-    return SizedBox(
-      height: _heroHeight,
-      child: Stack(
+    return AspectRatio(
+      aspectRatio: 16 / 9,
+      // The detector wraps the whole cover so the tap target isn't blocked
+      // by the scrim overlay; the back button's own InkWell still wins its
+      // area of the stack.
+      child: GestureDetector(
+        onTap: photo == null ? null : () => _openFullScreen(context, photo),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (photo == null)
+              const _HeroPlaceholder()
+            else
+              CachedNetworkImage(
+                imageUrl: photo,
+                fit: BoxFit.cover,
+                placeholder: (context, _) =>
+                    const _HeroPlaceholder(loading: true),
+                errorWidget: (context, _, _) => const _HeroPlaceholder(),
+              ),
+            // scrim: keeps the back button and the name/area caption readable
+            // over any photo, per prototype/styles.css's .hero-photo__scrim.
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x59000000),
+                    Colors.transparent,
+                    Colors.transparent,
+                    Color(0x47000000),
+                  ],
+                  stops: [0.0, 0.26, 0.74, 1.0],
+                ),
+              ),
+            ),
+            Positioned(
+              top: AppSpacing.s3,
+              left: AppSpacing.s4,
+              child: _BackCircleButton(onGlass: true),
+            ),
+            Positioned(
+              left: AppSpacing.s5,
+              right: AppSpacing.s5,
+              bottom: AppSpacing.s4,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    detail.name,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: Colors.white,
+                      shadows: const [
+                        Shadow(color: Color(0x59000000), blurRadius: 6),
+                      ],
+                    ),
+                  ),
+                  if (detail.areaLabel != null) ...[
+                    const SizedBox(height: 3),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.location_on,
+                          size: 13,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 5),
+                        Flexible(
+                          child: Text(
+                            detail.areaLabel!,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The full-screen view (binding design, frame D): dark surface, the
+  /// photo `contain`ed with no crop, a single close action. "ana fotoğraf
+  /// yap" belongs to the media archive's per-update items and its media
+  /// api — out of 0.2 scope — so the cover's own view carries no action
+  /// but closing.
+  void _openFullScreen(BuildContext context, String photo) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => _FullScreenPhoto(photo: photo),
+      ),
+    );
+  }
+}
+
+class _FullScreenPhoto extends StatelessWidget {
+  const _FullScreenPhoto({required this.photo});
+
+  final String photo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF141010),
+      body: Stack(
         fit: StackFit.expand,
         children: [
-          if (photo == null)
-            const _HeroPlaceholder()
-          else
-            CachedNetworkImage(
+          Center(
+            child: CachedNetworkImage(
               imageUrl: photo,
-              fit: BoxFit.cover,
-              placeholder: (context, _) =>
-                  const _HeroPlaceholder(loading: true),
-              errorWidget: (context, _, _) => const _HeroPlaceholder(),
-            ),
-          // scrim: keeps the back button and the name/area caption readable
-          // over any photo, per prototype/styles.css's .hero-photo__scrim.
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0x59000000),
-                  Colors.transparent,
-                  Colors.transparent,
-                  Color(0x47000000),
-                ],
-                stops: [0.0, 0.26, 0.74, 1.0],
+              fit: BoxFit.contain,
+              placeholder: (context, _) => const InlineSpinner(
+                size: 28,
+                color: AppColors.primarySoft,
+                trackColor: Color(0x33FFFFFF),
+              ),
+              errorWidget: (context, _, _) => const Icon(
+                Icons.pets,
+                size: 56,
+                color: AppColors.primarySoft,
               ),
             ),
           ),
           Positioned(
             top: AppSpacing.s3,
             left: AppSpacing.s4,
-            child: _BackCircleButton(onGlass: true),
-          ),
-          Positioned(
-            left: AppSpacing.s5,
-            right: AppSpacing.s5,
-            bottom: AppSpacing.s4,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  detail.name,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: Colors.white,
-                    shadows: const [
-                      Shadow(color: Color(0x59000000), blurRadius: 6),
-                    ],
+            child: SafeArea(
+              child: Material(
+                color: Colors.white.withValues(alpha: 0.14),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: 'Kapat',
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  constraints: const BoxConstraints(
+                    minWidth: kTapMin,
+                    minHeight: kTapMin,
                   ),
                 ),
-                if (detail.areaLabel != null) ...[
-                  const SizedBox(height: 3),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.location_on,
-                        size: 13,
-                        color: Colors.white,
-                      ),
-                      const SizedBox(width: 5),
-                      Flexible(
-                        child: Text(
-                          detail.areaLabel!,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
         ],
@@ -314,7 +428,11 @@ class _HeroPlaceholder extends StatelessWidget {
       color: AppColors.primarySoft,
       child: Center(
         child: loading
-            ? const CircularProgressIndicator(color: AppColors.primaryStrong)
+            ? const InlineSpinner(
+                size: 28,
+                color: AppColors.primaryStrong,
+                trackColor: AppColors.line,
+              )
             : const Icon(Icons.pets, size: 56, color: AppColors.primaryStrong),
       ),
     );
@@ -466,13 +584,14 @@ class _LastUpdateRow extends StatelessWidget {
   }
 }
 
-/// The two approved ordinary-update entry points (issue #43): a one-tap
-/// "Gördüm" shortcut that submits `seen` immediately, and a secondary
-/// action that opens the compact multi-status composition sheet. Both
-/// share [catUpdateComposerProvider]'s in-flight guard, so a submission
-/// from either button disables both while it's outstanding.
-class _UpdateActionsRow extends ConsumerWidget {
-  const _UpdateActionsRow({required this.catId});
+/// The screen's single primary action, fixed over the scroll (binding
+/// design docs/design/screens/cat-profile.html: "ekranda tek bir birincil
+/// buton var: + update" — "gördüm" is an option inside the composition
+/// sheet this opens, never a competing button here). Supersedes issue
+/// #43's separate one-tap "Gördüm" shortcut and, with it, issue #80's
+/// derived already-seen disable, which only existed for that shortcut.
+class _UpdateBar extends ConsumerWidget {
+  const _UpdateBar({required this.catId});
 
   final String catId;
 
@@ -481,103 +600,56 @@ class _UpdateActionsRow extends ConsumerWidget {
     final busy = ref.watch(
       catUpdateComposerProvider(catId).select((s) => s.isSubmitting),
     );
-    // issue #80 product-owner review, finding 4: derived straight from the
-    // already-loaded timeline (state.updates), never a client-only
-    // "just submitted" flag — the caller's own most recent 'seen' entry,
-    // if it's still inside the 10-minute correction window, is exactly the
-    // signal that a repeat "Gördüm" tap would be redundant. Another
-    // account's update on this cat never sets this (authorIsMe is
-    // server-derived per entry), and it re-enables the instant the window
-    // closes, on the next rebuild — no extra timer needed since
-    // isCorrectionOpen() is re-evaluated against DateTime.now() on every
-    // watch.
-    final alreadySeenRecently = ref.watch(
-      catDetailProvider(catId).select(
-        (s) => s.updates.any(
-          (u) =>
-              u.authorIsMe &&
-              u.statuses.contains('seen') &&
-              u.isCorrectionOpen(),
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [AppColors.bg, AppColors.bg, Color(0x00F7F1E8)],
+          stops: [0.0, 0.62, 1.0],
         ),
       ),
-    );
-
-    return Row(
-      children: [
-        Expanded(
-          child: SizedBox(
-            height: kTapMin,
-            child: ElevatedButton.icon(
-              onPressed: (busy || alreadySeenRecently)
-                  ? null
-                  : () => _gatedSubmitSeen(context, ref),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: alreadySeenRecently
-                    ? AppColors.primarySoft
-                    : AppColors.primary,
-                foregroundColor: alreadySeenRecently
-                    ? AppColors.primaryStrong
-                    : AppColors.primaryInk,
-                disabledBackgroundColor: alreadySeenRecently
-                    ? AppColors.primarySoft
-                    : null,
-                disabledForegroundColor: alreadySeenRecently
-                    ? AppColors.primaryStrong
-                    : null,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-                textStyle: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              icon: Icon(
-                alreadySeenRecently ? Icons.check : Icons.visibility_outlined,
-                size: 18,
-              ),
-              label: const Text('Gördüm'),
-            ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s4,
+            AppSpacing.s3,
+            AppSpacing.s4,
+            AppSpacing.s5,
           ),
-        ),
-        const SizedBox(width: AppSpacing.s3),
-        Expanded(
-          child: SizedBox(
-            height: kTapMin,
-            child: OutlinedButton.icon(
+          child: ConstrainedBox(
+            // A minimum, not a fixed height: the label may wrap taller at
+            // large system text scale without overflowing the button.
+            constraints: const BoxConstraints(
+              minWidth: double.infinity,
+              minHeight: kTapMin,
+            ),
+            child: ElevatedButton(
               onPressed: busy ? null : () => _gatedOpenComposer(context, ref),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.ink,
-                side: const BorderSide(color: AppColors.lineStrong),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.primaryInk,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
                 ),
-                textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                textStyle: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15.5,
+                ),
               ),
-              icon: const Icon(Icons.edit_outlined, size: 18),
-              label: const Text('Güncelleme ekle'),
+              child: const Text('+ update'),
             ),
           ),
         ),
-      ],
-    );
-  }
-
-  // Gate-at-intent (issue #65): neither the one-tap "seen" submit nor the
-  // composition sheet may run before authentication succeeds. AuthGate
-  // itself is the only thing that decides whether to show its prompt —
-  // already-authenticated callers fall straight through with no extra ui.
-
-  Future<void> _gatedSubmitSeen(BuildContext context, WidgetRef ref) {
-    return AuthGate.require(
-      context,
-      ref,
-      contextText: 'Güncelleme paylaşmak için giriş yap',
-      intent: AnalyticsAuthIntent.ordinaryUpdate,
-      // Optimistic: the pending row is the success feedback, and a failure
-      // surfaces via _CatDetailBody's pending listener — nothing to await.
-      onAuthenticated: () => unawaited(
-        ref.read(catUpdateComposerProvider(catId).notifier).submitSeen(),
       ),
     );
   }
+
+  // Gate-at-intent (issue #65): the composition sheet may not open before
+  // authentication succeeds. AuthGate itself is the only thing that
+  // decides whether to show its prompt — already-authenticated callers
+  // fall straight through with no extra ui.
 
   Future<void> _gatedOpenComposer(BuildContext context, WidgetRef ref) {
     return AuthGate.require(

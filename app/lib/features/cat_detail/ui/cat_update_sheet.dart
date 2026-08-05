@@ -13,7 +13,7 @@ const _statusLabelsTr = {
 };
 
 /// Compact multi-status composition flow (issue #43): cat_detail_screen's
-/// secondary "Güncelleme ekle" action opens this over the content instead
+/// single "+ update" primary action opens this over the content instead
 /// of navigating to a full screen, matching the map's marker-preview sheet
 /// pattern (cat_preview_sheet.dart). Pops `true` on a successful
 /// submission so the caller shows the lightweight, non-blocking success

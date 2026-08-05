@@ -274,37 +274,40 @@ Future<void> _pump(
 }
 
 Future<void> _openComposer(WidgetTester tester) async {
-  await tester.tap(find.widgetWithText(OutlinedButton, 'Güncelleme ekle'));
+  await tester.tap(find.widgetWithText(ElevatedButton, '+ update'));
   await tester.pumpAndSettle();
 }
 
 void main() {
-  testWidgets('cat detail exposes both the one-tap and composer entry points', (
+  testWidgets('the screen has exactly one primary action — "+ update" — and no '
+      'competing Gördüm button (binding design, cat-profile.html)', (
     tester,
   ) async {
     await _pump(tester, api: _FakeCatDetailApi());
 
-    expect(find.widgetWithText(ElevatedButton, 'Gördüm'), findsOneWidget);
-    expect(
-      find.widgetWithText(OutlinedButton, 'Güncelleme ekle'),
-      findsOneWidget,
-    );
+    expect(find.widgetWithText(ElevatedButton, '+ update'), findsOneWidget);
+    expect(find.text('Gördüm'), findsNothing);
+    expect(find.text('Güncelleme ekle'), findsNothing);
   });
 
   testWidgets(
-    'one tap on Gördüm drops the optimistic row immediately, which settles '
-    'into the confirmed timeline entry',
+    'a seen-only submission from the sheet drops the optimistic row, which '
+    'settles into the confirmed timeline entry',
     (tester) async {
       final gate = Completer<void>();
       final api = _FakeCatDetailApi()
         ..nextResult = _entry('upd-1')
         ..gate = gate;
       await _pump(tester, api: api);
+      await _openComposer(tester);
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
+      await tester.tap(find.text('Görüldü'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
       // Bounded pumps: the saving row's InlineSpinner animates
       // indefinitely, so pumpAndSettle would hang while it's visible.
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       expect(api.createUpdateCalls, 1);
       expect(api.lastStatuses, ['seen']);
@@ -323,157 +326,7 @@ void main() {
   );
 
   testWidgets(
-    'a successful Gördüm submit immediately shows selected/disabled — the '
-    'server-returned entry is inside the correction window',
-    (tester) async {
-      final api = _FakeCatDetailApi()
-        ..nextResult = _entry(
-          'upd-1',
-          authorIsMe: true,
-          correctionExpiresAt: DateTime.now().add(const Duration(minutes: 10)),
-        );
-      await _pump(tester, api: api);
-
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
-      await tester.pumpAndSettle();
-
-      final button = tester.widget<ElevatedButton>(
-        find.widgetWithText(ElevatedButton, 'Gördüm'),
-      );
-      expect(button.onPressed, isNull);
-      expect(find.byIcon(Icons.check), findsOneWidget);
-
-      // a second tap does nothing further — still exactly one request.
-      await tester.tap(
-        find.widgetWithText(ElevatedButton, 'Gördüm'),
-        warnIfMissed: false,
-      );
-      await tester.pumpAndSettle();
-      expect(api.createUpdateCalls, 1);
-    },
-  );
-
-  group('Gördüm derived selected/disabled state (issue #80)', () {
-    testWidgets(
-      'the account\'s own recent seen entry, still inside the correction '
-      'window, shows Gördüm as selected and disabled',
-      (tester) async {
-        final api = _FakeCatDetailApi();
-        await _pump(
-          tester,
-          api: api,
-          detailState: CatDetailState(
-            detail: _detail,
-            hasLoadedOnce: true,
-            updates: [
-              _entry(
-                'upd-1',
-                authorIsMe: true,
-                correctionExpiresAt: DateTime.now().add(
-                  const Duration(minutes: 5),
-                ),
-              ),
-            ],
-          ),
-        );
-
-        final button = tester.widget<ElevatedButton>(
-          find.widgetWithText(ElevatedButton, 'Gördüm'),
-        );
-        expect(button.onPressed, isNull);
-        expect(find.byIcon(Icons.check), findsOneWidget);
-        expect(api.createUpdateCalls, 0);
-      },
-    );
-
-    testWidgets(
-      'another account\'s recent seen entry never selects/disables Gördüm',
-      (tester) async {
-        await _pump(
-          tester,
-          api: _FakeCatDetailApi(),
-          detailState: CatDetailState(
-            detail: _detail,
-            hasLoadedOnce: true,
-            updates: [
-              _entry(
-                'upd-1',
-                authorIsMe: false,
-                correctionExpiresAt: DateTime.now().add(
-                  const Duration(minutes: 5),
-                ),
-              ),
-            ],
-          ),
-        );
-
-        final button = tester.widget<ElevatedButton>(
-          find.widgetWithText(ElevatedButton, 'Gördüm'),
-        );
-        expect(button.onPressed, isNotNull);
-        expect(find.byIcon(Icons.visibility_outlined), findsOneWidget);
-      },
-    );
-
-    testWidgets('once the correction window closes, Gördüm re-enables', (
-      tester,
-    ) async {
-      await _pump(
-        tester,
-        api: _FakeCatDetailApi(),
-        detailState: CatDetailState(
-          detail: _detail,
-          hasLoadedOnce: true,
-          updates: [
-            _entry(
-              'upd-1',
-              authorIsMe: true,
-              correctionExpiresAt: DateTime.now().subtract(
-                const Duration(minutes: 1),
-              ),
-            ),
-          ],
-        ),
-      );
-
-      final button = tester.widget<ElevatedButton>(
-        find.widgetWithText(ElevatedButton, 'Gördüm'),
-      );
-      expect(button.onPressed, isNotNull);
-      expect(find.byIcon(Icons.visibility_outlined), findsOneWidget);
-    });
-
-    testWidgets('the account\'s own recent entry without "seen" never selects/'
-        'disables Gördüm', (tester) async {
-      await _pump(
-        tester,
-        api: _FakeCatDetailApi(),
-        detailState: CatDetailState(
-          detail: _detail,
-          hasLoadedOnce: true,
-          updates: [
-            _entry(
-              'upd-1',
-              statuses: const ['fed'],
-              authorIsMe: true,
-              correctionExpiresAt: DateTime.now().add(
-                const Duration(minutes: 5),
-              ),
-            ),
-          ],
-        ),
-      );
-
-      final button = tester.widget<ElevatedButton>(
-        find.widgetWithText(ElevatedButton, 'Gördüm'),
-      );
-      expect(button.onPressed, isNotNull);
-      expect(find.byIcon(Icons.visibility_outlined), findsOneWidget);
-    });
-  });
-
-  testWidgets(
-    'Güncelleme ekle opens a sheet with every approved status and an optional comment field',
+    '+ update opens a sheet with every approved status and an optional comment field',
     (tester) async {
       await _pump(tester, api: _FakeCatDetailApi());
 
@@ -564,7 +417,7 @@ void main() {
   );
 
   testWidgets(
-    'while a background submission is in flight both entry points are '
+    'while a background submission is in flight the + update action is '
     'disabled — at most one request',
     (tester) async {
       final gate = Completer<void>();
@@ -572,31 +425,28 @@ void main() {
         ..nextResult = _entry('upd-1')
         ..gate = gate;
       await _pump(tester, api: api);
+      await _openComposer(tester);
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
+      await tester.tap(find.text('Görüldü'));
       await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       expect(
         tester
             .widget<ElevatedButton>(
-              find.widgetWithText(ElevatedButton, 'Gördüm'),
-            )
-            .onPressed,
-        isNull,
-      );
-      expect(
-        tester
-            .widget<OutlinedButton>(
-              find.widgetWithText(OutlinedButton, 'Güncelleme ekle'),
+              find.widgetWithText(ElevatedButton, '+ update'),
             )
             .onPressed,
         isNull,
       );
       await tester.tap(
-        find.widgetWithText(ElevatedButton, 'Gördüm'),
+        find.widgetWithText(ElevatedButton, '+ update'),
         warnIfMissed: false,
       );
       await tester.pump();
+      expect(find.byType(CatUpdateSheet), findsNothing);
       expect(api.createUpdateCalls, 1);
 
       gate.complete();
@@ -683,34 +533,14 @@ void main() {
     },
   );
 
-  testWidgets('one-tap seen failure surfaces via a snack bar, not silently', (
-    tester,
-  ) async {
-    final api = _FakeCatDetailApi()..nextError = const UpdateNetworkException();
-    await _pump(tester, api: api);
-
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text(updateSubmitErrorMessageTr(UpdateSubmitError.network)),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('the quick-seen and composer actions meet the 44px tap target', (
-    tester,
-  ) async {
+  testWidgets('the + update action and status options meet the 44px tap '
+      'target', (tester) async {
     await _pump(tester, api: _FakeCatDetailApi());
 
-    final seenSize = tester.getSize(
-      find.widgetWithText(ElevatedButton, 'Gördüm'),
+    final ctaSize = tester.getSize(
+      find.widgetWithText(ElevatedButton, '+ update'),
     );
-    final composeSize = tester.getSize(
-      find.widgetWithText(OutlinedButton, 'Güncelleme ekle'),
-    );
-    expect(seenSize.height, greaterThanOrEqualTo(kTapMin));
-    expect(composeSize.height, greaterThanOrEqualTo(kTapMin));
+    expect(ctaSize.height, greaterThanOrEqualTo(kTapMin));
 
     await _openComposer(tester);
     final statusOptionSize = tester.getSize(find.text('Görüldü'));
@@ -722,6 +552,16 @@ void main() {
     expect(tester.getSize(inkWell).height, greaterThanOrEqualTo(kTapMin));
     expect(statusOptionSize.height, lessThanOrEqualTo(kTapMin));
   });
+
+  testWidgets(
+    'the fixed + update bar renders without overflow at large text scale',
+    (tester) async {
+      await _pump(tester, api: _FakeCatDetailApi(), textScale: 2.0);
+
+      expect(find.widgetWithText(ElevatedButton, '+ update'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'the composer sheet renders without overflow on a small screen with scaled text',
@@ -1077,26 +917,8 @@ void main() {
   // ── gate-at-intent (issue #65) ─────────────────────────────────────────
 
   testWidgets(
-    'a guest tapping Gördüm sees the auth prompt and createUpdate is never called before auth succeeds',
-    (tester) async {
-      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
-      await _pump(
-        tester,
-        api: api,
-        sessionIdentityService: _FakeSessionIdentityService(),
-      );
-
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Güncelleme paylaşmak için giriş yap'), findsOneWidget);
-      expect(find.byType(LoginScreen), findsNothing);
-      expect(api.createUpdateCalls, 0);
-    },
-  );
-
-  testWidgets(
-    'a guest tapping Güncelleme ekle sees the auth prompt before the composer sheet ever opens',
+    'a guest tapping + update sees the auth prompt before the composer '
+    'sheet ever opens, and createUpdate is never called',
     (tester) async {
       final api = _FakeCatDetailApi();
       await _pump(
@@ -1105,20 +927,22 @@ void main() {
         sessionIdentityService: _FakeSessionIdentityService(),
       );
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Güncelleme ekle'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '+ update'));
       await tester.pumpAndSettle();
 
       expect(find.text('Güncelleme paylaşmak için giriş yap'), findsOneWidget);
+      expect(find.byType(LoginScreen), findsNothing);
       expect(
         find.byType(CatUpdateSheet),
         findsNothing,
         reason: 'the composer must never be visible before auth succeeds',
       );
+      expect(api.createUpdateCalls, 0);
     },
   );
 
   testWidgets(
-    'dismissing the guest prompt ("Vazgeç") for Gördüm never submits',
+    'dismissing the guest prompt ("Vazgeç") never opens the composer',
     (tester) async {
       final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
       await _pump(
@@ -1127,17 +951,19 @@ void main() {
         sessionIdentityService: _FakeSessionIdentityService(),
       );
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '+ update'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Vazgeç'));
       await tester.pumpAndSettle();
 
+      expect(find.byType(CatUpdateSheet), findsNothing);
       expect(api.createUpdateCalls, 0);
     },
   );
 
   testWidgets(
-    'signing in from the guest prompt resumes the original Gördüm intent exactly once',
+    'signing in from the guest prompt resumes the original + update intent '
+    'exactly once — the composer opens',
     (tester) async {
       final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
       final authApi = _FakeAuthApi()
@@ -1154,7 +980,7 @@ void main() {
         authApi: authApi,
       );
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Gördüm'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '+ update'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Giriş yap'));
       await tester.pumpAndSettle();
@@ -1168,6 +994,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(LoginScreen), findsNothing);
+      expect(find.byType(CatUpdateSheet), findsOneWidget);
+
+      await tester.tap(find.text('Görüldü'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
+      await tester.pumpAndSettle();
+
       expect(api.createUpdateCalls, 1);
       expect(api.lastStatuses, ['seen']);
       // The optimistic row settled into the confirmed timeline entry.
