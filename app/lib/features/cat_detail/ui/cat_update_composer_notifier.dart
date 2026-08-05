@@ -133,11 +133,12 @@ class CatUpdateComposerState {
   }
 }
 
-/// Drives both entry points onto issue #43's write path — the composition
-/// sheet's multi-select + optional comment, and cat_detail_screen's
-/// one-tap "seen" shortcut — so a submission from either surface shares
-/// the same in-flight guard ([submit] is a no-op while already
-/// submitting).
+/// Drives issue #43's write path from its single remaining entry point:
+/// the composition sheet's multi-select + optional comment, opened by the
+/// screen's one "+ update" action (binding design docs/design/screens/
+/// cat-profile.html — the former one-tap "seen" shortcut is superseded;
+/// "gördüm" is an option inside the sheet). [submit] is a no-op while a
+/// submission is already in flight.
 ///
 /// Ordinary submissions are optimistic per the adopted application-state
 /// contract (docs/design/app-states.md, mutation affordances, superseding
@@ -186,19 +187,14 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   /// dismissed-without-submitting draft never leaks into the next open.
   ///
   /// Never touches an in-flight background submission, and keeps a failed
-  /// attempt's draft: reopening the sheet after an optimistic failure must
+  /// attempt whole: reopening the sheet after an optimistic failure must
   /// show the retained values and their error, ready to retry ("data is
-  /// never lost"). A failed one-tap "seen" attempt carries no draft, so
-  /// only its row survives — the sheet still opens clean.
+  /// never lost"). An ordinary submission always carries a selection, so
+  /// a failed pending row always has a draft to keep.
   void reset() {
     if (state.isSubmitting) return;
-    final pending = state.pending;
-    final hasDraft =
-        state.selectedStatuses.isNotEmpty ||
-        state.needsHelp ||
-        state.comment.isNotEmpty;
-    if (pending?.status == InlineSaveStatus.failed && hasDraft) return;
-    state = CatUpdateComposerState(pending: pending);
+    if (state.pending?.status == InlineSaveStatus.failed) return;
+    state = const CatUpdateComposerState();
   }
 
   /// Submits the current selection, help mark, and draft comment from the
@@ -216,11 +212,6 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
       needsHelp: state.needsHelp,
     );
   }
-
-  /// The one-tap "seen" shortcut. Deliberately bypasses [state.comment] —
-  /// a draft typed into the composition sheet and then dismissed without
-  /// submitting must never be attached to an unrelated one-tap update.
-  Future<bool> submitSeen() => _submit(const ['seen'], null);
 
   Future<bool> _submit(
     List<String> statuses,

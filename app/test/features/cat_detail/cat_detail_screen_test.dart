@@ -172,7 +172,8 @@ void main() {
   });
 
   testWidgets(
-    'missing photo: falls back to a branded placeholder at the same hero size, not a broken image',
+    'missing photo: falls back to a branded placeholder at the same 16:9 '
+    'cover geometry, not a broken image',
     (tester) async {
       await _pump(
         tester,
@@ -185,14 +186,31 @@ void main() {
 
       expect(find.text('boncuk'), findsWidgets);
       expect(find.byIcon(Icons.pets), findsOneWidget);
-      final heroBoxes = tester
-          .widgetList<SizedBox>(find.byType(SizedBox))
-          .where((box) => box.height == 280);
-      expect(
-        heroBoxes,
-        isNotEmpty,
-        reason: 'the hero region keeps its 280px height even without a photo',
+      // The cover keeps the binding design's fixed 16:9 ratio even without
+      // a photo — the placeholder shares the real photo's footprint.
+      final cover = tester.getSize(find.byType(AspectRatio));
+      expect(cover.width / cover.height, closeTo(16 / 9, 0.01));
+    },
+  );
+
+  testWidgets(
+    'a photoless cover is not tappable — no full-screen view to open',
+    (tester) async {
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: _detailMissingPhoto,
+          updates: const [],
+          hasLoadedOnce: true,
+        ),
       );
+
+      await tester.tap(find.byType(AspectRatio), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      // Still on the profile — nothing was pushed over it.
+      expect(find.text('boncuk'), findsWidgets);
+      expect(find.byIcon(Icons.close), findsNothing);
     },
   );
 

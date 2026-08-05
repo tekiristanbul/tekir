@@ -275,6 +275,20 @@ ProviderContainer _containerWith(
   return container;
 }
 
+/// Submits a seen-only ordinary update through the public surface the ui
+/// uses since the single "+ update" action landed: select 'seen' (unless
+/// a failed attempt already retained it) and submit.
+Future<bool> _submitSeen(ProviderContainer container) {
+  final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+  if (!container
+      .read(catUpdateComposerProvider(_catId))
+      .selectedStatuses
+      .contains('seen')) {
+    notifier.toggleStatus('seen');
+  }
+  return notifier.submit();
+}
+
 void main() {
   test('toggleStatus adds and removes from the selection', () {
     final container = _containerWith(_FakeCatDetailApi());
@@ -360,13 +374,10 @@ void main() {
         final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
         final container = _containerWith(api);
         addTearDown(container.dispose);
-        final notifier = container.read(
-          catUpdateComposerProvider(_catId).notifier,
-        );
 
-        await notifier.submitSeen();
+        await _submitSeen(container);
         api.nextResult = _entry('upd-2');
-        await notifier.submitSeen();
+        await _submitSeen(container);
 
         expect(api.idempotencyKeysSeen, hasLength(2));
         expect(api.idempotencyKeysSeen[0], isNot(api.idempotencyKeysSeen[1]));
@@ -380,56 +391,15 @@ void main() {
         ..nextError = const UpdateNetworkException();
       final container = _containerWith(api);
       addTearDown(container.dispose);
-      final notifier = container.read(
-        catUpdateComposerProvider(_catId).notifier,
-      );
 
-      await notifier.submitSeen();
+      await _submitSeen(container);
       api.nextError = null;
       api.nextResult = _entry('upd-1');
-      await notifier.submitSeen();
+      await _submitSeen(container);
 
       expect(api.idempotencyKeysSeen, hasLength(2));
       expect(api.idempotencyKeysSeen[0], api.idempotencyKeysSeen[1]);
     });
-  });
-
-  test(
-    'submitSeen always sends statuses: [seen], ignoring any selection',
-    () async {
-      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
-      final container = _containerWith(api);
-      addTearDown(container.dispose);
-      await container.read(catDetailProvider(_catId).notifier).load();
-
-      final notifier = container.read(
-        catUpdateComposerProvider(_catId).notifier,
-      );
-      notifier.toggleStatus('fed');
-
-      final ok = await notifier.submitSeen();
-
-      expect(ok, isTrue);
-      expect(api.lastStatuses, ['seen']);
-    },
-  );
-
-  test('submitSeen never sends a dismissed composer draft comment', () async {
-    final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
-    final container = _containerWith(api);
-    addTearDown(container.dispose);
-    await container.read(catDetailProvider(_catId).notifier).load();
-
-    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
-    // Simulates: sheet opened, a comment typed, sheet dismissed without
-    // submitting — the composer's draft state outlives the dismissal.
-    notifier.setComment('bu görülmemeliydi');
-
-    final ok = await notifier.submitSeen();
-
-    expect(ok, isTrue);
-    expect(api.lastComment, isNull);
-    expect(api.lastStatuses, ['seen']);
   });
 
   test('duplicate taps while submitting create at most one request', () async {
@@ -441,10 +411,8 @@ void main() {
     addTearDown(container.dispose);
     await container.read(catDetailProvider(_catId).notifier).load();
 
-    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
-
-    final first = notifier.submitSeen();
-    final second = notifier.submitSeen();
+    final first = _submitSeen(container);
+    final second = _submitSeen(container);
 
     expect(
       container.read(catUpdateComposerProvider(_catId)).isSubmitting,
@@ -469,10 +437,7 @@ void main() {
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
 
-      final notifier = container.read(
-        catUpdateComposerProvider(_catId).notifier,
-      );
-      final ok = await notifier.submitSeen();
+      final ok = await _submitSeen(container);
 
       expect(ok, isFalse);
       expect(
@@ -503,11 +468,7 @@ void main() {
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
 
-      final notifier = container.read(
-        catUpdateComposerProvider(_catId).notifier,
-      );
-
-      final ok = await notifier.submitSeen();
+      final ok = await _submitSeen(container);
 
       expect(
         ok,
@@ -541,11 +502,7 @@ void main() {
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
 
-      final notifier = container.read(
-        catUpdateComposerProvider(_catId).notifier,
-      );
-
-      final firstOk = await notifier.submitSeen();
+      final firstOk = await _submitSeen(container);
       expect(firstOk, isFalse);
       final state = container.read(catUpdateComposerProvider(_catId));
       expect(state.error, UpdateSubmitError.unauthorized);
@@ -568,7 +525,7 @@ void main() {
       api
         ..nextError = null
         ..nextResult = _entry('upd-1');
-      final secondOk = await notifier.submitSeen();
+      final secondOk = await _submitSeen(container);
       expect(secondOk, isTrue);
       expect(container.read(catUpdateComposerProvider(_catId)).error, isNull);
       expect(
@@ -597,11 +554,7 @@ void main() {
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
 
-      final notifier = container.read(
-        catUpdateComposerProvider(_catId).notifier,
-      );
-
-      final ok = await notifier.submitSeen();
+      final ok = await _submitSeen(container);
       expect(ok, isFalse);
 
       final state = container.read(catUpdateComposerProvider(_catId));
@@ -616,7 +569,7 @@ void main() {
       api
         ..nextError = null
         ..nextResult = _entry('upd-1');
-      final retryOk = await notifier.submitSeen();
+      final retryOk = await _submitSeen(container);
       expect(retryOk, isTrue);
     },
   );
@@ -640,10 +593,7 @@ void main() {
         addTearDown(container.dispose);
         await container.read(catDetailProvider(_catId).notifier).load();
 
-        final notifier = container.read(
-          catUpdateComposerProvider(_catId).notifier,
-        );
-        final ok = await notifier.submitSeen();
+        final ok = await _submitSeen(container);
 
         expect(ok, isFalse);
         final state = container.read(catUpdateComposerProvider(_catId));
@@ -659,7 +609,7 @@ void main() {
         api
           ..nextError = null
           ..nextResult = _entry('upd-2');
-        final retryOk = await notifier.submitSeen();
+        final retryOk = await _submitSeen(container);
         expect(retryOk, isTrue);
         expect(container.read(catUpdateComposerProvider(_catId)).error, isNull);
       },
@@ -674,9 +624,7 @@ void main() {
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
 
-      final ok = await container
-          .read(catUpdateComposerProvider(_catId).notifier)
-          .submitSeen();
+      final ok = await _submitSeen(container);
 
       expect(ok, isFalse);
       expect(
@@ -903,25 +851,6 @@ void main() {
       await future;
       expect(container.read(catUpdateComposerProvider(_catId)).pending, isNull);
     });
-
-    test('submitSeen never carries a dismissed help mark', () async {
-      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
-      final container = _containerWith(api);
-      addTearDown(container.dispose);
-      await container.read(catDetailProvider(_catId).notifier).load();
-
-      final notifier = container.read(
-        catUpdateComposerProvider(_catId).notifier,
-      );
-      // Sheet opened, yardım toggled, sheet dismissed without submitting.
-      notifier.toggleNeedsHelp();
-
-      final ok = await notifier.submitSeen();
-
-      expect(ok, isTrue);
-      expect(api.lastNeedsHelp, isFalse);
-      expect(api.lastStatuses, ['seen']);
-    });
   });
 
   group('optimistic pending row (issue #109, mutation affordances)', () {
@@ -935,10 +864,7 @@ void main() {
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
 
-      final notifier = container.read(
-        catUpdateComposerProvider(_catId).notifier,
-      );
-      final future = notifier.submitSeen();
+      final future = _submitSeen(container);
 
       final pending = container.read(catUpdateComposerProvider(_catId)).pending;
       expect(pending, isNotNull);
@@ -956,9 +882,7 @@ void main() {
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
 
-      final ok = await container
-          .read(catUpdateComposerProvider(_catId).notifier)
-          .submitSeen();
+      final ok = await _submitSeen(container);
 
       expect(ok, isTrue);
       expect(container.read(catUpdateComposerProvider(_catId)).pending, isNull);
@@ -976,10 +900,7 @@ void main() {
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
 
-      final notifier = container.read(
-        catUpdateComposerProvider(_catId).notifier,
-      );
-      await notifier.submitSeen();
+      await _submitSeen(container);
 
       var pending = container.read(catUpdateComposerProvider(_catId)).pending;
       expect(pending, isNotNull);
@@ -991,7 +912,7 @@ void main() {
         ..nextError = null
         ..nextResult = _entry('upd-1')
         ..gate = gate;
-      final retry = notifier.submitSeen();
+      final retry = _submitSeen(container);
       pending = container.read(catUpdateComposerProvider(_catId)).pending;
       expect(pending!.status, InlineSaveStatus.saving);
 
@@ -1027,27 +948,6 @@ void main() {
       },
     );
 
-    test('reset after a draftless failed attempt (one-tap seen) keeps only the '
-        'row — the sheet opens clean', () async {
-      final api = _FakeCatDetailApi()
-        ..nextError = const UpdateNetworkException();
-      final container = _containerWith(api);
-      addTearDown(container.dispose);
-      await container.read(catDetailProvider(_catId).notifier).load();
-
-      final notifier = container.read(
-        catUpdateComposerProvider(_catId).notifier,
-      );
-      await notifier.submitSeen();
-
-      notifier.reset();
-
-      final state = container.read(catUpdateComposerProvider(_catId));
-      expect(state.pending?.status, InlineSaveStatus.failed);
-      expect(state.selectedStatuses, isEmpty);
-      expect(state.error, isNull);
-    });
-
     test('reset never touches an in-flight submission', () async {
       final gate = Completer<void>();
       final api = _FakeCatDetailApi()
@@ -1060,7 +960,7 @@ void main() {
       final notifier = container.read(
         catUpdateComposerProvider(_catId).notifier,
       );
-      final future = notifier.submitSeen();
+      final future = _submitSeen(container);
 
       notifier.reset();
 
