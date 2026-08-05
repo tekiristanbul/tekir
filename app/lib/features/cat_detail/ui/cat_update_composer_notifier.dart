@@ -43,7 +43,11 @@ String updateSubmitErrorMessageTr(UpdateSubmitError error) {
 /// the active-alert banner is always built from the server-confirmed
 /// entry (expiry is server-computed), never optimistically.
 class PendingUpdate {
-  const PendingUpdate({required this.statuses, required this.status});
+  /// Defensively wraps [statuses] so this state object stays immutable
+  /// even though the caller's list is not — mutating it through
+  /// `state.pending` would bypass Riverpod's state-change notifications.
+  PendingUpdate({required List<String> statuses, required this.status})
+    : statuses = List.unmodifiable(statuses);
 
   final List<String> statuses;
   final InlineSaveStatus status;
@@ -60,9 +64,18 @@ const _statusDoneTr = {
 
 /// The optimistic row's full label — statuses joined with the contract's
 /// " · " separator, closed by "kaydediliyor" while saving and its direct
-/// negation "kaydedilemedi" once failed.
+/// negation "kaydedilemedi" once failed. The status vocabulary is fixed
+/// ([catUpdateStatusOptions]), so an unknown key can only mean a
+/// programming error: it is asserted in debug and omitted in release
+/// rather than ever showing a raw internal key to the user.
 String optimisticUpdateLabelTr(PendingUpdate pending) {
-  final parts = pending.statuses.map((s) => _statusDoneTr[s] ?? s);
+  assert(
+    pending.statuses.every(_statusDoneTr.containsKey),
+    'unknown status in optimistic row: ${pending.statuses}',
+  );
+  final parts = pending.statuses
+      .where(_statusDoneTr.containsKey)
+      .map((s) => _statusDoneTr[s]!);
   final tail = pending.status == InlineSaveStatus.saving
       ? 'kaydediliyor'
       : 'kaydedilemedi';

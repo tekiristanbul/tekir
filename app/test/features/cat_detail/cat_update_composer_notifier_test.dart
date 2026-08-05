@@ -1076,7 +1076,7 @@ void main() {
         'states', () {
       expect(
         optimisticUpdateLabelTr(
-          const PendingUpdate(
+          PendingUpdate(
             statuses: ['water_provided'],
             status: InlineSaveStatus.saving,
           ),
@@ -1085,16 +1085,13 @@ void main() {
       );
       expect(
         optimisticUpdateLabelTr(
-          const PendingUpdate(
-            statuses: ['seen'],
-            status: InlineSaveStatus.failed,
-          ),
+          PendingUpdate(statuses: ['seen'], status: InlineSaveStatus.failed),
         ),
         'gördün · kaydedilemedi',
       );
       expect(
         optimisticUpdateLabelTr(
-          const PendingUpdate(
+          PendingUpdate(
             statuses: ['fed', 'water_provided'],
             status: InlineSaveStatus.saving,
           ),
