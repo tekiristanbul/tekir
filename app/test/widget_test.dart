@@ -45,7 +45,7 @@ void main() {
 
       expect(find.byType(GoogleMap), findsOneWidget);
       expect(
-        find.text('location unavailable — showing istanbul'),
+        find.text('konum alınamadı — istanbul gösteriliyor'),
         findsOneWidget,
       );
     },

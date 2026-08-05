@@ -58,6 +58,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Timer? _debounce;
   Set<Marker> _markers = {};
   int _markerBuildGeneration = 0;
+  bool _atMinZoom = false;
 
   @override
   void dispose() {
@@ -156,11 +157,27 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _debounce = Timer(_debounceDuration, _fetchVisible);
   }
 
+  void _onCameraMove(CameraPosition position) {
+    // tracks whether "alanı genişlet" can still widen anything; the small
+    // epsilon absorbs the sdk reporting e.g. 12.000001 at the floor.
+    final atMin = position.zoom <= istanbulMinZoom + 0.01;
+    if (atMin != _atMinZoom) setState(() => _atMinZoom = atMin);
+  }
+
   Future<void> _fetchVisible() async {
     final controller = _controller;
     if (controller == null) return;
     final bounds = await controller.getVisibleRegion();
     await ref.read(catsMapProvider.notifier).fetchForBounds(bounds);
+  }
+
+  // A user-visible retry, never wired to camera-idle refetches: only this
+  // path bumps the attempt counter that remounts the initial-read gate.
+  Future<void> _retryVisible() async {
+    final controller = _controller;
+    if (controller == null) return;
+    final bounds = await controller.getVisibleRegion();
+    await ref.read(catsMapProvider.notifier).retryForBounds(bounds);
   }
 
   @override
@@ -269,6 +286,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           },
           onMapCreated: _onMapCreated,
           onCameraIdle: _onCameraIdle,
+          onCameraMove: _onCameraMove,
         ),
         if (showFallbackBanner) const _FallbackLocationBanner(),
         if (isInitialRead)
@@ -277,7 +295,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           _InitialReadOverlay(
             key: ValueKey(mapState.attempt),
             locationKnown: !showFallbackBanner,
-            onRetry: _fetchVisible,
+            onRetry: _retryVisible,
           )
         else ...[
           if (mapState.isLoading) const _LoadingBar(),
@@ -291,16 +309,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               // above it need PointerInterceptor or their taps can fall
               // through to the map underneath.
               child: PointerInterceptor(
-                child: MapErrorBanner(onRetry: _fetchVisible),
+                child: MapErrorBanner(onRetry: _retryVisible),
               ),
             ),
         ],
-        if (isEmptyRadius) ...[
-          // state 07 · civarda kayıt yok: the dashed radius ring and sonar
-          // pulse sit on the user dot, which the camera centers on — with
-          // only the fallback center known there is no user dot to mark.
-          if (!showFallbackBanner)
-            const Center(child: SonarUserDot(showRadiusRing: true)),
+        if (isEmptyRadius)
+          // state 07 · civarda kayıt yok. no user dot is drawn: a
+          // screen-center dot stops being the user's position the moment
+          // the camera pans, and nothing anchors it to the real
+          // coordinate yet.
           Positioned(
             left: AppSpacing.s4,
             right: AppSpacing.s4,
@@ -309,11 +326,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               child: EmptyRadiusCard(
                 searchRadiusMeters: mapState.searchRadiusMeters,
                 onAddCat: _addFirstCat,
-                onWidenArea: _widenArea,
+                onWidenArea: _atMinZoom ? null : _widenArea,
               ),
             ),
           ),
-        ],
       ],
     );
   }
@@ -382,7 +398,7 @@ class _FallbackLocationBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return const _TopBanner(
       icon: Icons.location_off,
-      message: 'location unavailable — showing istanbul',
+      message: 'konum alınamadı — istanbul gösteriliyor',
     );
   }
 }

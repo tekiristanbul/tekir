@@ -125,7 +125,7 @@ void main() {
     const empty = CatsMapState(hasLoadedOnce: true, searchRadiusMeters: 300);
 
     testWidgets(
-      'shows the sand card with the real radius, both actions, and the ring',
+      'shows the sand card with the real radius and both actions',
       (tester) async {
         await _pumpSettledLocation(tester, _harness(state: empty));
         await tester.pump(const Duration(milliseconds: 100));
@@ -143,7 +143,9 @@ void main() {
         );
         expect(find.text('ilk kediyi ekle'), findsOneWidget);
         expect(find.text('alanı genişlet'), findsOneWidget);
-        expect(find.byType(SonarUserDot), findsOneWidget);
+        // a screen-center dot stops being the user's position as soon as
+        // the camera pans, so state 07 draws no user dot at all.
+        expect(find.byType(SonarUserDot), findsNothing);
       },
     );
 
@@ -161,7 +163,7 @@ void main() {
       );
     });
 
-    testWidgets('with only the fallback center the ring is not drawn', (
+    testWidgets('with only the fallback center no user dot is drawn', (
       tester,
     ) async {
       await _pumpSettledLocation(
@@ -175,6 +177,28 @@ void main() {
         find.text('bu 300 metrede henüz kayıtlı kedi yok'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('at minimum zoom "alanı genişlet" renders disabled', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          home: Scaffold(
+            body: EmptyRadiusCard(
+              searchRadiusMeters: 300,
+              onAddCat: () {},
+              onWidenArea: null,
+            ),
+          ),
+        ),
+      );
+
+      final widen = tester.widget<InkWell>(
+        find.widgetWithText(InkWell, 'alanı genişlet'),
+      );
+      expect(widen.onTap, isNull);
     });
   });
 

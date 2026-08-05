@@ -125,7 +125,8 @@ void main() {
     },
   );
 
-  test('every fetch bumps the attempt counter, including failures', () async {
+  test('only explicit retries bump the attempt counter, never plain '
+      'fetches', () async {
     final api = _ControllableCatsApi();
     final container = ProviderContainer(
       overrides: [catsApiProvider.overrideWithValue(api)],
@@ -134,17 +135,26 @@ void main() {
 
     final notifier = container.read(catsMapProvider.notifier);
 
+    // plain fetches — the first read and camera-idle refetches — leave
+    // the counter alone so the initial-read gate is never remounted by
+    // panning the map.
     final first = notifier.fetchForBounds(_boundsA);
-    expect(container.read(catsMapProvider).attempt, 1);
+    expect(container.read(catsMapProvider).attempt, 0);
     api.resolve(_boundsA, const []);
     await first;
-    expect(container.read(catsMapProvider).attempt, 1);
+    expect(container.read(catsMapProvider).attempt, 0);
 
     final second = notifier.fetchForBounds(_boundsB);
-    expect(container.read(catsMapProvider).attempt, 2);
+    expect(container.read(catsMapProvider).attempt, 0);
     api._pending[_boundsB]!.removeAt(0).completeError(Exception('down'));
     await second;
-    expect(container.read(catsMapProvider).attempt, 2);
+    expect(container.read(catsMapProvider).attempt, 0);
+
+    final retry = notifier.retryForBounds(_boundsB);
+    expect(container.read(catsMapProvider).attempt, 1);
+    api._pending[_boundsB]!.removeAt(0).completeError(Exception('down'));
+    await retry;
+    expect(container.read(catsMapProvider).attempt, 1);
   });
 
   test('selectCat sets the selected marker; clearSelection clears it', () {

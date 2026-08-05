@@ -15,14 +15,13 @@ bool _reduceMotion(BuildContext context) {
   return media.disableAnimations || media.accessibleNavigation;
 }
 
-/// The "you are here" dot with its sonar pulse (states 07 and 13,
+/// The "you are here" dot with its sonar pulse (state 13,
 /// docs/design/app-states.md). Under reduced motion the pulse never runs;
-/// the dot renders as its settled frame.
+/// the dot renders as its settled frame. Screen-centered, so it is only
+/// honest while the camera still sits on the user's location — state 07
+/// dropped it for that reason once panning is possible.
 class SonarUserDot extends StatefulWidget {
-  const SonarUserDot({super.key, this.showRadiusRing = false});
-
-  /// Draws state 07's dashed search-radius ring around the dot.
-  final bool showRadiusRing;
+  const SonarUserDot({super.key});
 
   @override
   State<SonarUserDot> createState() => _SonarUserDotState();
@@ -63,10 +62,6 @@ class _SonarUserDotState extends State<SonarUserDot>
         child: Stack(
           alignment: Alignment.center,
           children: [
-            if (widget.showRadiusRing)
-              const Positioned.fill(
-                child: CustomPaint(painter: _DashedRingPainter()),
-              ),
             if (!_reduce)
               AnimatedBuilder(
                 animation: _controller,
@@ -105,43 +100,6 @@ class _SonarUserDotState extends State<SonarUserDot>
       ),
     );
   }
-}
-
-/// State 07's dashed radius ring (docs/design/screens/app-states.html:
-/// 180 px circle, 2 px dashed stroke, soft blue fill).
-class _DashedRingPainter extends CustomPainter {
-  const _DashedRingPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = size.center(Offset.zero);
-    final radius = size.shortestSide / 2 - 1;
-
-    canvas.drawCircle(
-      center,
-      radius,
-      Paint()..color = _dotBlue.withValues(alpha: 0.07),
-    );
-
-    final stroke = Paint()
-      ..color = _dotBlue.withValues(alpha: 0.4)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    const dashCount = 40;
-    const sweep = 3.14159265 * 2 / dashCount;
-    for (var i = 0; i < dashCount; i++) {
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
-        i * sweep,
-        sweep * 0.55,
-        false,
-        stroke,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DashedRingPainter oldDelegate) => false;
 }
 
 /// State 13's status band: the dark pill "yakındaki kediler getiriliyor",
@@ -219,7 +177,10 @@ class EmptyRadiusCard extends StatelessWidget {
 
   final double? searchRadiusMeters;
   final VoidCallback onAddCat;
-  final VoidCallback onWidenArea;
+
+  /// Null when the camera already sits at the minimum zoom — the button
+  /// then renders disabled instead of being a silent no-op.
+  final VoidCallback? onWidenArea;
 
   static String titleFor(double? radiusMeters) {
     if (radiusMeters == null) return 'bu civarda henüz kayıtlı kedi yok';
@@ -334,12 +295,14 @@ class _CardButton extends StatelessWidget {
   final IconData? icon;
   final Color background;
   final Color foreground;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    final ink = enabled ? foreground : foreground.withValues(alpha: 0.45);
     return Material(
-      color: background,
+      color: enabled ? background : background.withValues(alpha: 0.55),
       borderRadius: BorderRadius.circular(AppRadius.md + 2),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.md + 2),
@@ -352,7 +315,7 @@ class _CardButton extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (icon != null) ...[
-                Icon(icon, size: 16, color: foreground),
+                Icon(icon, size: 16, color: ink),
                 const SizedBox(width: AppSpacing.s2),
               ],
               Text(
@@ -360,7 +323,7 @@ class _CardButton extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w800,
-                  color: foreground,
+                  color: ink,
                 ),
               ),
             ],

@@ -22,8 +22,10 @@ class CatsMapState {
   final bool hasLoadedOnce;
   final Object? error;
 
-  /// Monotonic fetch counter. The screen keys its InitialReadGate on this
-  /// so a retry remounts the gate and gets a fresh 400 ms of silence
+  /// Monotonic retry counter — bumped only by [CatsMapNotifier.retryForBounds],
+  /// never by a plain fetch. The screen keys its InitialReadGate on this so
+  /// an explicit retry remounts the gate and gets a fresh 400 ms of silence,
+  /// while camera-idle refetches leave the initial-read timing untouched
   /// (docs/design/app-states.md, timing contract).
   final int attempt;
 
@@ -98,11 +100,7 @@ class CatsMapNotifier extends Notifier<CatsMapState> {
 
   Future<void> fetchForBounds(LatLngBounds bounds) async {
     final requestId = ++_requestId;
-    state = state.copyWith(
-      isLoading: true,
-      clearError: true,
-      attempt: state.attempt + 1,
-    );
+    state = state.copyWith(isLoading: true, clearError: true);
 
     try {
       final markers = await ref.read(catsApiProvider).fetchInBounds(bounds);
@@ -118,6 +116,15 @@ class CatsMapNotifier extends Notifier<CatsMapState> {
       if (requestId != _requestId) return;
       state = state.copyWith(isLoading: false, hasLoadedOnce: true, error: e);
     }
+  }
+
+  /// A user-visible retry: bumps [CatsMapState.attempt] so the screen's
+  /// InitialReadGate remounts and earns a fresh 400 ms of silence, then
+  /// runs a normal fetch. Camera-idle refetches must call [fetchForBounds]
+  /// directly — they never reset the initial-read timing.
+  Future<void> retryForBounds(LatLngBounds bounds) {
+    state = state.copyWith(attempt: state.attempt + 1);
+    return fetchForBounds(bounds);
   }
 
   /// Selects [cat] — highlights its marker and opens its preview sheet.
