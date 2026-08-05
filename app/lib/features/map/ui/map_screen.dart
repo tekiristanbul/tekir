@@ -9,6 +9,7 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../../../core/analytics/analytics.dart';
 import '../../../core/geo/istanbul_bounds.dart';
+import '../../../core/states/initial_read_gate.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/ui/auth_gate.dart';
 import '../data/cat_marker.dart';
@@ -17,6 +18,7 @@ import '../data/map_style.dart';
 import '../data/marker_bitmap_builder.dart';
 import 'cat_preview_sheet.dart';
 import 'cats_map_notifier.dart';
+import 'map_states.dart';
 
 /// istanbul street-level: about 2-3 streets, per docs/product/map.md.
 const _initialZoom = 17.0;
@@ -35,6 +37,14 @@ const _clusterTapZoomStep = 2.0;
 // which wraps Google's official @googlemaps/markerclusterer on web) — every
 // cat marker just tags itself with this id and the sdk groups them.
 const _catsClusterManagerId = ClusterManagerId('cats');
+
+// keeps state 07's card clear of the shell's center-floating add-cat fab
+// (app_shell.dart: 46 px diameter floating ~16 px above the body bottom).
+const _fabClearance = 80.0;
+
+// how far "alanı genişlet" zooms out per tap — the inverse of the cluster
+// tap's fixed step, for the same reason: guaranteed progress per tap.
+const _widenAreaZoomStep = 2.0;
 
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
@@ -190,8 +200,49 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
+  Future<void> _widenArea() async {
+    final controller = _controller;
+    if (controller == null) return;
+    final currentZoom = await controller.getZoomLevel();
+    final targetZoom = math.max(
+      currentZoom - _widenAreaZoomStep,
+      istanbulMinZoom,
+    );
+    // the refetch for the wider viewport rides the normal camera-idle
+    // debounce; no direct fetch call needed.
+    final camera = await controller.getVisibleRegion();
+    final center = LatLng(
+      (camera.southwest.latitude + camera.northeast.latitude) / 2,
+      (camera.southwest.longitude + camera.northeast.longitude) / 2,
+    );
+    await controller.animateCamera(
+      CameraUpdate.newLatLngZoom(center, targetZoom),
+    );
+  }
+
+  // Gate-at-intent, the exact mechanism of the shell's add-cat fab
+  // (app_shell.dart's _AddCatFab): a guest sees AuthGate's prompt sheet
+  // first, and `/add-cat` is pushed only once sign-in completes.
+  void _addFirstCat() {
+    unawaited(
+      AuthGate.require(
+        context,
+        ref,
+        contextText: 'Kedi eklemek için giriş yap',
+        intent: AnalyticsAuthIntent.addCat,
+        onAuthenticated: () => context.push('/add-cat'),
+      ),
+    );
+  }
+
   Widget _buildMap({required LatLng center, required bool showFallbackBanner}) {
     final mapState = ref.watch(catsMapProvider);
+    final isInitialRead = mapState.isLoading && !mapState.hasLoadedOnce;
+    final isEmptyRadius =
+        mapState.hasLoadedOnce &&
+        !mapState.isLoading &&
+        mapState.error == null &&
+        mapState.markers.isEmpty;
 
     return Stack(
       children: [
@@ -220,14 +271,106 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           onCameraIdle: _onCameraIdle,
         ),
         if (showFallbackBanner) const _FallbackLocationBanner(),
-        if (mapState.isLoading) const _LoadingBar(),
-        if (mapState.error != null) _ErrorBanner(onRetry: _fetchVisible),
-        if (mapState.hasLoadedOnce &&
-            !mapState.isLoading &&
-            mapState.error == null &&
-            mapState.markers.isEmpty)
-          const _EmptyBanner(),
+        if (isInitialRead)
+          // state 13 · harita yükleniyor. keyed on the attempt counter so
+          // a retry remounts the gate and earns a fresh 400 ms of silence.
+          _InitialReadOverlay(
+            key: ValueKey(mapState.attempt),
+            locationKnown: !showFallbackBanner,
+            onRetry: _fetchVisible,
+          )
+        else ...[
+          if (mapState.isLoading) const _LoadingBar(),
+          if (mapState.error != null)
+            Positioned(
+              top: 12,
+              left: 12,
+              right: 12,
+              // on web, GoogleMap is a real platform view (an html
+              // element), not flutter-rendered pixels — widgets stacked
+              // above it need PointerInterceptor or their taps can fall
+              // through to the map underneath.
+              child: PointerInterceptor(
+                child: MapErrorBanner(onRetry: _fetchVisible),
+              ),
+            ),
+        ],
+        if (isEmptyRadius) ...[
+          // state 07 · civarda kayıt yok: the dashed radius ring and sonar
+          // pulse sit on the user dot, which the camera centers on — with
+          // only the fallback center known there is no user dot to mark.
+          if (!showFallbackBanner)
+            const Center(child: SonarUserDot(showRadiusRing: true)),
+          Positioned(
+            left: AppSpacing.s4,
+            right: AppSpacing.s4,
+            bottom: _fabClearance,
+            child: PointerInterceptor(
+              child: EmptyRadiusCard(
+                searchRadiusMeters: mapState.searchRadiusMeters,
+                onAddCat: _addFirstCat,
+                onWidenArea: _widenArea,
+              ),
+            ),
+          ),
+        ],
       ],
+    );
+  }
+}
+
+/// State 13's screen-level presentation, phased by the shared timing gate
+/// (docs/design/app-states.md): nothing before 400 ms; then the map ground
+/// dims to 75 % with the sonar user dot; the status band joins at 1.6 s;
+/// at 6 s the wait is over and the error state renders. no placeholder
+/// pins are drawn — the contract's hard limit allows them only for cats
+/// with a real cached position, and no such cache exists in this app, so
+/// the map opens pinless (contract gap 3).
+class _InitialReadOverlay extends StatelessWidget {
+  const _InitialReadOverlay({
+    super.key,
+    required this.locationKnown,
+    required this.onRetry,
+  });
+
+  final bool locationKnown;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return InitialReadGate(
+      reading: true,
+      builder: (context, phase) {
+        if (phase == InitialReadPhase.hidden) return const SizedBox.shrink();
+        if (phase == InitialReadPhase.timedOut) {
+          return Positioned(
+            top: 12,
+            left: 12,
+            right: 12,
+            child: PointerInterceptor(child: MapErrorBanner(onRetry: onRetry)),
+          );
+        }
+        return Positioned.fill(
+          child: IgnorePointer(
+            child: Stack(
+              children: [
+                // the ground stays visible at 75 % — no spinner screen.
+                const Positioned.fill(
+                  child: ColoredBox(color: Color(0x40FBF6EE)),
+                ),
+                if (locationKnown) const Center(child: SonarUserDot()),
+                if (phase == InitialReadPhase.skeletonWithStatus)
+                  const Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: _fabClearance + AppSpacing.s3,
+                    child: Center(child: MapLoadingStatusPill()),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -240,55 +383,6 @@ class _FallbackLocationBanner extends StatelessWidget {
     return const _TopBanner(
       icon: Icons.location_off,
       message: 'location unavailable — showing istanbul',
-    );
-  }
-}
-
-class _EmptyBanner extends StatelessWidget {
-  const _EmptyBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    return const _TopBanner(
-      icon: Icons.pets,
-      message: 'no cats in this area yet',
-    );
-  }
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.onRetry});
-
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      top: 12,
-      left: 12,
-      right: 12,
-      // on web, GoogleMap is a real platform view (an html element), not
-      // flutter-rendered pixels — widgets stacked above it need
-      // PointerInterceptor or their taps can fall through to the map
-      // underneath instead of registering on the widget itself.
-      child: PointerInterceptor(
-        child: Material(
-          color: AppColors.surface,
-          elevation: 2,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                const Icon(Icons.error_outline, color: Colors.red, size: 18),
-                const SizedBox(width: 8),
-                const Expanded(child: Text("couldn't load cats")),
-                TextButton(onPressed: onRetry, child: const Text('retry')),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

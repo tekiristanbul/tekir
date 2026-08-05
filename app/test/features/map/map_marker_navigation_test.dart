@@ -47,9 +47,12 @@ class _FixedCatDetailNotifier extends CatDetailNotifier {
   Future<void> load() async {}
 }
 
+// Idle pre-fetch state — hasLoadedOnce with zero markers would mount
+// state 07's empty-radius card (map_states.dart), whose sonar pulse
+// repeats forever and would hang every pumpAndSettle below.
 class _EmptyCatsMapNotifier extends CatsMapNotifier {
   @override
-  CatsMapState build() => const CatsMapState(hasLoadedOnce: true);
+  CatsMapState build() => const CatsMapState();
 }
 
 // A guest session (never restored) — these tests are about navigation, not
