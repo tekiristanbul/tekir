@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- AppColors.primary terracotta — must match the flutter splash
-         (lib/core/splash/splash_gate.dart) so the native launch hands
-         off without a flash (issue #85) -->
-    <color name="splash_background">#A44732</color>
+    <!-- The 12b splash ground's cream center (docs/design/app-states.md,
+         state 12b: radial #FDF8F0 -> #F2E2CD) - must match the flutter
+         splash (lib/core/splash/splash_gate.dart) so the native launch
+         hands off without a flash. A plain color: the radial falloff is
+         subtle and the flutter splash takes over within a frame. -->
+    <color name="splash_background">#FDF8F0</color>
     <color name="ic_launcher_background">#A44732</color>
 </resources>

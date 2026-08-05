@@ -19,10 +19,11 @@
                             <imageView opaque="NO" clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="center" image="LaunchImage" translatesAutoresizingMaskIntoConstraints="NO" id="YRO-k0-Ey4">
                             </imageView>
                         </subviews>
-                        <!-- AppColors.primary terracotta #A44732 — must match the
+                        <!-- The 12b splash ground's cream center #FDF8F0
+                             (docs/design/app-states.md, state 12b) — must match the
                              flutter splash (lib/core/splash/splash_gate.dart) so the
-                             native launch hands off without a flash (issue #85). -->
-                        <color key="backgroundColor" red="0.64313725490196083" green="0.27843137254901962" blue="0.19607843137254902" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                             native launch hands off without a flash. -->
+                        <color key="backgroundColor" red="0.99215686274509807" green="0.97254901960784313" blue="0.94117647058823528" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                         <constraints>
                             <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="1a2-6s-vTC"/>
                             <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="4X2-HB-R7a"/>
@@ -35,6 +36,6 @@
         </scene>
     </scenes>
     <resources>
-        <image name="LaunchImage" width="84" height="84"/>
+        <image name="LaunchImage" width="112" height="123"/>
     </resources>
 </document>

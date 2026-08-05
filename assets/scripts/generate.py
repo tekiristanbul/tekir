@@ -2,14 +2,23 @@
 # requires-python = ">=3.11"
 # dependencies = ["fonttools>=4.53", "uharfbuzz>=0.39", "cairosvg>=2.7"]
 # ///
-"""Generates the temporary 0.1 brand sources and exports (issue #85).
+"""Generates the temporary brand sources and exports.
 
 Everything is derived from the two variable fonts already bundled with the
 app (assets/fonts/Fraunces-Variable.ttf, WorkSans-Variable.ttf) plus the
-approved product palette (app/lib/core/theme/app_theme.dart, itself ported
-from prototype/styles.css). No hand-drawn artwork exists: the temporary
-mark is pure typography, so this script IS the editable source of record —
-rerunning it reproduces every committed SVG and PNG bit-for-bit.
+approved product palette. No hand-drawn artwork exists except the splash
+lockup below: the temporary mark is pure typography, the lockup's pad/pin
+geometry is copied verbatim from the binding 12b design frame
+(docs/design/screens/app-states.html), so this script IS the editable
+source of record — rerunning it reproduces every committed SVG and PNG
+bit-for-bit.
+
+The splash section implements the application-state contract's 12b
+composition (docs/design/app-states.md, gap 11): the paw/pin lockup on the
+cream radial ground with the "tekir" wordmark and "kim görüldü, kim
+beslendi" tagline, superseding issue #85's terracotta lettermark splash.
+The lockup is an app-state illustration only (gap 7) — issue #24's
+independent logo process and assets/brand/temporary/ are unaffected.
 
 Run from the repository root:
 
@@ -21,7 +30,7 @@ It writes:
   - the live Flutter web icons (app/web/favicon.png, app/web/icons/*)
   - the website favicon (website/assets/favicon.png)
 and prints the pixel metrics used by the inline splash markup in
-app/web/index.html (which embeds a copy of the wordmark/lettermark paths).
+app/web/index.html (which embeds copies of the lockup/wordmark paths).
 """
 
 from __future__ import annotations
@@ -48,6 +57,45 @@ TERRACOTTA = "#A44732"
 INK = "#2A1F1B"
 WHITE = "#FFFFFF"
 
+# binding 12b splash palette — docs/design/screens/app-states.html; these
+# are the design file's literal values, deliberately not the app tokens
+# (the flutter splash carries the same local constants).
+CREAM_CENTER = "#FDF8F0"
+CREAM_EDGE = "#F2E2CD"
+PAD_INK = "#2A211A"
+PIN_BRICK = "#B5452F"
+TAGLINE_FAINT = "#8A7563"
+
+# the 12b lockup, verbatim from the design frame's 200 × 220 viewBox:
+# four rotated ink paw pads over the brick pin. displayed at 112 × 123.
+LOCKUP_VIEWBOX = (200.0, 220.0)
+LOCKUP_SIZE = (112.0, 123.0)
+LOCKUP_PADS = [
+    (40, 78, 15.5, 20, -30),
+    (79, 51, 17.5, 22.6, -11),
+    (122, 51.5, 17.5, 22.6, 12),
+    (161, 79, 15.5, 20, 31),
+]
+LOCKUP_PIN_PATH = (
+    "M100.5 88c30.5 0 49.5 21 48.8 42.2-.7 21-16.6 36.6-30.3 51.2"
+    "-6 6.4-11.9 15.6-18.6 15.6-6.8 0-12.2-9.4-18.4-15.9"
+    "C68 166.6 51.5 151 51.5 130.2 51.5 109 70 88 100.5 88z"
+)
+
+
+def lockup_group(tx: float, ty: float, scale: float) -> str:
+    """The lockup as an SVG group with its viewBox top-left at (tx, ty)."""
+    pads = "".join(
+        f'<ellipse cx="{cx:g}" cy="{cy:g}" rx="{rx:g}" ry="{ry:g}" '
+        f'transform="rotate({deg:g} {cx:g} {cy:g})" fill="{PAD_INK}"/>'
+        for cx, cy, rx, ry, deg in LOCKUP_PADS
+    )
+    pin = f'<path d="{LOCKUP_PIN_PATH}" fill="{PIN_BRICK}"/>'
+    return (
+        f'<g transform="translate({tx:.2f} {ty:.2f}) '
+        f'scale({scale:.6f})">{pads}{pin}</g>'
+    )
+
 # Fraunces is pinned to the exact instance the Flutter app renders:
 # weight 600 (pubspec.yaml font config), every other axis at its
 # default (opsz 9, SOFT 0, WONK 1) — Flutter applies no optical sizing.
@@ -58,7 +106,9 @@ WORKSANS_AXES = {"wght": 400}
 class Shaped:
     """A harfbuzz-shaped run reduced to positioned SVG path data."""
 
-    def __init__(self, font_path: Path, axes: dict, text: str):
+    def __init__(
+        self, font_path: Path, axes: dict, text: str, tracking_em: float = 0.0
+    ):
         ttfont = instantiateVariableFont(
             TTFont(font_path), axes, inplace=False, updateFontNames=False
         )
@@ -75,6 +125,8 @@ class Shaped:
         glyph_order = ttfont.getGlyphOrder()
         glyph_set = ttfont.getGlyphSet()
 
+        # css letter-spacing equivalent, applied between glyphs.
+        tracking = tracking_em * self.upem
         paths = []
         x = 0.0
         bounds = BoundsPen(glyph_set)
@@ -87,7 +139,7 @@ class Shaped:
             if d:
                 paths.append(d)
             glyph_set[name].draw(TransformPen(bounds, offset))
-            x += pos.x_advance
+            x += pos.x_advance + tracking
         self.advance = x
         self.path = " ".join(paths)
         # font-unit tight bbox, y-up
@@ -153,12 +205,6 @@ def main() -> None:
 
     wordmark = Shaped(fraunces, FRAUNCES_AXES, "tekir")
     lettermark = Shaped(fraunces, FRAUNCES_AXES, "t")
-    # the prototype tagline wraps inside max-width 22em (styles.css
-    # .splash-screen__tag); at 14px on a 360dp frame that is two lines.
-    tagline_lines = [
-        Shaped(worksans, WORKSANS_AXES, "İstanbul'un sokak kedilerini keşfet,"),
-        Shaped(worksans, WORKSANS_AXES, "onlara göz kulak ol."),
-    ]
 
     brand_src = ASSETS / "brand" / "temporary" / "source"
     brand_exp = ASSETS / "brand" / "temporary" / "exports"
@@ -286,15 +332,17 @@ def main() -> None:
         500,
     )
 
-    # ---- splash mark: the prototype's 84px tile (radius 28, white 14%)
-    # holding the lettermark where the placeholder paw used to be
-    # (prototype/styles.css .splash-screen__mark; issue #85 replaces the
-    # paw with the wordmark-derived temporary mark).
-    mark_body = (
-        '<rect width="84" height="84" rx="28" fill="#FFFFFF" fill-opacity="0.14"/>'
-        + centered_glyph(lettermark, 84, 40, WHITE)
+    # ---- splash mark: the 12b lockup on transparent, at its binding
+    # 112 × 123 display size (the native launch screens center it on the
+    # cream ground their own configs carry).
+    vw, vh = LOCKUP_VIEWBOX
+    lw, lh = LOCKUP_SIZE
+    mark_svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="0 0 {vw:g} {vh:g}" width="{lw:g}" height="{lh:g}">\n'
+        + lockup_group(0, 0, 1.0)
+        + "\n</svg>\n"
     )
-    mark_svg = svg_doc(84, 84, mark_body)
     write(ASSETS / "splash" / "source" / "splash-mark.svg", mark_svg)
 
     ios_launch = (
@@ -303,48 +351,68 @@ def main() -> None:
     if ios_launch.exists():
         for scale in (1, 2, 3):
             suffix = "" if scale == 1 else f"@{scale}x"
-            png(mark_svg, ios_launch / f"LaunchImage{suffix}.png", 84 * scale, 84 * scale)
+            png(
+                mark_svg,
+                ios_launch / f"LaunchImage{suffix}.png",
+                round(lw * scale),
+                round(lh * scale),
+            )
 
-    # android native launch drawable: the same 84dp tile per density
-    # (drawable/launch_background.xml centers it on terracotta)
+    # android native launch drawable: the same lockup per density
+    # (drawable/launch_background.xml centers it on the cream ground)
     if android_res.exists():
         for density, factor in densities.items():
             png(
                 mark_svg,
                 android_res / f"drawable-{density}" / "splash_mark.png",
-                round(84 * factor),
-                round(84 * factor),
+                round(lw * factor),
+                round(lh * factor),
             )
 
-    # ---- full splash reference frame: the prototype composition
-    # (splash-screen: centered column, gap 16) on a 360x780dp viewport
-    # rendered at 3x for a 1080x2340 export.
+    # ---- full splash frame: the settled 12b composition on a 360x780dp
+    # viewport rendered at 3x for a 1080x2340 export. binding metrics:
+    # lockup 112 × 123, wordmark 46 px display 600 (tracking −0.045em),
+    # tagline 13 px weight 700 (tracking 0.04em), gaps 26 and 12, the
+    # block lifted by the reference's 70 px bottom padding.
+    splash_word = Shaped(fraunces, FRAUNCES_AXES, "tekir", tracking_em=-0.045)
+    splash_tag = Shaped(
+        worksans, {"wght": 700}, "kim görüldü, kim beslendi", tracking_em=0.04
+    )
     fw, fh = 360.0, 780.0
-    word_h = 30 * (wordmark.ymax - wordmark.ymin) / wordmark.upem
-    gap = 16.0
-    tag_line_h = 14 * 1.5  # prototype line-height 1.5
-    total = 84 + gap + word_h + gap + tag_line_h * len(tagline_lines)
-    y = (fh - total) / 2
-    parts = [f'<rect width="{fw:g}" height="{fh:g}" fill="{TERRACOTTA}"/>']
-    parts.append(
-        f'<g transform="translate({(fw - 84) / 2:.2f} {y:.2f})">{mark_body}</g>'
+    word_h = 46 * (splash_word.ymax - splash_word.ymin) / splash_word.upem
+    tag_h = 13 * (splash_tag.ymax - splash_tag.ymin) / splash_tag.upem
+    total = lh + 26 + word_h + 12 + tag_h
+    y = (fh - 70 - total) / 2
+    ground = (
+        "<defs>"
+        '<radialGradient id="splashGround" cx="0.5" cy="0.34" r="1.2" '
+        'gradientTransform="translate(0.5 0.34) scale(1 0.66667) '
+        'translate(-0.5 -0.34)">'
+        f'<stop offset="0" stop-color="{CREAM_CENTER}"/>'
+        f'<stop offset="1" stop-color="{CREAM_EDGE}"/>'
+        "</radialGradient></defs>"
+        f'<rect width="{fw:g}" height="{fh:g}" fill="url(#splashGround)"/>'
     )
-    y += 84 + gap
-    scale = 30 / wordmark.upem
+    parts = [ground]
+    parts.append(lockup_group((fw - lw) / 2, y, lw / vw))
+    y += lh + 26
     parts.append(
-        wordmark.svg_group(scale, (fw - wordmark.width_at(word_h)) / 2, y, WHITE)
-    )
-    y += word_h + gap
-    for line in tagline_lines:
-        line_h = 14 * (line.ymax - line.ymin) / line.upem
-        line_w = line.width_at(line_h)
-        line_y = y + (tag_line_h - line_h) / 2
-        parts.append(
-            '<g fill-opacity="0.82">'
-            + line.svg_group(14 / line.upem, (fw - line_w) / 2, line_y, WHITE)
-            + "</g>"
+        splash_word.svg_group(
+            46 / splash_word.upem,
+            (fw - splash_word.width_at(word_h)) / 2,
+            y,
+            PAD_INK,
         )
-        y += tag_line_h
+    )
+    y += word_h + 12
+    parts.append(
+        splash_tag.svg_group(
+            13 / splash_tag.upem,
+            (fw - splash_tag.width_at(tag_h)) / 2,
+            y,
+            TAGLINE_FAINT,
+        )
+    )
     splash_svg = svg_doc(fw, fh, "\n".join(parts))
     write(ASSETS / "splash" / "source" / "splash-screen.svg", splash_svg)
     png(splash_svg, ASSETS / "splash" / "exports" / "splash-1080x2340.png", 1080, 2340)
@@ -352,13 +420,17 @@ def main() -> None:
     # ---- metrics for the inline pre-flutter splash in app/web/index.html
     print("\ninline splash metrics (app/web/index.html):")
     print(
-        f"  wordmark tight box at font-size 30px: "
-        f"{wordmark.width_at(word_h):.2f} x {word_h:.2f} px"
+        f"  wordmark tight box at font-size 46px (tracking -0.045em): "
+        f"{splash_word.width_at(word_h):.2f} x {word_h:.2f} px"
     )
-    lm_h = 40.0
-    print(f"  lettermark at {lm_h:g}px tall: {lettermark.width_at(lm_h):.2f} px wide")
-    print(f"  wordmark viewBox: 0 0 {wordmark.xmax - wordmark.xmin:.1f} "
-          f"{wordmark.ymax - wordmark.ymin:.1f}")
+    print(
+        f"  wordmark viewBox: 0 0 {splash_word.xmax - splash_word.xmin:.1f} "
+        f"{splash_word.ymax - splash_word.ymin:.1f}"
+    )
+    print(
+        f"  tagline tight box at font-size 13px (tracking 0.04em): "
+        f"{splash_tag.width_at(tag_h):.2f} x {tag_h:.2f} px"
+    )
 
 
 if __name__ == "__main__":
