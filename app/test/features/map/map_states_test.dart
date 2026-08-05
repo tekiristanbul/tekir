@@ -124,30 +124,29 @@ void main() {
   group('state 07 · civarda kayıt yok', () {
     const empty = CatsMapState(hasLoadedOnce: true, searchRadiusMeters: 300);
 
-    testWidgets(
-      'shows the sand card with the real radius and both actions',
-      (tester) async {
-        await _pumpSettledLocation(tester, _harness(state: empty));
-        await tester.pump(const Duration(milliseconds: 100));
+    testWidgets('shows the sand card with the real radius and both actions', (
+      tester,
+    ) async {
+      await _pumpSettledLocation(tester, _harness(state: empty));
+      await tester.pump(const Duration(milliseconds: 100));
 
-        expect(
-          find.text('bu 300 metrede henüz kayıtlı kedi yok'),
-          findsOneWidget,
-        );
-        expect(
-          find.text(
-            'gördüğün ilk kediyi eklersen mahalledeki herkes onu takip '
-            'edebilir.',
-          ),
-          findsOneWidget,
-        );
-        expect(find.text('ilk kediyi ekle'), findsOneWidget);
-        expect(find.text('alanı genişlet'), findsOneWidget);
-        // a screen-center dot stops being the user's position as soon as
-        // the camera pans, so state 07 draws no user dot at all.
-        expect(find.byType(SonarUserDot), findsNothing);
-      },
-    );
+      expect(
+        find.text('bu 300 metrede henüz kayıtlı kedi yok'),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'gördüğün ilk kediyi eklersen mahalledeki herkes onu takip '
+          'edebilir.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('ilk kediyi ekle'), findsOneWidget);
+      expect(find.text('alanı genişlet'), findsOneWidget);
+      // a screen-center dot stops being the user's position as soon as
+      // the camera pans, so state 07 draws no user dot at all.
+      expect(find.byType(SonarUserDot), findsNothing);
+    });
 
     testWidgets('both actions meet the 44 px minimum target', (tester) async {
       await _pumpSettledLocation(tester, _harness(state: empty));
