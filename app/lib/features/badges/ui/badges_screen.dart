@@ -97,7 +97,10 @@ class _BadgeRow extends StatelessWidget {
               Icon(
                 badgeIconFor(badge.icon),
                 size: 20,
-                color: badge.earned ? AppColors.primaryStrong : AppColors.faint,
+                // muted, not faint (issue #109, badge contrast): the icon
+                // carries the earned/unearned state, and faint reads at
+                // under 3:1 on this surface — below the non-text minimum.
+                color: badge.earned ? AppColors.primaryStrong : AppColors.muted,
               ),
               const SizedBox(width: AppSpacing.s3),
               Expanded(

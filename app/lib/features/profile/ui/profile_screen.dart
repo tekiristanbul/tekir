@@ -299,9 +299,12 @@ class _BadgeStrip extends StatelessWidget {
                     Icon(
                       badgeIconFor(b.icon),
                       size: 26,
+                      // muted, not faint (issue #109, badge contrast):
+                      // faint on surfaceAlt is ~2.4:1, below the 3:1
+                      // non-text minimum for state-carrying graphics.
                       color: b.earned
                           ? AppColors.primaryStrong
-                          : AppColors.faint,
+                          : AppColors.muted,
                     ),
                     const SizedBox(height: AppSpacing.s1),
                     Text(
