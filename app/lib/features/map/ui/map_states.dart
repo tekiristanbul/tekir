@@ -357,10 +357,7 @@ class _CardButton extends StatelessWidget {
 /// access-log retention (gap 4) — both dropped from this pass rather than
 /// guessed.
 class LocationPermissionState extends StatelessWidget {
-  const LocationPermissionState({
-    super.key,
-    required this.onRequestPermission,
-  });
+  const LocationPermissionState({super.key, required this.onRequestPermission});
 
   final VoidCallback onRequestPermission;
 
@@ -394,8 +391,9 @@ class LocationPermissionState extends StatelessWidget {
               Text(
                 'nerede olduğunu bilmeden haritayı açamıyoruz',
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleLarge
-                    ?.copyWith(fontSize: 25, height: 1.25),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontSize: 25, height: 1.25),
               ),
               const SizedBox(height: AppSpacing.s6),
               SizedBox(
