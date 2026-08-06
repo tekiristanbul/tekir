@@ -623,9 +623,11 @@ class _HelpFilterChip extends StatelessWidget {
     // expansion) via the surrounding InkWell instead of the visible chrome.
     return Semantics(
       container: true,
+      excludeSemantics: true,
       button: true,
       toggled: isOn,
       label: 'yardım gerekiyor filtresi',
+      onTap: onTap,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
