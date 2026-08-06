@@ -528,6 +528,10 @@ class _MapSearchField extends StatelessWidget {
       child: SizedBox(
         height: kTapMin,
         child: Row(
+          // stretches the TextField to the full 44px height so its
+          // semantics/hit-test size meets the tap-target guideline instead
+          // of shrinking to the text's own line height.
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(width: AppSpacing.s4),
             const Icon(Icons.search, size: 17, color: AppColors.muted),
@@ -634,12 +638,19 @@ class _HelpFilterChip extends StatelessWidget {
                       color: foreground,
                     ),
                     const SizedBox(width: AppSpacing.s1),
-                    Text(
-                      'yardım gerekiyor',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: foreground,
+                    // Flexible (not a bare Text) so the label shrinks
+                    // instead of overflowing the chip row's positioned
+                    // width budget at large text-scale factors.
+                    Flexible(
+                      child: Text(
+                        'yardım gerekiyor',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: foreground,
+                        ),
                       ),
                     ),
                   ],
