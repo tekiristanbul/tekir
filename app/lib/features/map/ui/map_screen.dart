@@ -622,6 +622,7 @@ class _HelpFilterChip extends StatelessWidget {
     // still meets the 44px minimum (`.chip::before`'s invisible hit-area
     // expansion) via the surrounding InkWell instead of the visible chrome.
     return Semantics(
+      container: true,
       button: true,
       toggled: isOn,
       label: 'yardım gerekiyor filtresi',
