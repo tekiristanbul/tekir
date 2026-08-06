@@ -66,19 +66,18 @@ small spinners appear only inside buttons and inline rows.
 
 - screen: map (`app/lib/features/map/`). shown on first launch before the
   permission decision and whenever permission is denied.
-- copy: title "nerede olduğunu bilmeden haritayı açamıyoruz"; sub "konumun
-  sadece yakınındaki kedileri göstermek için kullanılır, kaydedilmez.";
-  primary "konum iznini aç"; secondary "haritada elle mahalle seç".
+- copy: title "nerede olduğunu bilmeden haritayı açamıyoruz"; primary
+  "konum iznini aç".
 - visuals: blurred, desaturated decorative map behind a cream gradient;
   paw-and-pin glyph in a muted disc with a brick slash.
-- the sub-line is a privacy claim and is **not final**: the application
-  layer is verified but edge/hosting access logs are not (gap 4). the
-  state may not ship with this sentence until that verification
-  completes.
-- the secondary action "haritada elle mahalle seç" has **no current or
-  planned implementation owner** — see open questions. slice 1's issue
-  must resolve it (implement manual area selection or get the action's
-  removal approved) before this state is built.
+- **shipped scope (issue #121 approval, 2026-08-06):** the sub-line
+  "konumun sadece yakınındaki kedileri göstermek için kullanılır,
+  kaydedilmez." and the secondary action "haritada elle mahalle seç" are
+  **dropped from this pass**, not deferred-and-forgotten. the sub-line
+  stays unverified against gap 4 (edge/hosting access-log retention of
+  coordinate query strings); the secondary action has no implementation
+  owner. either can return once its blocker resolves, tracked as its own
+  issue rather than reopening this one.
 - slice 1.
 
 ### 07 · civarda kayıt yok
@@ -303,9 +302,9 @@ reduced-motion behavior and its tests ship inside every slice that
 animates.
 
 1. **map states** — 06, 07, 13: permission state, in-radius empty state,
-   cached-pin loading with the timing contract. blocked on gap 4's
-   remaining verification (06's privacy sub-line) and the open question
-   on 06's secondary action.
+   cached-pin loading with the timing contract. 06 ships without its
+   privacy sub-line and secondary action per the issue #121 approval —
+   see 06's shipped-scope note above.
 2. **notifications quiet day** — 09: olive banner and followed list from
    `GET /v1/me/follows`, count-drop rule included.
 3. **discover skeleton and empty follow** — 08, 14: skeleton geometry,
@@ -341,12 +340,13 @@ animates.
 
 ## open questions
 
+both resolved by the issue #121 approval (2026-08-06): state 06 ships with
+only its primary action, dropping the secondary action and the privacy
+sub-line from this pass rather than blocking on either. kept below for
+history — either can be reopened as its own issue if still wanted.
+
 - state 06's secondary action "haritada elle mahalle seç" has no current
-  or planned implementation owner. slice 1 cannot ship 06 until manual
-  area selection is owned by an issue or the action's removal is
-  approved.
+  or planned implementation owner.
 - gap 4's remaining verification: whether cloudflare and the hosting
   droplet's infrastructure record full request urls (query strings
-  containing coordinates), and if so, disabling or redacting that. until
-  resolved, state 06's privacy sub-line is provisional and [[privacy]]
-  stays unchanged.
+  containing coordinates), and if so, disabling or redacting that.

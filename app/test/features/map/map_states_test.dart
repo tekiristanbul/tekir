@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/map/data/location_service.dart';
@@ -24,6 +25,7 @@ Widget _harness({
   required CatsMapState state,
   bool reduceMotion = false,
   bool fallbackLocation = false,
+  bool permissionDenied = false,
 }) {
   return ProviderScope(
     overrides: [
@@ -31,6 +33,7 @@ Widget _harness({
         (ref) async => ResolvedLocation(
           center: istanbulFallback,
           isFallback: fallbackLocation,
+          permissionDenied: permissionDenied,
         ),
       ),
       catsMapProvider.overrideWith(() => _FixedCatsMapNotifier(state)),
@@ -198,6 +201,67 @@ void main() {
         find.widgetWithText(InkWell, 'alanı genişlet'),
       );
       expect(widen.onTap, isNull);
+    });
+  });
+
+  group('state 06 · konum izni yok', () {
+    const empty = CatsMapState();
+
+    testWidgets('blocks the map behind the primary action only', (
+      tester,
+    ) async {
+      await _pumpSettledLocation(
+        tester,
+        _harness(state: empty, permissionDenied: true),
+      );
+      await tester.pump();
+
+      expect(
+        find.text('nerede olduğunu bilmeden haritayı açamıyoruz'),
+        findsOneWidget,
+      );
+      expect(find.text('konum iznini aç'), findsOneWidget);
+      // approved scope (issue #121): no secondary action and no unverified
+      // privacy sub-line ship in this pass.
+      expect(find.text('haritada elle mahalle seç'), findsNothing);
+      expect(find.textContaining('kaydedilmez'), findsNothing);
+      expect(find.byType(GoogleMap), findsNothing);
+    });
+
+    testWidgets('the primary action meets the 44 px minimum target', (
+      tester,
+    ) async {
+      await _pumpSettledLocation(
+        tester,
+        _harness(state: empty, permissionDenied: true),
+      );
+      await tester.pump();
+
+      expect(
+        tester.getSize(find.widgetWithText(InkWell, 'konum iznini aç')).height,
+        greaterThanOrEqualTo(kTapMin),
+      );
+    });
+
+    testWidgets('a disabled service or timeout keeps the map with a banner', (
+      tester,
+    ) async {
+      // fallback without permissionDenied is the *other* fallback reasons
+      // (service disabled, timeout/error) — those never trigger state 06.
+      await _pumpSettledLocation(
+        tester,
+        _harness(state: empty, fallbackLocation: true),
+      );
+      await tester.pump();
+
+      expect(
+        find.text('nerede olduğunu bilmeden haritayı açamıyoruz'),
+        findsNothing,
+      );
+      expect(
+        find.text('konum alınamadı — istanbul gösteriliyor'),
+        findsOneWidget,
+      );
     });
   });
 

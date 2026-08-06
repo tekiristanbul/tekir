@@ -7,10 +7,21 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 const istanbulFallback = LatLng(41.0256, 28.9744);
 
 class ResolvedLocation {
-  const ResolvedLocation({required this.center, required this.isFallback});
+  const ResolvedLocation({
+    required this.center,
+    required this.isFallback,
+    this.permissionDenied = false,
+  });
 
   final LatLng center;
   final bool isFallback;
+
+  /// True only when [isFallback] is because permission was never granted or
+  /// was denied — never for a disabled location service or a resolution
+  /// timeout/error. Only this reason gates the map behind state 06's
+  /// full-screen block (docs/design/app-states.md); the other fallback
+  /// reasons keep the existing silent-fallback-with-banner behavior.
+  final bool permissionDenied;
 }
 
 /// Resolves the map's initial camera center. Never throws: permission
@@ -31,6 +42,7 @@ class LocationService {
         return const ResolvedLocation(
           center: istanbulFallback,
           isFallback: true,
+          permissionDenied: true,
         );
       }
 
