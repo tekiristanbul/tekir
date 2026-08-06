@@ -267,11 +267,16 @@ class EmptyRadiusCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: AppSpacing.s2 + 1),
-                _CardButton(
-                  label: 'alanı genişlet',
-                  background: AppColors.surfaceAlt,
-                  foreground: AppColors.muted,
-                  onTap: onWidenArea,
+                // Flexible, not intrinsic: at large text scale the label
+                // outgrows the card's width and must shrink-wrap instead
+                // of overflowing (docs/design/app-states.md, global rules).
+                Flexible(
+                  child: _CardButton(
+                    label: 'alanı genişlet',
+                    background: AppColors.surfaceAlt,
+                    foreground: AppColors.muted,
+                    onTap: onWidenArea,
+                  ),
                 ),
               ],
             ),
@@ -313,17 +318,24 @@ class _CardButton extends StatelessWidget {
           alignment: Alignment.center,
           child: Row(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               if (icon != null) ...[
                 Icon(icon, size: 16, color: ink),
                 const SizedBox(width: AppSpacing.s2),
               ],
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                  color: ink,
+              // Wraps to a second line when the button is narrower than
+              // the label (large text scale on a narrow phone) — the
+              // minHeight-only constraint above lets the button grow.
+              Flexible(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: ink,
+                  ),
                 ),
               ),
             ],

@@ -129,35 +129,45 @@ class _GuestBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(Icons.person_outline, size: 40, color: AppColors.faint),
-        const SizedBox(height: AppSpacing.s3),
-        Text('Giriş yapmadın', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: AppSpacing.s2),
-        const Text(
-          'Katkı geçmişini ve rozetlerini görmek, kedi eklemek ve güncelleme paylaşmak için giriş yapman gerekir. Haritayı ve kedi detaylarını girişsiz gezebilirsin.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: AppColors.muted, height: 1.5),
-        ),
-        const SizedBox(height: AppSpacing.s5),
-        SizedBox(
-          height: kTapMin,
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: onLogin,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: AppColors.primaryInk,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppRadius.md),
+    // Scrollable so large text scale can't push the sign-in action off a
+    // small screen (app-states global rules: no state overflows at large
+    // system text scale).
+    return Center(
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.person_outline, size: 40, color: AppColors.faint),
+            const SizedBox(height: AppSpacing.s3),
+            Text(
+              'Giriş yapmadın',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.s2),
+            const Text(
+              'Katkı geçmişini ve rozetlerini görmek, kedi eklemek ve güncelleme paylaşmak için giriş yapman gerekir. Haritayı ve kedi detaylarını girişsiz gezebilirsin.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.muted, height: 1.5),
+            ),
+            const SizedBox(height: AppSpacing.s5),
+            SizedBox(
+              height: kTapMin,
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: onLogin,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.primaryInk,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                ),
+                child: const Text('Giriş yap'),
               ),
             ),
-            child: const Text('Giriş yap'),
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
