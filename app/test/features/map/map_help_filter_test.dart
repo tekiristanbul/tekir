@@ -1,8 +1,8 @@
-/// Regression coverage for the "yardım gerekiyor" filter chip (issue #121
-/// visual-parity PR #123): the toggle itself, its `Semantics.toggled`
-/// state, and the selection-clearing behavior a reviewer flagged — turning
-/// the filter on while a non-`needsHelp` cat is selected must not leave a
-/// hidden marker's preview sheet still open.
+// Regression coverage for the "yardım gerekiyor" filter chip (issue #121
+// visual-parity PR #123): the toggle itself, its `Semantics.toggled`
+// state, and the selection-clearing behavior a reviewer flagged — turning
+// the filter on while a non-`needsHelp` cat is selected must not leave a
+// hidden marker's preview sheet still open.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -51,10 +51,8 @@ Widget _harness() {
   return ProviderScope(
     overrides: [
       initialLocationProvider.overrideWith(
-        (ref) async => const ResolvedLocation(
-          center: istanbulFallback,
-          isFallback: false,
-        ),
+        (ref) async =>
+            const ResolvedLocation(center: istanbulFallback, isFallback: false),
       ),
       catsMapProvider.overrideWith(_EmptyCatsMapNotifier.new),
     ],
@@ -100,7 +98,7 @@ void main() {
 
         final chip = find.bySemanticsLabel('yardım gerekiyor filtresi');
         expect(
-          tester.getSemantics(chip).hasFlag(SemanticsFlag.isToggled),
+          tester.getSemantics(chip).flagsCollection.isToggled.toBoolOrNull(),
           isFalse,
         );
 
@@ -108,7 +106,7 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(
-          tester.getSemantics(chip).hasFlag(SemanticsFlag.isToggled),
+          tester.getSemantics(chip).flagsCollection.isToggled.toBoolOrNull(),
           isTrue,
         );
 
@@ -116,7 +114,7 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(
-          tester.getSemantics(chip).hasFlag(SemanticsFlag.isToggled),
+          tester.getSemantics(chip).flagsCollection.isToggled.toBoolOrNull(),
           isFalse,
         );
       } finally {
