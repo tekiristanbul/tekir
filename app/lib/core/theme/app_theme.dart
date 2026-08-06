@@ -31,6 +31,17 @@ class AppColors {
   static const lineStrong = Color(0xFFD2C1A6);
 
   static const overlay = Color(0x802A1F1B); // rgba(42,31,27,.5)
+
+  // Per-status-type tint pairs (docs/design/screens/cat-profile.html
+  // `--seenBg/--seenFg`, `--fedBg/--fedFg`, `--watBg/--watFg`) — each
+  // status kind gets its own hue rather than sharing one generic pill, so
+  // the timeline and the three-question header strip read at a glance.
+  static const seenBg = Color(0xFFEAEFE1);
+  static const seenFg = Color(0xFF5B6F42);
+  static const fedBg = Color(0xFFF7E9D3);
+  static const fedFg = Color(0xFF8A5F20);
+  static const waterBg = Color(0xFFE2ECF1);
+  static const waterFg = Color(0xFF3D6479);
 }
 
 /// 4/8-based spacing scale (prototype/styles.css `--space-*`).

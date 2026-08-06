@@ -175,7 +175,8 @@ class _CatDetailBody extends ConsumerWidget {
     return ListView(
       padding: EdgeInsets.zero,
       children: [
-        _HeroPhoto(detail: detail),
+        _HeroPhoto(detail: detail, openSource: openSource),
+        _IdentityBlock(detail: detail),
         Padding(
           // The extra bottom padding keeps the last timeline entry
           // scrollable clear of the fixed "+ update" bar.
@@ -196,11 +197,6 @@ class _CatDetailBody extends ConsumerWidget {
                 _LastUpdateRow(time: detail.lastUpdateAt!),
                 const SizedBox(height: AppSpacing.s4),
               ],
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FollowButton(catId: detail.id, source: openSource),
-              ),
-              const SizedBox(height: AppSpacing.s6),
               Text(
                 'Son güncellemeler',
                 style: Theme.of(context).textTheme.titleMedium,
@@ -246,11 +242,15 @@ class _CatDetailBody extends ConsumerWidget {
 /// Tapping it opens the uncropped full-screen view; the design marks
 /// tappability with a media counter, but its count must come from a real
 /// total whose source field the design leaves unverified ("açık kalan"),
-/// so no counter is rendered yet.
+/// so no counter is rendered yet. The name/area caption lives below the
+/// photo (see [_IdentityBlock]), not overlaid on it — only the back and
+/// follow glass controls sit on the photo itself, matching the design's
+/// frames A/B.
 class _HeroPhoto extends StatelessWidget {
-  const _HeroPhoto({required this.detail});
+  const _HeroPhoto({required this.detail, this.openSource});
 
   final CatDetail detail;
+  final AnalyticsSource? openSource;
 
   @override
   Widget build(BuildContext context) {
@@ -258,8 +258,8 @@ class _HeroPhoto extends StatelessWidget {
     return AspectRatio(
       aspectRatio: 16 / 9,
       // The detector wraps the whole cover so the tap target isn't blocked
-      // by the scrim overlay; the back button's own InkWell still wins its
-      // area of the stack.
+      // by the scrim overlay; the back/follow buttons' own InkWells still
+      // win their area of the stack.
       child: GestureDetector(
         onTap: photo == null ? null : () => _openFullScreen(context, photo),
         child: Stack(
@@ -275,20 +275,15 @@ class _HeroPhoto extends StatelessWidget {
                     const _HeroPlaceholder(loading: true),
                 errorWidget: (context, _, _) => const _HeroPlaceholder(),
               ),
-            // scrim: keeps the back button and the name/area caption readable
-            // over any photo, per prototype/styles.css's .hero-photo__scrim.
+            // scrim: keeps the back/follow glass controls readable over any
+            // photo — top-only now that the caption has moved below.
             const DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0x59000000),
-                    Colors.transparent,
-                    Colors.transparent,
-                    Color(0x47000000),
-                  ],
-                  stops: [0.0, 0.26, 0.74, 1.0],
+                  colors: [Color(0x47000000), Colors.transparent],
+                  stops: [0.0, 0.4],
                 ),
               ),
             ),
@@ -298,47 +293,12 @@ class _HeroPhoto extends StatelessWidget {
               child: _BackCircleButton(onGlass: true),
             ),
             Positioned(
-              left: AppSpacing.s5,
-              right: AppSpacing.s5,
-              bottom: AppSpacing.s4,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    detail.name,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: Colors.white,
-                      shadows: const [
-                        Shadow(color: Color(0x59000000), blurRadius: 6),
-                      ],
-                    ),
-                  ),
-                  if (detail.areaLabel != null) ...[
-                    const SizedBox(height: 3),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.location_on,
-                          size: 13,
-                          color: Colors.white,
-                        ),
-                        const SizedBox(width: 5),
-                        Flexible(
-                          child: Text(
-                            detail.areaLabel!,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
+              top: AppSpacing.s3,
+              right: AppSpacing.s4,
+              child: FollowButton(
+                catId: detail.id,
+                source: openSource,
+                glass: true,
               ),
             ),
           ],
@@ -357,6 +317,57 @@ class _HeroPhoto extends StatelessWidget {
       MaterialPageRoute<void>(
         fullscreenDialog: true,
         builder: (_) => _FullScreenPhoto(photo: photo),
+      ),
+    );
+  }
+}
+
+/// The cat's name and area, below the cover on the screen's own background
+/// (binding design's "kimlik" block) rather than overlaid on the photo.
+/// The design pairs this with a "N komşu bakıyor" follower-count line, but
+/// that count has no backing field yet (docs/design/screens/cat-profile.html's
+/// own recorded "açık kalan" item) — so only the placement moves here, the
+/// count is not invented.
+class _IdentityBlock extends StatelessWidget {
+  const _IdentityBlock({required this.detail});
+
+  final CatDetail detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.s5,
+        AppSpacing.s4,
+        AppSpacing.s5,
+        0,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(detail.name, style: Theme.of(context).textTheme.headlineSmall),
+          if (detail.areaLabel != null) ...[
+            const SizedBox(height: 3),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.location_on, size: 13, color: AppColors.faint),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    detail.areaLabel!,
+                    style: const TextStyle(
+                      color: AppColors.faint,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -682,6 +693,17 @@ class _UpdateBar extends ConsumerWidget {
   }
 }
 
+/// Background/foreground pair per status kind (binding design
+/// docs/design/screens/cat-profile.html: each action chip is
+/// color-coded independently — fed tan, seen green, water blue — never
+/// sharing one generic pill). A status outside this map (future/legacy)
+/// falls back to the app's default primary tint.
+const _statusColorsTr = {
+  'seen': (bg: AppColors.seenBg, fg: AppColors.seenFg),
+  'fed': (bg: AppColors.fedBg, fg: AppColors.fedFg),
+  'water_provided': (bg: AppColors.waterBg, fg: AppColors.waterFg),
+};
+
 class _StatusTag extends StatelessWidget {
   const _StatusTag({required this.status});
 
@@ -689,21 +711,24 @@ class _StatusTag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors =
+        _statusColorsTr[status] ??
+        (bg: AppColors.primarySoft, fg: AppColors.primaryStrong);
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.s2,
         vertical: 3,
       ),
       decoration: BoxDecoration(
-        color: AppColors.primarySoft,
+        color: colors.bg,
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
       child: Text(
         _statusLabelsTr[status] ?? status,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w700,
-          color: AppColors.primaryStrong,
+          color: colors.fg,
         ),
       ),
     );
