@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/core/identity/session_identity.dart';
+import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_screen.dart';
@@ -378,6 +379,77 @@ void main() {
         find.text('su bıraktım ama akşam biri daha bakabilir mi?'),
         findsOneWidget,
       );
+    },
+  );
+
+  testWidgets(
+    'each status kind gets its own chip color, never one shared pill',
+    (tester) async {
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: _detail,
+          updates: [
+            CatUpdateEntry(
+              id: 'u1',
+              statuses: const ['seen', 'fed', 'water_provided'],
+              comment: null,
+              createdAt: DateTime.utc(2026, 1, 2),
+            ),
+          ],
+          hasLoadedOnce: true,
+        ),
+      );
+
+      Color chipColor(String label) {
+        final container = tester.widget<Container>(
+          find.ancestor(of: find.text(label), matching: find.byType(Container)),
+        );
+        return (container.decoration! as BoxDecoration).color!;
+      }
+
+      expect(chipColor('görüldü'), AppColors.seenBg);
+      expect(chipColor('mama verildi'), AppColors.fedBg);
+      expect(chipColor('su verildi'), AppColors.waterBg);
+    },
+  );
+
+  testWidgets(
+    'the identity block (name + area) renders below the cover, not overlaid on it',
+    (tester) async {
+      await _pump(
+        tester,
+        CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
+      );
+
+      final coverBottom = tester.getBottomLeft(find.byType(AspectRatio)).dy;
+      final nameTop = tester.getTopLeft(find.text('tekir')).dy;
+      final areaTop = tester
+          .getTopLeft(find.text('Galata Kulesi çevresi, Beyoğlu'))
+          .dy;
+
+      expect(nameTop, greaterThanOrEqualTo(coverBottom));
+      expect(areaTop, greaterThan(nameTop));
+    },
+  );
+
+  testWidgets(
+    'the follow control is the icon-only glass button on the cover, not a labeled button in the body',
+    (tester) async {
+      await _pump(
+        tester,
+        CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
+      );
+
+      expect(find.text('Takip et'), findsNothing);
+      expect(find.text('Takip ediliyor'), findsNothing);
+      expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+
+      final coverBottom = tester.getBottomLeft(find.byType(AspectRatio)).dy;
+      final followIconBottom = tester
+          .getBottomLeft(find.byIcon(Icons.favorite_border))
+          .dy;
+      expect(followIconBottom, lessThanOrEqualTo(coverBottom));
     },
   );
 }

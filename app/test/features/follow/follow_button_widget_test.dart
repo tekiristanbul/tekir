@@ -89,13 +89,16 @@ Widget _appWith({
   required SessionIdentityService session,
   required FollowsApi followsApi,
   AuthApi? authApi,
+  bool glass = false,
 }) {
   final router = GoRouter(
     routes: [
       GoRoute(
         path: '/',
-        builder: (context, state) => const Scaffold(
-          body: Center(child: FollowButton(catId: _catId)),
+        builder: (context, state) => Scaffold(
+          body: Center(
+            child: FollowButton(catId: _catId, glass: glass),
+          ),
         ),
       ),
       GoRoute(
@@ -203,4 +206,75 @@ void main() {
       expect(find.text('Takip ediliyor'), findsOneWidget);
     },
   );
+
+  group('glass variant (on-cover placement)', () {
+    testWidgets(
+      'renders icon-only, with neither the labeled outline button nor its text',
+      (tester) async {
+        final api = _FakeFollowsApi();
+        await tester.pumpWidget(
+          _appWith(
+            session: _FakeSessionIdentityService(),
+            followsApi: api,
+            glass: true,
+          ),
+        );
+
+        expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+        expect(find.byType(OutlinedButton), findsNothing);
+        expect(find.text('Takip et'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a guest tap still gates behind auth, never calls follow before auth succeeds',
+      (tester) async {
+        final api = _FakeFollowsApi();
+        await tester.pumpWidget(
+          _appWith(
+            session: _FakeSessionIdentityService(),
+            followsApi: api,
+            glass: true,
+          ),
+        );
+
+        await tester.tap(find.byIcon(Icons.favorite_border));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Bir kediyi takip etmek için giriş yap'),
+          findsOneWidget,
+        );
+        expect(find.byType(LoginScreen), findsNothing);
+        expect(api.followCalls, 0);
+      },
+    );
+
+    testWidgets(
+      'an already-authenticated tap follows immediately and swaps to the filled heart',
+      (tester) async {
+        final api = _FakeFollowsApi();
+        await tester.pumpWidget(
+          _appWith(
+            session: _FakeSessionIdentityService(
+              initial: const SessionIdentity(
+                accessToken: 'at',
+                refreshToken: 'rt',
+                userId: 'u1',
+              ),
+            ),
+            followsApi: api,
+            glass: true,
+          ),
+        );
+
+        await tester.tap(find.byIcon(Icons.favorite_border));
+        await tester.pumpAndSettle();
+
+        expect(api.followCalls, 1);
+        expect(find.byIcon(Icons.favorite), findsOneWidget);
+        expect(find.byIcon(Icons.favorite_border), findsNothing);
+      },
+    );
+  });
 }

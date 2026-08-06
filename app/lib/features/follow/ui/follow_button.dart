@@ -15,7 +15,12 @@ import 'follow_state_notifier.dart';
 /// once sign-in completes (resumed intent), exactly the mechanism issue
 /// #47/#57 built and issue #65 is the first feature to actually call.
 class FollowButton extends ConsumerWidget {
-  const FollowButton({super.key, required this.catId, this.source});
+  const FollowButton({
+    super.key,
+    required this.catId,
+    this.source,
+    this.glass = false,
+  });
 
   final String catId;
 
@@ -24,11 +29,39 @@ class FollowButton extends ConsumerWidget {
   /// (parameter omitted) when unknown, e.g. a direct deep link.
   final AnalyticsSource? source;
 
+  /// Icon-only round variant on a glass background, for placement directly
+  /// on a photo (binding design docs/design/screens/cat-profile.html: the
+  /// follow heart sits top-right on the cover, next to the back button,
+  /// matching `_BackCircleButton`'s glass treatment) instead of the
+  /// labeled outline button used elsewhere.
+  final bool glass;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isFollowed = ref.watch(
       followsProvider.select((s) => s.value?.contains(catId) ?? false),
     );
+
+    if (glass) {
+      return Material(
+        color: Colors.white.withValues(alpha: 0.92),
+        shape: const CircleBorder(),
+        elevation: 2,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () => _handleTap(context, ref),
+          child: SizedBox(
+            width: kTapMin,
+            height: kTapMin,
+            child: Icon(
+              isFollowed ? Icons.favorite : Icons.favorite_border,
+              size: 18,
+              color: isFollowed ? AppColors.primary : AppColors.ink,
+            ),
+          ),
+        ),
+      );
+    }
 
     return SizedBox(
       height: kTapMin,
