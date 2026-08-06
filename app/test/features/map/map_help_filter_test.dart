@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:app/core/models/active_alert.dart';
 import 'package:app/features/map/data/cat_marker.dart';
 import 'package:app/features/map/data/location_service.dart';
 import 'package:app/features/map/ui/cat_preview_sheet.dart';
