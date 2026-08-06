@@ -60,6 +60,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   int _markerBuildGeneration = 0;
   bool _atMinZoom = false;
 
+  // prototype/app.js's `mapHelpFilter` (map.js's renderLeafletMarkers):
+  // hides every non-alerted marker instead of navigating or refetching —
+  // a pure client-side view over the cats already fetched for the current
+  // viewport.
+  bool _helpFilterOn = false;
+
   @override
   void dispose() {
     _debounce?.cancel();
@@ -75,9 +81,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Future<void> _rebuildMarkers(List<CatMarker> cats, String? selectedId) async {
     final generation = ++_markerBuildGeneration;
     final bitmaps = ref.read(markerBitmapBuilderProvider);
+    final visibleCats = _helpFilterOn
+        ? cats.where((cat) => cat.needsHelp).toList()
+        : cats;
 
     final markers = await Future.wait(
-      cats.map((cat) async {
+      visibleCats.map((cat) async {
         final icon = await bitmaps.pin(
           cacheKey: cat.id,
           photoUrl: cat.primaryPhoto,
@@ -116,6 +125,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   // the sheet's "Detaya git" action opens the cat-detail route.
   void _onCatSelected(CatMarker cat) {
     ref.read(catsMapProvider.notifier).selectCat(cat);
+  }
+
+  void _toggleHelpFilter() {
+    setState(() => _helpFilterOn = !_helpFilterOn);
+    final mapState = ref.read(catsMapProvider);
+    unawaited(_rebuildMarkers(mapState.markers, mapState.selectedMarker?.id));
   }
 
   Future<void> _openPreviewSheet(CatMarker cat) async {
@@ -183,6 +198,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   Widget build(BuildContext context) {
     final initialLocation = ref.watch(initialLocationProvider);
+    final mapState = ref.watch(catsMapProvider);
+    final isInitialRead = mapState.isLoading && !mapState.hasLoadedOnce;
+    final isEmptyRadius =
+        mapState.hasLoadedOnce &&
+        !mapState.isLoading &&
+        mapState.error == null &&
+        mapState.markers.isEmpty;
+    // app-states.html's 07/13 frames swap the topbar search placeholder to
+    // this copy while the map itself is loading or the radius is empty;
+    // the prototype's static "Mahalle veya sokak ara" is the normal-state
+    // baseline everywhere else.
+    final searchHint = (isInitialRead || isEmptyRadius)
+        ? 'bu civarda ara'
+        : 'Mahalle veya sokak ara';
 
     ref.listen(catsMapProvider, (previous, next) {
       final selectionChanged =
@@ -206,6 +235,33 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (_, _) =>
                 _buildMap(center: istanbulFallback, showFallbackBanner: true),
+          ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+            left: AppSpacing.s4,
+            // clears the notifications button parked at the same top
+            // offset on the right (map_screen.dart's own issue #78
+            // addition — no prototype IA, so it stays a corner button
+            // instead of folding into this topbar).
+            right: AppSpacing.s4 + kTapMin + AppSpacing.s2,
+            child: PointerInterceptor(
+              child: _MapSearchField(hintText: searchHint),
+            ),
+          ),
+          Positioned(
+            top:
+                MediaQuery.of(context).padding.top +
+                AppSpacing.s3 +
+                kTapMin +
+                AppSpacing.s2,
+            left: AppSpacing.s4,
+            right: AppSpacing.s4,
+            child: PointerInterceptor(
+              child: _MapChipRow(
+                helpFilterOn: _helpFilterOn,
+                onToggleHelpFilter: _toggleHelpFilter,
+              ),
+            ),
           ),
           Positioned(
             top: MediaQuery.of(context).padding.top + AppSpacing.s3,
@@ -441,6 +497,155 @@ class _TopBanner extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(child: Text(message)),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The map topbar's search field (prototype/app.js's `renderMap`,
+/// `.search-field`) — visual parity only. The prototype's own input has no
+/// wired handler either (no oninput, no search-results rendering; the
+/// audit at docs/design/issue-121-visual-parity-audit.md confirmed this),
+/// so this stays a plain typeable field with no behavior behind it rather
+/// than inventing a search feature issue #121 doesn't scope.
+class _MapSearchField extends StatelessWidget {
+  const _MapSearchField({required this.hintText});
+
+  final String hintText;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.94),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        side: const BorderSide(color: AppColors.lineStrong),
+      ),
+      elevation: 1,
+      shadowColor: const Color(0x122A1F1B),
+      child: SizedBox(
+        height: kTapMin,
+        child: Row(
+          children: [
+            const SizedBox(width: AppSpacing.s4),
+            const Icon(Icons.search, size: 17, color: AppColors.muted),
+            const SizedBox(width: AppSpacing.s2),
+            Expanded(
+              child: TextField(
+                style: const TextStyle(fontSize: 15, color: AppColors.ink),
+                decoration: InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: hintText,
+                  hintStyle: const TextStyle(color: AppColors.faint),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.s4),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The map topbar's chip row (prototype/app.js's `renderMapChrome`) — only
+/// the needs-help filter ships here. The prototype's second chip
+/// ("konum kapalı", shown only once `state.locationGranted === false`)
+/// depends on the location-permission screen issue #121 leaves open
+/// pending a product decision (docs/design/app-states.md's open question
+/// on state 06) — omitted rather than guessed.
+class _MapChipRow extends StatelessWidget {
+  const _MapChipRow({
+    required this.helpFilterOn,
+    required this.onToggleHelpFilter,
+  });
+
+  final bool helpFilterOn;
+  final VoidCallback onToggleHelpFilter;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: _HelpFilterChip(isOn: helpFilterOn, onTap: onToggleHelpFilter),
+    );
+  }
+}
+
+/// `.chip.is-warm` (prototype/styles.css): bolder than a plain chip even
+/// off, so it reads as "the alert filter" at a glance against the rest of
+/// the map chrome.
+class _HelpFilterChip extends StatelessWidget {
+  const _HelpFilterChip({required this.isOn, required this.onTap});
+
+  final bool isOn;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final background = isOn
+        ? AppColors.help
+        : Colors.white.withValues(alpha: 0.94);
+    final foreground = isOn ? AppColors.helpInk : AppColors.helpStrong;
+    // visible pill stays 32px tall (prototype's `.chip`); the tap target
+    // still meets the 44px minimum (`.chip::before`'s invisible hit-area
+    // expansion) via the surrounding InkWell instead of the visible chrome.
+    return Semantics(
+      button: true,
+      toggled: isOn,
+      label: 'yardım gerekiyor filtresi',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          onTap: onTap,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: kTapMin),
+            alignment: Alignment.center,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: background,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+                border: Border.all(color: AppColors.help),
+                boxShadow: isOn
+                    ? const [
+                        BoxShadow(
+                          color: Color(0x122A1F1B),
+                          offset: Offset(0, 1),
+                          blurRadius: 2,
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s3,
+                  vertical: AppSpacing.s2 - 2,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      size: 14,
+                      color: foreground,
+                    ),
+                    const SizedBox(width: AppSpacing.s1),
+                    Text(
+                      'yardım gerekiyor',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: foreground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
       ),
