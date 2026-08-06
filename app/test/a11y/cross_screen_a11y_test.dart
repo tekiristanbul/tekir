@@ -585,12 +585,18 @@ void main() {
     group(screenCase.name, () {
       testWidgets('every tap target is at least 44 logical px', (tester) async {
         _usePhoneViewport(tester);
+        // Disposed in a finally rather than addTearDown: the binding verifies
+        // no semantics handle is active before test-package teardowns run, so
+        // an addTearDown dispose is too late and fails every passing test.
         final handle = tester.ensureSemantics();
-        addTearDown(handle.dispose);
-        await screenCase.pump(tester);
-        await _settle(tester, screenCase);
+        try {
+          await screenCase.pump(tester);
+          await _settle(tester, screenCase);
 
-        await expectLater(tester, meetsGuideline(iOSTapTargetGuideline));
+          await expectLater(tester, meetsGuideline(iOSTapTargetGuideline));
+        } finally {
+          handle.dispose();
+        }
       });
 
       testWidgets('does not overflow at 2.0 text scale', (tester) async {
