@@ -249,51 +249,76 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     });
 
     return Scaffold(
-      body: Stack(
-        children: [
-          initialLocation.when(
-            data: (resolved) => _buildMap(
-              center: resolved.center,
-              showFallbackBanner: resolved.isFallback,
-            ),
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (_, _) =>
-                _buildMap(center: istanbulFallback, showFallbackBanner: true),
-          ),
-          Positioned(
-            top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-            left: AppSpacing.s4,
-            // clears the notifications button parked at the same top
-            // offset on the right (map_screen.dart's own issue #78
-            // addition — no prototype IA, so it stays a corner button
-            // instead of folding into this topbar).
-            right: AppSpacing.s4 + kTapMin + AppSpacing.s2,
-            child: PointerInterceptor(
-              child: _MapSearchField(hintText: searchHint),
-            ),
-          ),
-          Positioned(
-            top:
-                MediaQuery.of(context).padding.top +
-                AppSpacing.s3 +
-                kTapMin +
-                AppSpacing.s2,
-            left: AppSpacing.s4,
-            right: AppSpacing.s4,
-            child: PointerInterceptor(
-              child: _MapChipRow(
-                helpFilterOn: _helpFilterOn,
-                onToggleHelpFilter: _toggleHelpFilter,
+      body: initialLocation.when(
+        data: (resolved) => resolved.permissionDenied
+            ? LocationPermissionState(
+                onRequestPermission: _requestLocationPermission,
+              )
+            : _buildMapChrome(
+                center: resolved.center,
+                showFallbackBanner: resolved.isFallback,
+                searchHint: searchHint,
               ),
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (_, _) => _buildMapChrome(
+          center: istanbulFallback,
+          showFallbackBanner: true,
+          searchHint: searchHint,
+        ),
+      ),
+    );
+  }
+
+  // Re-runs [initialLocationProvider] so LocationService.resolveInitialCenter
+  // re-checks/re-requests the OS permission — the same path the app takes on
+  // first launch. If the OS still won't reprompt (permanently denied), state
+  // 06 simply reappears; a settings deep-link is out of this pass's approved
+  // scope (only the primary action ships).
+  void _requestLocationPermission() {
+    ref.invalidate(initialLocationProvider);
+  }
+
+  Widget _buildMapChrome({
+    required LatLng center,
+    required bool showFallbackBanner,
+    required String searchHint,
+  }) {
+    return Stack(
+      children: [
+        _buildMap(center: center, showFallbackBanner: showFallbackBanner),
+        Positioned(
+          top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+          left: AppSpacing.s4,
+          // clears the notifications button parked at the same top
+          // offset on the right (map_screen.dart's own issue #78
+          // addition — no prototype IA, so it stays a corner button
+          // instead of folding into this topbar).
+          right: AppSpacing.s4 + kTapMin + AppSpacing.s2,
+          child: PointerInterceptor(
+            child: _MapSearchField(hintText: searchHint),
+          ),
+        ),
+        Positioned(
+          top:
+              MediaQuery.of(context).padding.top +
+              AppSpacing.s3 +
+              kTapMin +
+              AppSpacing.s2,
+          left: AppSpacing.s4,
+          right: AppSpacing.s4,
+          child: PointerInterceptor(
+            child: _MapChipRow(
+              helpFilterOn: _helpFilterOn,
+              onToggleHelpFilter: _toggleHelpFilter,
             ),
           ),
-          Positioned(
-            top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-            right: AppSpacing.s4,
-            child: PointerInterceptor(child: _NotificationsButton()),
-          ),
-        ],
-      ),
+        ),
+        Positioned(
+          top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+          right: AppSpacing.s4,
+          child: PointerInterceptor(child: _NotificationsButton()),
+        ),
+      ],
     );
   }
 
