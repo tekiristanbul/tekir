@@ -91,38 +91,39 @@ void _tapHelpFilterChip(WidgetTester tester) {
 }
 
 void main() {
-  testWidgets('the filter chip reports its on/off state via Semantics.toggled', (
-    tester,
-  ) async {
-    final handle = tester.ensureSemantics();
-    try {
-      await _pumpMap(tester);
+  testWidgets(
+    'the filter chip reports its on/off state via Semantics.toggled',
+    (tester) async {
+      final handle = tester.ensureSemantics();
+      try {
+        await _pumpMap(tester);
 
-      final chip = find.bySemanticsLabel('yardım gerekiyor filtresi');
-      expect(
-        tester.getSemantics(chip).hasFlag(SemanticsFlag.isToggled),
-        isFalse,
-      );
+        final chip = find.bySemanticsLabel('yardım gerekiyor filtresi');
+        expect(
+          tester.getSemantics(chip).hasFlag(SemanticsFlag.isToggled),
+          isFalse,
+        );
 
-      await tester.tap(chip);
-      await tester.pumpAndSettle();
+        await tester.tap(chip);
+        await tester.pumpAndSettle();
 
-      expect(
-        tester.getSemantics(chip).hasFlag(SemanticsFlag.isToggled),
-        isTrue,
-      );
+        expect(
+          tester.getSemantics(chip).hasFlag(SemanticsFlag.isToggled),
+          isTrue,
+        );
 
-      await tester.tap(chip);
-      await tester.pumpAndSettle();
+        await tester.tap(chip);
+        await tester.pumpAndSettle();
 
-      expect(
-        tester.getSemantics(chip).hasFlag(SemanticsFlag.isToggled),
-        isFalse,
-      );
-    } finally {
-      handle.dispose();
-    }
-  });
+        expect(
+          tester.getSemantics(chip).hasFlag(SemanticsFlag.isToggled),
+          isFalse,
+        );
+      } finally {
+        handle.dispose();
+      }
+    },
+  );
 
   testWidgets(
     'turning the filter on clears the selection and closes the preview sheet '
