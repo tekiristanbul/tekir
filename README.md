@@ -6,7 +6,7 @@ tekir is an open-source, map-first application for discovering and caring for is
 
 [**open the app →**](https://app.tekir.istanbul) · [prototype](https://prototype.tekir.istanbul) · [website](https://tekir.istanbul)
 
-> **0.1 is live on web.** android and ios store releases are pending. the prototype remains the approved interaction reference.
+> **0.1 is live on web.** android and ios store releases are pending. the prototype remains the approved interaction reference. draft 0.2 release notes live in [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md).
 
 ---
 
@@ -27,6 +27,7 @@ tekir is not a social network, animal charity, veterinary service, or pet produc
 - mvp product contract: complete
 - interactive mvp prototype: approved
 - 0.1 (web): live at [app.tekir.istanbul](https://app.tekir.istanbul) — [release notes](https://github.com/tekiristanbul/tekir/releases/tag/v0.1.0)
+- 0.2 (draft): release prep notes in [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md)
 - android / ios: built from this codebase, store releases pending
 
 follow the current implementation sequence in [github issue #45](https://github.com/tekiristanbul/tekir/issues/45).
