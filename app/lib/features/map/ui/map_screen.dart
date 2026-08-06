@@ -66,6 +66,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   // viewport.
   bool _helpFilterOn = false;
 
+  // Tracks whether the marker-preview sheet's showModalBottomSheet future
+  // is currently pending, so _toggleHelpFilter knows whether it needs to
+  // pop an open sheet (rather than just clearing provider state) when the
+  // filter turns on and hides the selected marker.
+  bool _sheetOpen = false;
+
   @override
   void dispose() {
     _debounce?.cancel();
@@ -130,10 +136,26 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   void _toggleHelpFilter() {
     setState(() => _helpFilterOn = !_helpFilterOn);
     final mapState = ref.read(catsMapProvider);
-    unawaited(_rebuildMarkers(mapState.markers, mapState.selectedMarker?.id));
+    final selected = mapState.selectedMarker;
+    // Turning the filter on hides any marker that doesn't need help — if
+    // that's the currently selected one, its highlight and preview sheet
+    // must go with it, or the visible selection would point at a marker
+    // the map no longer shows.
+    final clearsSelection =
+        _helpFilterOn && selected != null && !selected.needsHelp;
+    if (clearsSelection) {
+      ref.read(catsMapProvider.notifier).clearSelection();
+      if (_sheetOpen) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    }
+    unawaited(
+      _rebuildMarkers(mapState.markers, clearsSelection ? null : selected?.id),
+    );
   }
 
   Future<void> _openPreviewSheet(CatMarker cat) async {
+    _sheetOpen = true;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -153,9 +175,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ),
       ),
     );
-    // reached on every dismissal path — swipe-down, scrim tap, or the
-    // explicit pop() above — so the selection (and marker highlight)
-    // always clears and the user is left on the map, per issue #21.
+    _sheetOpen = false;
+    // reached on every dismissal path — swipe-down, scrim tap, the
+    // explicit pop() above, or _toggleHelpFilter's programmatic pop — so
+    // the selection (and marker highlight) always clears and the user is
+    // left on the map, per issue #21.
     if (!mounted) return;
     ref.read(catsMapProvider.notifier).clearSelection();
   }
