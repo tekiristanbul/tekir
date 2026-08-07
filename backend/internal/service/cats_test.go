@@ -770,6 +770,7 @@ func TestCatsService_CreateOrdinaryUpdate_Success(t *testing.T) {
 		exists:    true,
 		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
 		captured:  &captured,
+		userRow:   repository.User{DisplayName: pgtype.Text{String: "asli", Valid: true}},
 	}, WithClock(func() time.Time { return fixedNow }))
 
 	comment := "mama verildi, su tazelendi"
@@ -803,6 +804,9 @@ func TestCatsService_CreateOrdinaryUpdate_Success(t *testing.T) {
 	wantExpiresAt := fixedNow.Add(updateCorrectionWindow)
 	if update.CorrectionExpiresAt == nil || !update.CorrectionExpiresAt.Equal(wantExpiresAt) {
 		t.Errorf("expected correction_expires_at %v, got %v", wantExpiresAt, update.CorrectionExpiresAt)
+	}
+	if update.AuthorDisplayName == nil || *update.AuthorDisplayName != "asli" {
+		t.Errorf("expected author_display_name %q, got %v", "asli", update.AuthorDisplayName)
 	}
 
 	if uuid.UUID(captured.CatID.Bytes).String() != catID.String() {
@@ -933,6 +937,7 @@ func TestCatsService_CreateOrdinaryUpdate_IdempotentRetryReturnsExistingWithoutW
 			CreatedAt: pgtype.Timestamptz{Time: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC), Valid: true},
 		},
 		captured: &captured,
+		userRow:  repository.User{DisplayName: pgtype.Text{String: "asli", Valid: true}},
 	})
 
 	key := "seen-tap-key"
@@ -945,6 +950,9 @@ func TestCatsService_CreateOrdinaryUpdate_IdempotentRetryReturnsExistingWithoutW
 	}
 	if update.Comment == nil || *update.Comment != existingComment {
 		t.Errorf("expected the existing update's comment %q, got %v", existingComment, update.Comment)
+	}
+	if update.AuthorDisplayName == nil || *update.AuthorDisplayName != "asli" {
+		t.Errorf("expected author_display_name %q, got %v", "asli", update.AuthorDisplayName)
 	}
 	if captured.ID.Valid {
 		t.Error("expected CreateOrdinaryUpdate to never be called on an idempotent retry")
@@ -1032,6 +1040,7 @@ func TestCatsService_CreateNeedsHelpUpdate_Success(t *testing.T) {
 		exists:             true,
 		createNeedsHelpRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
 		capturedNeedsHelp:  &captured,
+		userRow:            repository.User{DisplayName: pgtype.Text{String: "asli", Valid: true}},
 	}, WithClock(func() time.Time { return fixedNow }))
 
 	comment := "sağ arka ayağını basamıyor"
@@ -1068,6 +1077,9 @@ func TestCatsService_CreateNeedsHelpUpdate_Success(t *testing.T) {
 	// casts statuses as a non-nullable List.
 	if update.Statuses == nil || len(update.Statuses) != 0 {
 		t.Errorf("expected non-nil empty statuses, got %v", update.Statuses)
+	}
+	if update.AuthorDisplayName == nil || *update.AuthorDisplayName != "asli" {
+		t.Errorf("expected author_display_name %q, got %v", "asli", update.AuthorDisplayName)
 	}
 
 	if uuid.UUID(captured.CatID.Bytes).String() != catID.String() {
