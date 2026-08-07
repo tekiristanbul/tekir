@@ -89,12 +89,14 @@ class CatMediaItem {
     required this.url,
     required this.isCover,
     required this.createdAt,
+    this.uploaderDisplayName,
   });
 
   final String id;
   final String url;
   final bool isCover;
   final DateTime createdAt;
+  final String? uploaderDisplayName;
 
   factory CatMediaItem.fromJson(Map<String, dynamic> json) {
     return CatMediaItem(
@@ -102,6 +104,7 @@ class CatMediaItem {
       url: json['url'] as String,
       isCover: json['is_cover'] as bool? ?? false,
       createdAt: DateTime.parse(json['created_at'] as String),
+      uploaderDisplayName: json['uploader_display_name'] as String?,
     );
   }
 }

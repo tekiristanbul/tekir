@@ -872,11 +872,15 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 // #121's media-archive parity gap): a photo linked to the cat via
 // cat_media, newest-first. IsCover mirrors cats.primary_photo_id, letting
 // the client render the design's "ana" badge without a second lookup.
+// UploaderDisplayName (issue #154's media-attribution parity gap) mirrors
+// CatUpdate's own AuthorDisplayName: nil only when the uploader never set
+// a display name, never when the uploader is unknown.
 type CatMediaItem struct {
-	ID        string
-	URL       string
-	IsCover   bool
-	CreatedAt time.Time
+	ID                  string
+	URL                 string
+	IsCover             bool
+	CreatedAt           time.Time
+	UploaderDisplayName *string
 }
 
 // ListCatMedia returns id's photo archive, newest-first, or ErrCatNotFound
@@ -903,10 +907,11 @@ func (s *CatsService) ListCatMedia(ctx context.Context, id string) ([]CatMediaIt
 	items := make([]CatMediaItem, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, CatMediaItem{
-			ID:        uuid.UUID(r.ID.Bytes).String(),
-			URL:       r.Url,
-			IsCover:   r.IsCover,
-			CreatedAt: r.CreatedAt.Time,
+			ID:                  uuid.UUID(r.ID.Bytes).String(),
+			URL:                 r.Url,
+			IsCover:             r.IsCover,
+			CreatedAt:           r.CreatedAt.Time,
+			UploaderDisplayName: textPtr(r.UploaderDisplayName),
 		})
 	}
 	return items, nil

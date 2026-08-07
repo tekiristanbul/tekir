@@ -1876,6 +1876,37 @@ func TestCatsService_ListCatMedia(t *testing.T) {
 	}
 }
 
+// TestCatsService_ListCatMedia_UploaderDisplayName covers issue #154's
+// media-attribution parity gap: a media row whose uploader set a display
+// name surfaces it, while a row whose uploader never set one stays nil
+// rather than the service inventing one.
+func TestCatsService_ListCatMedia_UploaderDisplayName(t *testing.T) {
+	withName := uuid.New()
+	withoutName := uuid.New()
+
+	svc := NewCatsService(fakeCatsLister{
+		exists: true,
+		mediaRows: []repository.ListCatMediaRow{
+			{ID: pgtype.UUID{Bytes: withName, Valid: true}, Url: "https://placecats.com/a/300/200", UploaderDisplayName: pgtype.Text{String: "asli", Valid: true}},
+			{ID: pgtype.UUID{Bytes: withoutName, Valid: true}, Url: "https://placecats.com/b/300/200"},
+		},
+	})
+
+	items, err := svc.ListCatMedia(context.Background(), uuid.New().String())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if items[0].UploaderDisplayName == nil || *items[0].UploaderDisplayName != "asli" {
+		t.Errorf("expected uploader_display_name %q, got %v", "asli", items[0].UploaderDisplayName)
+	}
+	if items[1].UploaderDisplayName != nil {
+		t.Errorf("expected nil uploader_display_name for nameless uploader, got %v", *items[1].UploaderDisplayName)
+	}
+}
+
 func TestCatsService_ListCatMedia_UnknownCat(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: false})
 

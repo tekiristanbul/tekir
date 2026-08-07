@@ -486,7 +486,7 @@ func TestCatsHandler_Media(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
 		exists: true,
 		mediaRows: []repository.ListCatMediaRow{
-			{ID: pgtype.UUID{Bytes: coverID, Valid: true}, Url: "https://placecats.com/millie/300/200", CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, IsCover: true},
+			{ID: pgtype.UUID{Bytes: coverID, Valid: true}, Url: "https://placecats.com/millie/300/200", CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, IsCover: true, UploaderDisplayName: pgtype.Text{String: "asli", Valid: true}},
 		},
 	}), testMaxUploadBytes)
 
@@ -513,6 +513,38 @@ func TestCatsHandler_Media(t *testing.T) {
 	}
 	if !body[0].IsCover {
 		t.Error("expected is_cover true")
+	}
+	if body[0].UploaderDisplayName == nil || *body[0].UploaderDisplayName != "asli" {
+		t.Errorf("expected uploader_display_name %q, got %v", "asli", body[0].UploaderDisplayName)
+	}
+}
+
+// TestCatsHandler_Media_UploaderDisplayName_Null covers issue #154's
+// media-attribution parity gap on the wire: a media entry whose uploader
+// never set a display name serializes it as null rather than an invented
+// name.
+func TestCatsHandler_Media_UploaderDisplayName_Null(t *testing.T) {
+	id := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists: true,
+		mediaRows: []repository.ListCatMediaRow{
+			{ID: pgtype.UUID{Bytes: id, Valid: true}, Url: "https://placecats.com/millie/300/200"},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String()+"/media", nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	var body []catMediaResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(body))
+	}
+	if body[0].UploaderDisplayName != nil {
+		t.Errorf("expected null uploader_display_name, got %v", *body[0].UploaderDisplayName)
 	}
 }
 
