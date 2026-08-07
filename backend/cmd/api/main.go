@@ -77,8 +77,8 @@ func run() error {
 	}
 	catsSvc := service.NewCatsService(store, service.WithCatsMediaPipeline(objectStore, cfg.MediaMaxBytes))
 	catsHandler := handler.NewCatsHandler(catsSvc, cfg.MediaMaxBytes)
-	mediaSvc := service.NewMediaService(store, objectStore, cfg.MediaMaxBytes)
-	mediaHandler := handler.NewMediaHandler(mediaSvc, cfg.MediaMaxBytes)
+	mediaSvc := service.NewMediaService(store, objectStore, cfg.MediaMaxBytes, cfg.MediaVideoMaxBytes)
+	mediaHandler := handler.NewMediaHandler(mediaSvc, max(cfg.MediaMaxBytes, cfg.MediaVideoMaxBytes))
 	// GET /v1/media/objects/{key} only ever serves what FakeObjectStore
 	// wrote — see docs/architecture/backend.md's OBJECT_STORAGE_PROVIDER.
 	// With the s3 provider, media urls point straight at the bucket's

@@ -209,6 +209,11 @@ type Querier interface {
 	// else does. idempotency_key (issue #80) is nullable and only ever set on
 	// the ordinary-update write path (mirrors cats.idempotency_key/
 	// media.idempotency_key exactly) — needs-help and seed rows leave it null.
+	// media_id (issue #153) is nullable and set only by the ordinary-update
+	// write path when the caller attached a photo — the media row itself is
+	// uploaded separately via POST /v1/media first (CatsService.CreateOrdinaryUpdate
+	// resolves and owns it before this insert runs); needs-help and seed rows
+	// leave it null, same as every other caller-optional field here.
 	CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error)
 	CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatusParams) error
 	// creates a new account for a normalized phone number. the unique
@@ -248,7 +253,9 @@ type Querier interface {
 	// structured status — one lateral per status, same shape as the nh lateral
 	// above, rather than a single group-by (each status's own latest update
 	// may not be the same row). soft-deleted updates are excluded, matching
-	// every other read path.
+	// every other read path. created_by_user_id (issue #156) lets CatsService
+	// derive is_owner without a second query — a pre-#70 seed cat has it null,
+	// so is_owner is always false for one, matching that no account can own it.
 	GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error)
 	GetCatByIdempotencyKey(ctx context.Context, arg GetCatByIdempotencyKeyParams) (GetCatByIdempotencyKeyRow, error)
 	GetCatMediaByCatAndMedia(ctx context.Context, arg GetCatMediaByCatAndMediaParams) (CatMedium, error)
@@ -278,8 +285,9 @@ type Querier interface {
 	// Idempotency-Key, same account) to the update it already created,
 	// checked before any new write — mirrors GetCatByIdempotencyKey exactly.
 	// Scoped to kind = 'ordinary' to match the partial unique index; the
-	// statuses aggregation mirrors ListCatUpdates so the retry response is
-	// identical to the original create response.
+	// statuses aggregation and photo_url resolution (issue #153) mirror
+	// ListCatUpdates so the retry response is identical to the original create
+	// response.
 	GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateByIdempotencyKeyParams) (GetUpdateByIdempotencyKeyRow, error)
 	// called only when CorrectOrdinaryUpdate/DeleteOwnUpdate affects 0 rows, to
 	// disambiguate why: wrong cat_id/unknown id (404), someone else's update
@@ -327,6 +335,10 @@ type Querier interface {
 	// backs the "medya" archive tab: newest-first, each row carrying the media
 	// it points to plus whether it's the cat's current cover (cats.primary_photo_id)
 	// so the client can render the design's "ana" badge without a second lookup.
+	// uploader_display_name (issue #154's media-attribution parity gap) mirrors
+	// ListCatUpdates' own author_display_name: left-joined and nullable because
+	// a linked account may never have set one (00015), never because the
+	// uploader is unknown (media.uploaded_by_user_id is not null).
 	ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]ListCatMediaRow, error)
 	// joins the vocabulary (and its group) so cat detail can render a display
 	// label without a separate vocabulary fetch. intentionally not filtered by
@@ -351,10 +363,14 @@ type Querier interface {
 	// linked account may never have set one (00015); the service falls back to
 	// a generic avatar when absent, never invents a name. photo_url (issue
 	// #121's timeline-thumbnail parity gap) resolves u.media_id to its media
-	// row's url, left-joined since no write path sets media_id yet (see
-	// migration 00024) — every row reads null today, and the client omits the
-	// thumbnail exactly like it already omits the correction menu for a
-	// comment-less row.
+	// row's url, left-joined since it's null for any row created before issue
+	// #153's write path started setting it (or one that simply carries no
+	// media) — the client omits the thumbnail exactly like it already omits
+	// the correction menu for a comment-less row. media_content_type (issue
+	// #153's video support) is the same row's media.content_type, null under
+	// the same conditions as photo_url — the client uses it to tell an
+	// attached video (a "video/*" content type) apart from a photo so it can
+	// render a video player instead of an image widget.
 	ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) ([]ListCatUpdatesRow, error)
 	// issue #82: powers GET /v1/cats/discover?filter=nearby — every active cat,
 	// nearest-first from the caller's own (lat, lng), keyset-paginated on

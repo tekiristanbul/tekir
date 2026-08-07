@@ -480,12 +480,16 @@ type CatUpdate struct {
 	// back to a generic avatar rather than inventing a name or initial.
 	AuthorDisplayName *string
 
-	// PhotoURL (issue #121's timeline-thumbnail parity gap) is the url of
-	// the media this update carries, nil when it carries none — every row
-	// reads nil today, since no write path sets updates.media_id yet (see
-	// migration 00024's comment); the field exists so the client can render
-	// the design's inline thumbnail the moment a future write path does.
+	// PhotoURL (issue #121's timeline-thumbnail parity gap, wired up by
+	// issue #153) is the url of the media this update carries, nil when it
+	// carries none — despite the name, this is set for both a photo and a
+	// video attachment; MediaContentType is what tells them apart.
 	PhotoURL *string
+	// MediaContentType (issue #153's video support) is the same media
+	// row's content_type, nil under the same conditions as PhotoURL. The
+	// client checks whether this starts with "video/" to render a video
+	// player instead of an image widget.
+	MediaContentType *string
 
 	// NeedsHelp (issue #101) is the flag itself — the field 0.2 clients
 	// read. The four fields below are populated exactly when it is true:
@@ -576,9 +580,11 @@ func WithClock(clock func() time.Time) CatsServiceOption {
 // MediaService uses for standalone POST /v1/media, sharing store and
 // maxBytes so both endpoints enforce identical media rules. Only Create
 // needs this; every other CatsService method works without it, so tests
-// exercising just those don't need to supply one.
+// exercising just those don't need to supply one. maxVideoBytes is always
+// 0 here — a cat's own initial photo (issue #153 approval) stays
+// image-only; video is only ever accepted through MediaService.
 func WithCatsMediaPipeline(store ObjectStore, maxBytes int) CatsServiceOption {
-	return func(s *CatsService) { s.pipeline = newMediaPipeline(store, maxBytes) }
+	return func(s *CatsService) { s.pipeline = newMediaPipeline(store, maxBytes, 0) }
 }
 
 func NewCatsService(db CatsStore, opts ...CatsServiceOption) *CatsService {
@@ -1121,6 +1127,7 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 			NeedsHelp:         r.NeedsHelp,
 			AuthorDisplayName: textPtr(r.AuthorDisplayName),
 			PhotoURL:          textPtr(r.PhotoUrl),
+			MediaContentType:  textPtr(r.MediaContentType),
 		}
 		if r.NeedsHelp {
 			category := needsHelpCompatCategory
@@ -1305,6 +1312,7 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 	}
 	if media != nil {
 		result.PhotoURL = &media.Url
+		result.MediaContentType = &media.ContentType
 	}
 	if needsHelp {
 		category := needsHelpCompatCategory
@@ -1379,6 +1387,7 @@ func (s *CatsService) fetchIdempotentOrdinaryUpdate(ctx context.Context, authorU
 		CorrectionExpiresAt: &expiresAt,
 		AuthorDisplayName:   authorDisplayName,
 		PhotoURL:            textPtr(row.PhotoUrl),
+		MediaContentType:    textPtr(row.MediaContentType),
 	}
 	if row.NeedsHelp {
 		category := needsHelpCompatCategory
