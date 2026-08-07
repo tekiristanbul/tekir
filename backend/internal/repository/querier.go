@@ -501,6 +501,12 @@ type Querier interface {
 	// after the winner's and matches zero rows, since revoked_at is no longer
 	// null by then.
 	RevokeRefreshTokenIfActive(ctx context.Context, arg RevokeRefreshTokenIfActiveParams) (pgtype.UUID, error)
+	// issue #156: switches a cat's cover to an existing entry from its own
+	// cat_media archive. CatsService verifies both ownership (created_by_user_id
+	// matches the caller) and gallery membership (a GetCatMediaByCatAndMedia hit)
+	// before ever issuing this update — this query itself trusts both checks
+	// already happened and only writes.
+	SetCatCoverPhoto(ctx context.Context, arg SetCatCoverPhotoParams) error
 	// issue #84: registers/refreshes the fcm token for one installation. The
 	// cte clears the same token off any *other* device row first: a client
 	// that lost its device credential re-registers (new devices row) but the

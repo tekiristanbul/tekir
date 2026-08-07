@@ -46,13 +46,18 @@ GET  /v1/cats/nearby?lat&lng&radius=50                     → [{ id, primary_ph
 GET  /v1/cats/discover?lat&lng&filter=nearby|needs_help&cursor=&limit=
                                               → 200 { items: [{ id, name, primary_photo, area_label|null, distance_meters, active_alert|null, last_update_at }], next_cursor|null }
                                               (implemented — issue #82; the keşfet screen's two location-aware surfaces)
-GET  /v1/cats/{cat_id}                                     → { id, name, area{lat,lng}, area_label|null, primary_photo|null, created_at, last_update_at|null, active_alert|null }
+GET  /v1/cats/{cat_id}                                     (optional Bearer)   → { id, name, area{lat,lng}, area_label|null, primary_photo|null, created_at, last_update_at|null, active_alert|null, media_count, is_owner }
+GET  /v1/cats/{cat_id}/media                                → [{ id, url, is_cover, created_at }]   (implemented — issue #121; the "medya" archive tab)
+PATCH /v1/cats/{cat_id}/cover  (Bearer required)  { media_id }   → 200 { cat }
+                                              (implemented — issue #156)
 POST /v1/cats            (Bearer required; X-Device-Token optional; Idempotency-Key optional)  multipart { lat, lng, photo, name?, confirmed_new? }
                                               → 201 { cat }  or  409 { candidates:[...] } (when confirmed_new is absent and nearby matches exist)
                                               (implemented — issue #70)
 ```
 
-`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it still omits `followed_by_me` from the earlier sketch above — follow/unfollow/list exist as of issue #44 (see "follows / notifications" below), but folding follow status into this read path was left out of that issue's scope. `photos[]` is `primary_photo` (nullable): a cat still has exactly one profile photo (issue #70 doesn't add a gallery), resolved from either the legacy seed-only `photo_url` column or, for a cat created through `POST /v1/cats`, its required `media` row (see [[db]]). unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`.
+`GET /v1/cats/{cat_id}` is implemented (issue #21, read-only map-to-detail slice). it still omits `followed_by_me` from the earlier sketch above — follow/unfollow/list exist as of issue #44 (see "follows / notifications" below), but folding follow status into this read path was left out of that issue's scope. `photos[]` is `primary_photo` (nullable): a cat still has exactly one *cover* photo (issue #70 doesn't add a gallery to this field; the full archive is `GET /v1/cats/{cat_id}/media`), resolved from either the legacy seed-only `photo_url` column or, for a cat created through `POST /v1/cats`, its required `media` row (see [[db]]). unknown `cat_id` → `404`; a malformed (non-uuid) `cat_id` → `400`. `is_owner` (issue #156) is `true` only for the cat's own `created_by_user_id` account's authenticated read — `OptionalBearer` resolves the caller without requiring one, so a guest read is unaffected and always gets `false`; the client uses this, and only this, to decide whether to offer the cover-change affordance in the media archive.
+
+`PATCH /v1/cats/{cat_id}/cover` (issue #156) lets the cat's own owner promote an existing `GET /v1/cats/{cat_id}/media` entry to be the cover: `media_id` must already belong to that cat's own archive, never an arbitrary media row. Only `cats.primary_photo_id` moves — the update or upload the photo originally came from is never modified, so contributed media stays attached to its own update. `403` when the caller isn't the cat's owner (including another authenticated account); `400` for a malformed `media_id` or one that isn't part of this cat's own archive; `404` for an unknown `cat_id`.
 
 `GET /v1/cats/nearby` (issue #70) is public — a guest reaches this in the add-cat flow up to the moment the auth gate requires signing in, same as any other public read. `radius` is fixed at 50m server-side; a client-supplied value isn't read.
 

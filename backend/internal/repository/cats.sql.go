@@ -120,6 +120,7 @@ select
   st_y(c.area::geometry)::float8 as lat,
   c.area_label,
   coalesce(c.photo_url, m.url, '') as photo_url,
+  c.created_by_user_id,
   c.created_at,
   c.last_update_at,
   nh.needs_help_category,
@@ -172,6 +173,7 @@ type GetCatByIDRow struct {
 	Lat                float64            `json:"lat"`
 	AreaLabel          pgtype.Text        `json:"area_label"`
 	PhotoUrl           string             `json:"photo_url"`
+	CreatedByUserID    pgtype.UUID        `json:"created_by_user_id"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
@@ -194,7 +196,9 @@ type GetCatByIDRow struct {
 // structured status — one lateral per status, same shape as the nh lateral
 // above, rather than a single group-by (each status's own latest update
 // may not be the same row). soft-deleted updates are excluded, matching
-// every other read path.
+// every other read path. created_by_user_id (issue #156) lets CatsService
+// derive is_owner without a second query — a pre-#70 seed cat has it null,
+// so is_owner is always false for one, matching that no account can own it.
 func (q *Queries) GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error) {
 	row := q.db.QueryRow(ctx, getCatByID, id)
 	var i GetCatByIDRow
@@ -205,6 +209,7 @@ func (q *Queries) GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow
 		&i.Lat,
 		&i.AreaLabel,
 		&i.PhotoUrl,
+		&i.CreatedByUserID,
 		&i.CreatedAt,
 		&i.LastUpdateAt,
 		&i.NeedsHelpCategory,
@@ -635,6 +640,25 @@ func (q *Queries) ListNearbyCatsForDuplicateCheck(ctx context.Context, arg ListN
 		return nil, err
 	}
 	return items, nil
+}
+
+const setCatCoverPhoto = `-- name: SetCatCoverPhoto :exec
+update cats set primary_photo_id = $1 where id = $2
+`
+
+type SetCatCoverPhotoParams struct {
+	PrimaryPhotoID pgtype.UUID `json:"primary_photo_id"`
+	ID             pgtype.UUID `json:"id"`
+}
+
+// issue #156: switches a cat's cover to an existing entry from its own
+// cat_media archive. CatsService verifies both ownership (created_by_user_id
+// matches the caller) and gallery membership (a GetCatMediaByCatAndMedia hit)
+// before ever issuing this update — this query itself trusts both checks
+// already happened and only writes.
+func (q *Queries) SetCatCoverPhoto(ctx context.Context, arg SetCatCoverPhotoParams) error {
+	_, err := q.db.Exec(ctx, setCatCoverPhoto, arg.PrimaryPhotoID, arg.ID)
+	return err
 }
 
 const updateCatLastUpdateAt = `-- name: UpdateCatLastUpdateAt :exec
