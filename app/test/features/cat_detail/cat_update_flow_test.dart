@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 
 import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
@@ -84,13 +87,21 @@ class _FakeStorage implements DeviceKeyValueStorage {
 
 class _FakeCatDetailApi implements CatDetailApi {
   int createUpdateCalls = 0;
+  int uploadMediaCalls = 0;
   List<String>? lastStatuses;
   bool? lastNeedsHelp;
   String? lastComment;
+  String? lastMediaId;
+  Uint8List? lastPhotoBytes;
+  String? lastPhotoFilename;
 
   Completer<void>? gate;
+  Completer<void>? uploadGate;
+  (int, int)? uploadProgressEvent;
   Object? nextError;
+  Object? uploadError;
   CatUpdateEntry? nextResult;
+  String uploadedMediaId = 'media-1';
 
   @override
   Future<CatDetail> fetchDetail(String catId) async => _detail;
@@ -106,14 +117,33 @@ class _FakeCatDetailApi implements CatDetailApi {
     bool needsHelp = false,
     String? comment,
     String idempotencyKey = '',
+    String? mediaId,
   }) async {
     createUpdateCalls++;
     lastStatuses = statuses;
     lastNeedsHelp = needsHelp;
     lastComment = comment;
+    lastMediaId = mediaId;
     if (gate != null) await gate!.future;
     if (nextError != null) throw nextError!;
     return nextResult!;
+  }
+
+  @override
+  Future<String> uploadMedia({
+    required Uint8List photoBytes,
+    required String photoFilename,
+    required String idempotencyKey,
+    void Function(int sent, int total)? onSendProgress,
+  }) async {
+    uploadMediaCalls++;
+    lastPhotoBytes = photoBytes;
+    lastPhotoFilename = photoFilename;
+    final event = uploadProgressEvent;
+    if (event != null) onSendProgress?.call(event.$1, event.$2);
+    if (uploadGate != null) await uploadGate!.future;
+    if (uploadError != null) throw uploadError!;
+    return uploadedMediaId;
   }
 
   @override
@@ -189,10 +219,24 @@ class _FakeAuthApi implements AuthApi {
   Future<void> setDisplayName(String displayName) async {}
 }
 
+class _FakeImagePickerPlatform extends ImagePickerPlatform {
+  XFile? nextFile;
+
+  @override
+  Future<XFile?> getImageFromSource({
+    required ImageSource source,
+    ImagePickerOptions options = const ImagePickerOptions(),
+  }) async => nextFile;
+}
+
 const _authenticatedSession = SessionIdentity(
   accessToken: 'at',
   refreshToken: 'rt',
   userId: 'u1',
+);
+
+final _validPngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAAC0lEQVQYV2NgAAIAAAUAAen63NgAAAAASUVORK5CYII=',
 );
 
 // This file's default session is authenticated, so FollowsNotifier.build()
@@ -284,7 +328,17 @@ Future<void> _openComposer(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _pickPhoto(WidgetTester tester) async {
+  await tester.tap(find.text('Ekle'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Galeriden seç'));
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  final fakePlatform = _FakeImagePickerPlatform();
+  ImagePickerPlatform.instance = fakePlatform;
+
   testWidgets('the screen has exactly one primary action — "+ update" — and no '
       'competing Gördüm button (binding design, cat-profile.html)', (
     tester,
@@ -351,6 +405,25 @@ void main() {
       expect(submitButton.onPressed, isNull);
     },
   );
+
+  testWidgets('a picked photo previews in the sheet and can be removed', (
+    tester,
+  ) async {
+    fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png');
+    await _pump(tester, api: _FakeCatDetailApi());
+    await _openComposer(tester);
+
+    await _pickPhoto(tester);
+
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.byIcon(Icons.close), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pump();
+
+    expect(find.byIcon(Icons.close), findsNothing);
+    expect(find.text('Ekle'), findsOneWidget);
+  });
 
   testWidgets(
     'multi-selecting statuses enables submit, and comment is optional',
@@ -498,6 +571,63 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'a photo-carrying submission stays in the sheet for upload progress, then closes on success',
+    (tester) async {
+      fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png');
+      final api = _FakeCatDetailApi()
+        ..nextResult = _entry('upd-1')
+        ..uploadGate = Completer<void>()
+        ..uploadProgressEvent = (1, 2);
+      await _pump(tester, api: api);
+      await _openComposer(tester);
+
+      await _pickPhoto(tester);
+      await tester.tap(find.text('Görüldü'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
+      await tester.pump();
+
+      expect(find.byType(CatUpdateSheet), findsOneWidget);
+      expect(find.text('50%'), findsOneWidget);
+      expect(api.uploadMediaCalls, 1);
+      expect(api.lastPhotoFilename, 'photo.png');
+
+      api.uploadGate!.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CatUpdateSheet), findsNothing);
+      expect(api.lastMediaId, 'media-1');
+      expect(find.text('görüldü'), findsNWidgets(2));
+    },
+  );
+
+  testWidgets(
+    'a photo upload failure stays in the sheet with a clear retryable error',
+    (tester) async {
+      fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png');
+      final api = _FakeCatDetailApi()
+        ..uploadError = const UpdateMediaTooLargeException();
+      await _pump(tester, api: api);
+      await _openComposer(tester);
+
+      await _pickPhoto(tester);
+      await tester.tap(find.text('Görüldü'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(CatUpdateSheet), findsOneWidget);
+      expect(
+        find.text(updateSubmitErrorMessageTr(UpdateSubmitError.mediaTooLarge)),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.close), findsOneWidget);
+      expect(api.createUpdateCalls, 0);
+    },
+  );
 
   testWidgets(
     'reopening the sheet after a failed submission restores the draft, and '

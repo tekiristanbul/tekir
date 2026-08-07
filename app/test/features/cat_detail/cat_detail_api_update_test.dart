@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,6 +101,21 @@ void main() {
       expect(sentBody['comment'], isNull);
     });
 
+    test('sends media_id when a photo was uploaded first', () async {
+      final adapter = _FakeAdapter(statusCode: 201, bodyJson: _createdResponse);
+      final api = _apiWith(adapter);
+
+      await api.createUpdate(
+        'cat-1',
+        statuses: const ['seen'],
+        idempotencyKey: 'idem-1',
+        mediaId: 'media-1',
+      );
+
+      final sentBody = jsonDecode(adapter.lastRequestBody!) as Map;
+      expect(sentBody['media_id'], 'media-1');
+    });
+
     test('carries the device credential set on the shared client', () async {
       final adapter = _FakeAdapter(statusCode: 201, bodyJson: _createdResponse);
       final api = _apiWith(adapter, deviceToken: 'tok-abc');
@@ -192,6 +208,22 @@ void main() {
       );
     });
 
+    test('404 media not found maps to UpdateMediaNotFoundException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 404, bodyJson: {'error': 'media not found'}),
+      );
+
+      await expectLater(
+        api.createUpdate(
+          'cat-1',
+          statuses: const ['seen'],
+          idempotencyKey: 'idem-1',
+          mediaId: 'media-1',
+        ),
+        throwsA(isA<UpdateMediaNotFoundException>()),
+      );
+    });
+
     test('500 maps to UpdateServerException (retryable)', () async {
       final api = _apiWith(
         _FakeAdapter(statusCode: 500, bodyJson: {'error': 'internal error'}),
@@ -242,6 +274,59 @@ void main() {
         );
       },
     );
+  });
+
+  group('CatDetailApi.uploadMedia', () {
+    test('posts multipart media and returns the created media id', () async {
+      final adapter = _FakeAdapter(
+        statusCode: 201,
+        bodyJson: {'media_id': 'media-1', 'url': 'https://x/photo.jpg'},
+      );
+      final api = _apiWith(adapter);
+
+      final mediaId = await api.uploadMedia(
+        photoBytes: Uint8List.fromList([1, 2, 3]),
+        photoFilename: 'photo.jpg',
+        idempotencyKey: 'upload-1',
+      );
+
+      expect(mediaId, 'media-1');
+      expect(adapter.lastOptions?.path, '/v1/media');
+      expect(adapter.lastOptions?.headers['Idempotency-Key'], 'upload-1');
+    });
+
+    test('413 maps to UpdateMediaTooLargeException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 413, bodyJson: {'error': 'file too large'}),
+      );
+
+      await expectLater(
+        api.uploadMedia(
+          photoBytes: Uint8List.fromList([1]),
+          photoFilename: 'photo.jpg',
+          idempotencyKey: 'upload-1',
+        ),
+        throwsA(isA<UpdateMediaTooLargeException>()),
+      );
+    });
+
+    test('415 maps to UpdateMediaUnsupportedException', () async {
+      final api = _apiWith(
+        _FakeAdapter(
+          statusCode: 415,
+          bodyJson: {'error': 'unsupported media type'},
+        ),
+      );
+
+      await expectLater(
+        api.uploadMedia(
+          photoBytes: Uint8List.fromList([1]),
+          photoFilename: 'photo.jpg',
+          idempotencyKey: 'upload-1',
+        ),
+        throwsA(isA<UpdateMediaUnsupportedException>()),
+      );
+    });
   });
 }
 

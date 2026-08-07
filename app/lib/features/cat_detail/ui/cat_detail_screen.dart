@@ -1391,11 +1391,10 @@ class _TimelineItem extends StatelessWidget {
 }
 
 /// A timeline entry's inline media thumbnail (binding design's `.med`):
-/// only rendered when [CatUpdateEntry.photoUrl] is set — always null today
-/// (issue #121's timeline-thumbnail parity gap: the read plumbing exists,
-/// but no write path attaches media to an update yet), so this stays inert
-/// in the running app until a future write path populates it. Tap opens
-/// the same uncropped full-screen view the cover photo and media grid use.
+/// only rendered when [CatUpdateEntry.photoUrl] is set — issue #121 added
+/// the read plumbing, issue #153 the write path (the update composer's
+/// optional photo attachment). Tap opens the same uncropped full-screen
+/// view the cover photo and media grid use.
 class _TimelineThumbnail extends StatelessWidget {
   const _TimelineThumbnail({required this.url});
 

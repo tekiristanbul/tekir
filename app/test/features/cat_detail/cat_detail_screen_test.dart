@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -105,6 +107,15 @@ class _FakeCatMediaApi implements CatDetailApi {
     bool needsHelp = false,
     String? comment,
     required String idempotencyKey,
+    String? mediaId,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<String> uploadMedia({
+    required Uint8List photoBytes,
+    required String photoFilename,
+    required String idempotencyKey,
+    void Function(int sent, int total)? onSendProgress,
   }) => throw UnimplementedError();
 
   @override

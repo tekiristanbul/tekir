@@ -1,6 +1,8 @@
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/device_identity.dart';
@@ -19,7 +21,16 @@ const catUpdateStatusOptions = ['seen', 'fed', 'water_provided'];
 /// ordinary comment.
 const helpNoteMaxLength = 500;
 
-enum UpdateSubmitError { validation, unauthorized, notFound, network, server }
+enum UpdateSubmitError {
+  validation,
+  unauthorized,
+  notFound,
+  network,
+  server,
+  mediaTooLarge,
+  unsupportedMedia,
+  mediaNotFound,
+}
 
 /// Turkish, actionable copy for each mapped failure (issue #43) — every
 /// state here implies "try again", so none of them claim to be permanent.
@@ -31,6 +42,10 @@ String updateSubmitErrorMessageTr(UpdateSubmitError error) {
     UpdateSubmitError.notFound => 'Bu kedi artık bulunamıyor.',
     UpdateSubmitError.network => 'Bağlantı sorunu, tekrar dene.',
     UpdateSubmitError.server => 'Sunucuya ulaşılamadı, birazdan tekrar dene.',
+    UpdateSubmitError.mediaTooLarge =>
+      'Fotoğraf çok büyük, daha küçük bir fotoğraf seç.',
+    UpdateSubmitError.unsupportedMedia => 'Desteklenmeyen fotoğraf türü.',
+    UpdateSubmitError.mediaNotFound => 'Fotoğraf gönderilemedi, tekrar seç.',
   };
 }
 
@@ -90,6 +105,9 @@ class CatUpdateComposerState {
     this.isSubmitting = false,
     this.error,
     this.pending,
+    this.photoBytes,
+    this.photoFilename,
+    this.uploadProgress,
   });
 
   final Set<String> selectedStatuses;
@@ -104,11 +122,27 @@ class CatUpdateComposerState {
 
   /// The ordinary submission currently shown as an optimistic timeline
   /// row — saving while in flight, failed (and kept) after a failure,
-  /// null once no attempt is pending.
+  /// null once no attempt is pending. Never set for a submission that
+  /// carries a photo (see [CatUpdateComposerNotifier._submit]'s doc) — the
+  /// sheet stays open and synchronous for those instead.
   final PendingUpdate? pending;
 
+  /// An optional photo attached in the sheet (issue #153) — read via
+  /// `XFile.readAsBytes`, never a raw file path, mirroring
+  /// `AddCatState.photoBytes` exactly (see its own doc for why: flutter
+  /// web has no `dart:io` `File`). Null means the update carries no photo,
+  /// the common case.
+  final Uint8List? photoBytes;
+  final String? photoFilename;
+
+  /// 0..1 while the picked photo's multipart upload is leaving the device
+  /// — mirrors `AddCatState.uploadProgress` exactly. Null whenever no
+  /// upload is in flight.
+  final double? uploadProgress;
+
   /// The create invariant (docs/architecture/api.md): at least one status
-  /// or the help flag; comment-only submissions stay invalid.
+  /// or the help flag; comment-only submissions stay invalid. A photo is
+  /// always optional and never satisfies this on its own.
   bool get canSubmit =>
       (selectedStatuses.isNotEmpty || needsHelp) && !isSubmitting;
 
@@ -121,6 +155,11 @@ class CatUpdateComposerState {
     bool clearError = false,
     PendingUpdate? pending,
     bool clearPending = false,
+    Uint8List? photoBytes,
+    String? photoFilename,
+    bool clearPhoto = false,
+    double? uploadProgress,
+    bool clearUploadProgress = false,
   }) {
     return CatUpdateComposerState(
       selectedStatuses: selectedStatuses ?? this.selectedStatuses,
@@ -129,6 +168,13 @@ class CatUpdateComposerState {
       isSubmitting: isSubmitting ?? this.isSubmitting,
       error: clearError ? null : (error ?? this.error),
       pending: clearPending ? null : (pending ?? this.pending),
+      photoBytes: clearPhoto ? null : (photoBytes ?? this.photoBytes),
+      photoFilename: clearPhoto
+          ? null
+          : (photoFilename ?? this.photoFilename),
+      uploadProgress: clearUploadProgress
+          ? null
+          : (uploadProgress ?? this.uploadProgress),
     );
   }
 }
@@ -166,6 +212,12 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   // repeat tap or a retried request can never create a second update row.
   String _idempotencyKey = _generateIdempotencyKey();
 
+  // issue #153: a separate key for the photo's own standalone upload —
+  // regenerated whenever the picked photo itself changes (a new upload is
+  // a new attempt), but kept stable across a retry of the same picked
+  // photo, so a retried upload can never create a second media row.
+  String _mediaIdempotencyKey = _generateIdempotencyKey();
+
   void toggleStatus(String status) {
     if (state.isSubmitting) return;
     final next = {...state.selectedStatuses};
@@ -180,6 +232,31 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
 
   void setComment(String value) {
     state = state.copyWith(comment: value);
+  }
+
+  /// Picks a photo from the given source — the sheet offers a choice
+  /// between [ImageSource.camera] and [ImageSource.gallery] (issue #153;
+  /// mirrors [AddCatNotifier.pickPhoto] exactly, including reading bytes
+  /// via `XFile.readAsBytes` for flutter web compatibility). Replaces
+  /// whatever photo was already picked, if any — the sheet's picker
+  /// affordance doubles as "replace" once a photo is showing.
+  Future<void> pickPhoto(ImageSource source) async {
+    if (state.isSubmitting) return;
+    final picked = await ImagePicker().pickImage(source: source);
+    if (picked == null) return;
+    final bytes = await picked.readAsBytes();
+    _mediaIdempotencyKey = _generateIdempotencyKey();
+    state = state.copyWith(
+      photoBytes: bytes,
+      photoFilename: picked.name,
+      clearError: true,
+    );
+  }
+
+  /// Removes the currently picked photo, if any (issue #153).
+  void removePhoto() {
+    if (state.isSubmitting) return;
+    state = state.copyWith(clearPhoto: true, clearError: true);
   }
 
   /// Clears any selection, draft comment, and stale error from a previous
@@ -219,14 +296,18 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     bool needsHelp = false,
   }) async {
     if (state.isSubmitting) return false;
-    // An ordinary submission drops its optimistic row here, in the same
-    // synchronous state change as the in-flight guard — feedback starts in
-    // the frame of the tap. A help-carrying one never gets a row (see the
-    // class doc); its feedback is the sheet's submitting button.
+    final photoBytes = state.photoBytes;
+    // An ordinary, photo-less submission drops its optimistic row here, in
+    // the same synchronous state change as the in-flight guard — feedback
+    // starts in the frame of the tap. A help-carrying submission never
+    // gets a row (see the class doc); neither does one carrying a photo —
+    // the sheet stays open and synchronous for those too, so the upload's
+    // own progress and any failure have somewhere to show (issue #153;
+    // CatUpdateSheet._submit mirrors this exact condition).
     state = state.copyWith(
       isSubmitting: true,
       clearError: true,
-      pending: needsHelp
+      pending: (needsHelp || photoBytes != null)
           ? null
           : PendingUpdate(statuses: statuses, status: InlineSaveStatus.saving),
     );
@@ -248,6 +329,26 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
       // and never triggered merely by viewing the read-only cat-detail
       // screen, only by an actual submit.
       await ref.read(deviceIdentityServiceProvider).init();
+      // issue #153: a photo is uploaded standalone via POST /v1/media
+      // first (driving uploadProgress as its multipart body leaves the
+      // device), then referenced by id on the update write below — never
+      // sent as part of that request's own body.
+      String? mediaId;
+      if (photoBytes != null) {
+        mediaId = await ref
+            .read(catDetailApiProvider)
+            .uploadMedia(
+              photoBytes: photoBytes,
+              photoFilename: state.photoFilename ?? 'photo.jpg',
+              idempotencyKey: _mediaIdempotencyKey,
+              onSendProgress: (sent, total) {
+                if (total <= 0 || !state.isSubmitting) return;
+                state = state.copyWith(
+                  uploadProgress: (sent / total).clamp(0.0, 1.0),
+                );
+              },
+            );
+      }
       final entry = await ref
           .read(catDetailApiProvider)
           .createUpdate(
@@ -256,6 +357,7 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
             needsHelp: needsHelp,
             comment: comment,
             idempotencyKey: _idempotencyKey,
+            mediaId: mediaId,
           );
       ref.read(catDetailProvider(catId).notifier).prependUpdate(entry);
       // A combined update emits both events (docs/product/alerts.md,
@@ -282,6 +384,7 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
       }
       state = const CatUpdateComposerState();
       _idempotencyKey = _generateIdempotencyKey();
+      _mediaIdempotencyKey = _generateIdempotencyKey();
       return true;
     } on UpdateValidationException {
       _fail(UpdateSubmitError.validation);
@@ -300,6 +403,18 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
       _fail(UpdateSubmitError.unauthorized);
     } on CatNotFoundException {
       _fail(UpdateSubmitError.notFound);
+    } on UpdateMediaTooLargeException {
+      _fail(UpdateSubmitError.mediaTooLarge);
+    } on UpdateMediaUnsupportedException {
+      _fail(UpdateSubmitError.unsupportedMedia);
+    } on UpdateMediaNotFoundException {
+      // The uploaded photo no longer resolves by the time the update write
+      // ran — retrying with the same (now-gone) media id could only fail
+      // again, so the photo is dropped and a fresh pick is required,
+      // unlike every other failure here which keeps the draft untouched.
+      state = state.copyWith(clearPhoto: true);
+      _mediaIdempotencyKey = _generateIdempotencyKey();
+      _fail(UpdateSubmitError.mediaNotFound);
     } on UpdateNetworkException {
       _fail(UpdateSubmitError.network);
     } catch (_) {
@@ -318,6 +433,7 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     state = state.copyWith(
       isSubmitting: false,
       error: error,
+      clearUploadProgress: true,
       pending: pending == null
           ? null
           : PendingUpdate(
