@@ -273,6 +273,61 @@ func TestCatsService_GetCatDetail(t *testing.T) {
 	}
 }
 
+// TestCatsService_GetCatDetail_ThreeStatTimestamps covers issue #121's
+// three-stat header fields: each of last_seen_at/last_fed_at/last_water_at
+// is independent — a cat can have some, all, or none of them set, and a
+// missing one must stay nil rather than falling back to another status's
+// timestamp or to last_update_at.
+func TestCatsService_GetCatDetail_ThreeStatTimestamps(t *testing.T) {
+	id := uuid.New()
+	seenAt := time.Date(2026, 1, 3, 8, 0, 0, 0, time.UTC)
+	fedAt := time.Date(2026, 1, 2, 9, 0, 0, 0, time.UTC)
+	svc := NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:          pgtype.UUID{Bytes: id, Valid: true},
+			Name:        pgtype.Text{String: "tekir", Valid: true},
+			LastSeenAt:  pgtype.Timestamptz{Time: seenAt, Valid: true},
+			LastFedAt:   pgtype.Timestamptz{Time: fedAt, Valid: true},
+			LastWaterAt: pgtype.Timestamptz{},
+		},
+	})
+
+	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if detail.LastSeenAt == nil || !detail.LastSeenAt.Equal(seenAt) {
+		t.Errorf("expected last_seen_at %v, got %v", seenAt, detail.LastSeenAt)
+	}
+	if detail.LastFedAt == nil || !detail.LastFedAt.Equal(fedAt) {
+		t.Errorf("expected last_fed_at %v, got %v", fedAt, detail.LastFedAt)
+	}
+	if detail.LastWaterAt != nil {
+		t.Errorf("expected nil last_water_at, got %v", detail.LastWaterAt)
+	}
+}
+
+// TestCatsService_GetCatDetail_NoStatusUpdatesYet covers the cat-has-never-
+// had-any-structured-status case: all three stat fields stay nil, never a
+// zero time.Time.
+func TestCatsService_GetCatDetail_NoStatusUpdatesYet(t *testing.T) {
+	id := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:   pgtype.UUID{Bytes: id, Valid: true},
+			Name: pgtype.Text{String: "tekir", Valid: true},
+		},
+	})
+
+	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if detail.LastSeenAt != nil || detail.LastFedAt != nil || detail.LastWaterAt != nil {
+		t.Errorf("expected all three stat timestamps nil, got seen=%v fed=%v water=%v", detail.LastSeenAt, detail.LastFedAt, detail.LastWaterAt)
+	}
+}
+
 func TestCatsService_GetCatDetail_NotFound(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{catErr: pgx.ErrNoRows})
 
@@ -368,6 +423,50 @@ func TestCatsService_ListCatUpdates_PaginatesAndEncodesCursor(t *testing.T) {
 	}
 	if !decoded.createdAt.Equal(middle) || decoded.seq != 2 {
 		t.Errorf("expected cursor at (%v, 2), got (%v, %d)", middle, decoded.createdAt, decoded.seq)
+	}
+}
+
+// TestCatsService_ListCatUpdates_AuthorDisplayName covers issue #121's
+// timeline-avatar parity gap: an update row with an author who set a
+// display name surfaces it, while a row with no author (or an author with
+// no display name) stays nil rather than the service inventing one.
+func TestCatsService_ListCatUpdates_AuthorDisplayName(t *testing.T) {
+	withName := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	withoutName := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	svc := NewCatsService(fakeCatsLister{
+		exists: true,
+		updateRows: []repository.ListCatUpdatesRow{
+			{
+				ID:                pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CreatedAt:         pgtype.Timestamptz{Time: withName, Valid: true},
+				Seq:               pgtype.Int8{Int64: 2, Valid: true},
+				Statuses:          []string{"seen"},
+				AuthorUserID:      pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				AuthorDisplayName: pgtype.Text{String: "asli", Valid: true},
+			},
+			{
+				ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: withoutName, Valid: true},
+				Seq:       pgtype.Int8{Int64: 1, Valid: true},
+				Statuses:  []string{"fed"},
+				// no author at all — a pre-#65 or seed row.
+			},
+		},
+	})
+
+	page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0, "")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(page.Items))
+	}
+	if page.Items[0].AuthorDisplayName == nil || *page.Items[0].AuthorDisplayName != "asli" {
+		t.Errorf("expected author_display_name %q, got %v", "asli", page.Items[0].AuthorDisplayName)
+	}
+	if page.Items[1].AuthorDisplayName != nil {
+		t.Errorf("expected nil author_display_name for authorless row, got %v", *page.Items[1].AuthorDisplayName)
 	}
 }
 

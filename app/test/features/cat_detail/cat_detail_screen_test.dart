@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/core/identity/session_identity.dart';
 import 'package:app/core/theme/app_theme.dart';
+import 'package:app/core/utils/relative_time.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_screen.dart';
@@ -464,6 +465,95 @@ void main() {
           .getBottomLeft(find.byIcon(Icons.favorite_border))
           .dy;
       expect(followIconBottom, lessThanOrEqualTo(coverBottom));
+    },
+  );
+
+  testWidgets(
+    'three-stat header: each tile shows its own status time, independently, '
+    'falling back to "henüz yok" only for a status with no update yet',
+    (tester) async {
+      final now = DateTime.now();
+      final detail = CatDetail(
+        id: _catId,
+        name: 'tekir',
+        lat: 41.0256,
+        lng: 28.9744,
+        areaLabel: null,
+        primaryPhoto: null,
+        createdAt: DateTime.utc(2026, 1, 1),
+        lastUpdateAt: null,
+        lastSeenAt: now.subtract(const Duration(hours: 2)),
+        lastFedAt: null,
+        lastWaterAt: now.subtract(const Duration(days: 1)),
+      );
+
+      await _pump(
+        tester,
+        CatDetailState(detail: detail, updates: const [], hasLoadedOnce: true),
+      );
+
+      expect(find.text(relativeTimeTr(detail.lastSeenAt!)), findsOneWidget);
+      expect(find.text(relativeTimeTr(detail.lastWaterAt!)), findsOneWidget);
+      // mama (fed) has no update yet — its own tile falls back, and only
+      // its own tile, since seen/su both have a real time above.
+      expect(find.text('henüz yok'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'timeline avatar: shows the author\'s own first letter, lowercase',
+    (tester) async {
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: _detail,
+          updates: [
+            CatUpdateEntry(
+              id: 'u1',
+              statuses: const ['seen'],
+              comment: null,
+              createdAt: DateTime.utc(2026, 1, 2),
+              authorDisplayName: 'Aslı',
+            ),
+          ],
+          hasLoadedOnce: true,
+        ),
+      );
+
+      expect(find.text('a'), findsOneWidget);
+      expect(find.byIcon(Icons.person_outline), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'timeline avatar: falls back to a person glyph when the author has no '
+    'display name, never inventing an initial',
+    (tester) async {
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: _detail,
+          updates: [
+            CatUpdateEntry(
+              id: 'u1',
+              statuses: const ['seen'],
+              comment: null,
+              createdAt: DateTime.utc(2026, 1, 2),
+              authorDisplayName: null,
+            ),
+            CatUpdateEntry(
+              id: 'u2',
+              statuses: const ['fed'],
+              comment: null,
+              createdAt: DateTime.utc(2026, 1, 1),
+              authorDisplayName: '   ',
+            ),
+          ],
+          hasLoadedOnce: true,
+        ),
+      );
+
+      expect(find.byIcon(Icons.person_outline), findsNWidgets(2));
     },
   );
 }
