@@ -1616,45 +1616,76 @@ class _VideoThumbnail extends StatefulWidget {
 }
 
 class _VideoThumbnailState extends State<_VideoThumbnail> {
-  late final VideoPlayerController _controller;
-  late final Future<void> _initialize;
+  VideoPlayerController? _controller;
+  Future<void>? _initialize;
+  ScrollPosition? _scrollPosition;
 
+  // The update history isn't a lazy list — it's a plain Column, so every
+  // _VideoThumbnail in it mounts up front. Starting a
+  // VideoPlayerController.initialize() for each one at once meant up to
+  // ~20 concurrent video buffer/decode inits just to show a paused frame.
+  // Instead, only start the controller once this thumbnail's own bounds
+  // actually overlap the screen, and re-check on every scroll.
   @override
-  void initState() {
-    super.initState();
-    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
-    _initialize = _controller.initialize();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final position = Scrollable.maybeOf(context)?.position;
+    if (!identical(position, _scrollPosition)) {
+      _scrollPosition?.removeListener(_maybeInitialize);
+      _scrollPosition = position;
+      _scrollPosition?.addListener(_maybeInitialize);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeInitialize());
+  }
+
+  void _maybeInitialize() {
+    if (_controller != null || !mounted) return;
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return;
+    final top = box.localToGlobal(Offset.zero).dy;
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    if (top >= screenHeight || top + box.size.height <= 0) return;
+    final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    setState(() {
+      _controller = controller;
+      _initialize = controller.initialize();
+    });
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _scrollPosition?.removeListener(_maybeInitialize);
+    _controller?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final controller = _controller;
     return ColoredBox(
       color: AppColors.bgElevated,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          FutureBuilder<void>(
-            future: _initialize,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const _HeroPlaceholder(loading: true);
-              }
-              return FittedBox(
-                fit: BoxFit.cover,
-                child: SizedBox(
-                  width: _controller.value.size.width,
-                  height: _controller.value.size.height,
-                  child: VideoPlayer(_controller),
-                ),
-              );
-            },
-          ),
+          if (controller == null)
+            const _HeroPlaceholder(loading: true)
+          else
+            FutureBuilder<void>(
+              future: _initialize,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const _HeroPlaceholder(loading: true);
+                }
+                return FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: controller.value.size.width,
+                    height: controller.value.size.height,
+                    child: VideoPlayer(controller),
+                  ),
+                );
+              },
+            ),
           const Center(
             child: Icon(Icons.play_circle_fill, size: 32, color: Colors.white),
           ),
