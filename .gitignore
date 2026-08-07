@@ -16,3 +16,7 @@ backend/data/
 
 # os junk
 .DS_Store
+
+# python build cache (assets/scripts/generate.py)
+__pycache__/
+*.pyc
