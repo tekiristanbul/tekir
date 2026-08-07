@@ -78,20 +78,32 @@ class _BadgeDetailScreenState extends ConsumerState<BadgeDetailScreen> {
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.s5),
       children: [
-        Container(
+        // The design's `.badge-detail-hero`: the colored circle sits only
+        // behind the icon (`.badge-detail-hero__icon`, 96px) — the hero
+        // itself carries no card background of its own.
+        Padding(
           padding: const EdgeInsets.symmetric(vertical: AppSpacing.s6),
-          decoration: BoxDecoration(
-            color: badge.earned ? AppColors.primarySoft : AppColors.surfaceAlt,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-          ),
           child: Column(
             children: [
-              Icon(
-                badgeIconFor(badge.icon),
-                size: 44,
-                // muted, not faint (issue #109, badge contrast): faint on
-                // surfaceAlt is ~2.4:1, below the 3:1 non-text minimum.
-                color: badge.earned ? AppColors.primaryStrong : AppColors.muted,
+              Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: badge.earned
+                      ? AppColors.primarySoft
+                      : AppColors.surfaceAlt,
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  badgeIconFor(badge.icon),
+                  size: 44,
+                  // muted, not faint (issue #109, badge contrast): faint on
+                  // surfaceAlt is ~2.4:1, below the 3:1 non-text minimum.
+                  color: badge.earned
+                      ? AppColors.primaryStrong
+                      : AppColors.muted,
+                ),
               ),
               const SizedBox(height: AppSpacing.s3),
               Text(badge.name, style: Theme.of(context).textTheme.titleLarge),

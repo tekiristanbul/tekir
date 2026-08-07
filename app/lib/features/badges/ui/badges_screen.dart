@@ -94,13 +94,28 @@ class _BadgeRow extends StatelessWidget {
           padding: const EdgeInsets.all(AppSpacing.s3),
           child: Row(
             children: [
-              Icon(
-                badgeIconFor(badge.icon),
-                size: 20,
-                // muted, not faint (issue #109, badge contrast): the icon
-                // carries the earned/unearned state, and faint reads at
-                // under 3:1 on this surface — below the non-text minimum.
-                color: badge.earned ? AppColors.primaryStrong : AppColors.muted,
+              // The design's `.badge-row__icon`: a 44px circle carrying the
+              // earned/unearned tint, not a bare glyph next to the text.
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: badge.earned
+                      ? AppColors.primarySoft
+                      : AppColors.surfaceAlt,
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  badgeIconFor(badge.icon),
+                  size: 20,
+                  // muted, not faint (issue #109, badge contrast): the icon
+                  // carries the earned/unearned state, and faint reads at
+                  // under 3:1 on this surface — below the non-text minimum.
+                  color: badge.earned
+                      ? AppColors.primaryStrong
+                      : AppColors.muted,
+                ),
               ),
               const SizedBox(width: AppSpacing.s3),
               Expanded(

@@ -120,13 +120,56 @@ These two screens still warrant a runtime/real-device look before
 sign-off, since this pass is a source-level diff, not a rendered
 comparison — but no code-level structural gap was found.
 
+## badges / badge-detail / add-cat / login / notifications — second pass
+
+Source-level diff against `prototype/app.js`'s `renderBadges`/
+`renderBadgeDetail`/`renderAddLoc`/`renderAddDetail`/`renderLogin` and
+`prototype/styles.css`, plus `notification_optin_sheet.dart` against
+`openNotifPermModal`. `notifications_screen.dart` has no prototype
+screen to diff against (issue #78 postdates the prototype) — reviewed
+against the app's own token usage only, no gap found.
+
+Confirmed gaps, fixed in this pass (no new data, no product decision —
+pure token/structure corrections):
+
+1. **Badge row icon had no circular backing.** `.badge-row__icon` is a
+   44px circle (earned: `--color-primary-soft`/`--color-primary-strong`;
+   locked: `--color-surface-alt`/faint) — `_BadgeRow` rendered a bare
+   `Icon` next to the text. Fixed: wrapped in the circle, keeping the
+   already-approved `muted` (not `faint`) locked color from issue #109's
+   contrast correction.
+2. **Badge-detail hero colored the whole card, not just the icon.**
+   `.badge-detail-hero` itself has no background — only
+   `.badge-detail-hero__icon` (96px circle) carries the earned/locked
+   tint. `_BadgeDetailScreenState._body` wrapped the entire hero
+   (icon + name + progress text) in one colored, radius-lg container.
+   Fixed: the circle now wraps only the icon; the hero sits on the
+   plain screen background.
+3. **Add-cat photo well was missing its dashed outline and required
+   tag.** `.photo-well` has a dashed `--color-line-strong` outline and a
+   `radius-lg` corner (not `radius-md`); `.photo-well .required-tag` is
+   a pill pinned to the well's corner in both the empty and filled
+   state. `_DetailsStep`'s photo container had a solid `radius-md`
+   background with no border and no on-well tag (only the field label's
+   text said "zorunlu"). Fixed: a `CustomPainter` dashed border (no new
+   dependency), `radius-lg`, and the pinned tag in both states.
+4. **Duplicate-candidate photo was a rounded square.**
+   `.dup-candidate__photo` is a 44px circle — `_DuplicateCandidateTile`
+   clipped it to a rounded rectangle at 48px. Fixed: `ClipOval` at 44px.
+
+No material gaps found: `login_screen.dart` (structure, copy, and tokens
+already match `renderLogin` — the prototype's extra bottom "Vazgeç" ghost
+button duplicates the topbar close action and isn't a parity gap),
+`notification_optin_sheet.dart` (already matches `openNotifPermModal`
+exactly), `notifications_screen.dart` (no prototype precedent; internally
+consistent with `AppColors`/`AppSpacing`).
+
 ## not yet audited this pass
 
-`badges_screen.dart`, `badge_detail_screen.dart`, `add_cat_screen.dart`,
-`login_screen.dart`, `notification_optin_sheet.dart`, and
-`notifications_screen.dart` were not read against the prototype in this
-pass. Flagging explicitly rather than silently omitting them — they need
-the same source-level diff before their own visual-parity PRs.
+Every screen above was reviewed at the source level only, not rendered —
+all of them still need a real-device look before product-owner
+sign-off, matching the same caveat already recorded above for
+discover/profile/account.
 
 ## prototype / design residue — quick note (non-blocking, tracked only)
 

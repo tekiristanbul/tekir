@@ -303,27 +303,28 @@ class _DuplicateCandidateTile extends StatelessWidget {
         padding: const EdgeInsets.all(AppSpacing.s2),
         child: Row(
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.sm),
+            // The design's `.dup-candidate__photo`: a 44px circle, not a
+            // rounded square.
+            ClipOval(
               child: candidate.primaryPhoto.isEmpty
                   ? Container(
-                      width: 48,
-                      height: 48,
+                      width: 44,
+                      height: 44,
                       color: AppColors.surfaceAlt,
                     )
                   : CachedNetworkImage(
                       imageUrl: candidate.primaryPhoto,
-                      width: 48,
-                      height: 48,
+                      width: 44,
+                      height: 44,
                       fit: BoxFit.cover,
                       placeholder: (_, _) => Container(
-                        width: 48,
-                        height: 48,
+                        width: 44,
+                        height: 44,
                         color: AppColors.surfaceAlt,
                       ),
                       errorWidget: (_, _, _) => Container(
-                        width: 48,
-                        height: 48,
+                        width: 44,
+                        height: 44,
                         color: AppColors.surfaceAlt,
                       ),
                     ),
@@ -365,53 +366,70 @@ class _DetailsStep extends ConsumerWidget {
           const SizedBox(height: AppSpacing.s2),
           InkWell(
             onTap: () => _choosePhotoSource(context, ref),
-            borderRadius: BorderRadius.circular(AppRadius.md),
-            child: Container(
-              height: 150,
-              decoration: BoxDecoration(
-                color: AppColors.surfaceAlt,
-                borderRadius: BorderRadius.circular(AppRadius.md),
-              ),
-              alignment: Alignment.center,
-              child: state.photoBytes == null
-                  ? const Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.camera_alt,
-                          size: 26,
-                          color: AppColors.muted,
-                        ),
-                        SizedBox(height: AppSpacing.s2),
-                        Text(
-                          'Fotoğraf ekle',
-                          style: TextStyle(color: AppColors.muted),
-                        ),
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              // The design's `.photo-well`: a dashed line-strong outline
+              // around the whole well, in both its empty and filled state.
+              child: CustomPaint(
+                painter: const _DashedBorderPainter(
+                  color: AppColors.lineStrong,
+                  radius: AppRadius.lg,
+                ),
+                child: Container(
+                  height: 150,
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceAlt,
+                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                  ),
+                  alignment: Alignment.center,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (state.photoBytes == null)
+                        const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.camera_alt,
+                                size: 26,
+                                color: AppColors.muted,
+                              ),
+                              SizedBox(height: AppSpacing.s2),
+                              Text(
+                                'Fotoğraf ekle',
+                                style: TextStyle(color: AppColors.muted),
+                              ),
+                            ],
+                          ),
+                        )
+                      else ...[
+                        Image.memory(state.photoBytes!, fit: BoxFit.cover),
+                        // The only percentage anywhere in the app
+                        // (docs/design/app-states.md): the photo leaving
+                        // the device.
+                        if (state.saving && state.uploadProgress != null)
+                          PhotoUploadProgress(progress: state.uploadProgress!),
+                        if (!state.saving && state.error == AddCatError.network)
+                          const Positioned(
+                            left: AppSpacing.s3,
+                            bottom: AppSpacing.s3,
+                            child: _UploadFailedBadge(),
+                          ),
                       ],
-                    )
-                  : ClipRRect(
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.memory(state.photoBytes!, fit: BoxFit.cover),
-                          // The only percentage anywhere in the app
-                          // (docs/design/app-states.md): the photo leaving
-                          // the device.
-                          if (state.saving && state.uploadProgress != null)
-                            PhotoUploadProgress(
-                              progress: state.uploadProgress!,
-                            ),
-                          if (!state.saving &&
-                              state.error == AddCatError.network)
-                            const Positioned(
-                              left: AppSpacing.s3,
-                              bottom: AppSpacing.s3,
-                              child: _UploadFailedBadge(),
-                            ),
-                        ],
+                      // The design's `.required-tag`: pinned to the well
+                      // itself, regardless of whether a photo is picked
+                      // yet — not just the field label's own "(zorunlu)".
+                      const Positioned(
+                        left: AppSpacing.s2,
+                        bottom: AppSpacing.s2,
+                        child: _RequiredTag(),
                       ),
-                    ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
           const SizedBox(height: AppSpacing.s5),
@@ -662,4 +680,71 @@ class _UploadFailedBadge extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The design's `.photo-well .required-tag`: a small pill fixed to the
+/// well's corner, present whether or not a photo has been picked yet.
+class _RequiredTag extends StatelessWidget {
+  const _RequiredTag();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.92),
+        border: Border.all(color: AppColors.lineStrong),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: const Text(
+        'zorunlu',
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          color: AppColors.muted,
+        ),
+      ),
+    );
+  }
+}
+
+/// Draws the design's dashed outline (`.photo-well`'s `border:1.5px dashed`)
+/// around a rounded rectangle — Flutter has no built-in dashed
+/// `BoxDecoration` border, so this paints one directly.
+class _DashedBorderPainter extends CustomPainter {
+  const _DashedBorderPainter({required this.color, required this.radius});
+
+  final Color color;
+  final double radius;
+
+  static const _dashWidth = 5.0;
+  static const _dashGap = 4.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rrect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0.75, 0.75, size.width - 1.5, size.height - 1.5),
+      Radius.circular(radius),
+    );
+    final path = Path()..addRRect(rrect);
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    for (final metric in path.computeMetrics()) {
+      var distance = 0.0;
+      while (distance < metric.length) {
+        final next = distance + _dashWidth;
+        canvas.drawPath(
+          metric.extractPath(distance, next.clamp(0, metric.length)),
+          paint,
+        );
+        distance = next + _dashGap;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedBorderPainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.radius != radius;
 }
