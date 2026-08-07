@@ -149,6 +149,7 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
         lastUpdateAt: entry.createdAt,
         activeAlert: activeAlert,
         mediaCount: detail.mediaCount,
+        isOwner: detail.isOwner,
       ),
     );
   }
@@ -206,9 +207,25 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
           lastUpdateAt: detail.lastUpdateAt,
           activeAlert: null,
           mediaCount: detail.mediaCount,
+          isOwner: detail.isOwner,
         ),
       );
     }
+  }
+
+  /// Promotes an existing media-archive entry to the cat's cover photo
+  /// (issue #156) — only the cat's own owner can call this successfully;
+  /// the server re-checks ownership regardless of what the client believes.
+  /// Replaces [CatDetailState.detail] with the server-refreshed detail
+  /// (its own primary_photo/is_owner) and invalidates [catMediaProvider] so
+  /// the media grid's "ana" badge moves to the newly-promoted entry on next
+  /// build, rather than staying stale until some unrelated refetch.
+  Future<void> setCoverPhoto(String mediaId) async {
+    final updated = await ref
+        .read(catDetailApiProvider)
+        .setCoverPhoto(catId, mediaId);
+    state = state.copyWith(detail: updated);
+    ref.invalidate(catMediaProvider(catId));
   }
 }
 

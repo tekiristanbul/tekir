@@ -21,6 +21,7 @@ class CatDetail {
     this.lastWaterAt,
     this.activeAlert,
     this.mediaCount = 0,
+    this.isOwner = false,
   });
 
   final String id;
@@ -50,6 +51,14 @@ class CatDetail {
   /// media-archive/cover-counter parity gap).
   final int mediaCount;
 
+  /// Server-derived (issue #156): true only for the cat's own owner's
+  /// authenticated read — always false for a guest read or any other
+  /// account. The client uses this, and only this, to decide whether to
+  /// offer the "ana fotoğraf yap" (make cover photo) affordance in the
+  /// media archive; the server re-checks ownership on every request
+  /// regardless.
+  final bool isOwner;
+
   factory CatDetail.fromJson(Map<String, dynamic> json) {
     final area = json['area'] as Map<String, dynamic>;
     final rawLastUpdate = json['last_update_at'] as String?;
@@ -75,6 +84,7 @@ class CatDetail {
           ? ActiveAlert.fromJson(rawActiveAlert)
           : null,
       mediaCount: (json['media_count'] as num?)?.toInt() ?? 0,
+      isOwner: json['is_owner'] as bool? ?? false,
     );
   }
 }

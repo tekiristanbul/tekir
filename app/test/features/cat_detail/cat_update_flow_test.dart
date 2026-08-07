@@ -131,6 +131,10 @@ class _FakeCatDetailApi implements CatDetailApi {
 
   @override
   Future<List<CatMediaItem>> fetchMedia(String catId) async => const [];
+
+  @override
+  Future<CatDetail> setCoverPhoto(String catId, String mediaId) =>
+      throw UnimplementedError();
 }
 
 // Same technique as cat_detail_screen_test.dart's fixed notifier: a build()
