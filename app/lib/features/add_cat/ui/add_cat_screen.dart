@@ -421,9 +421,11 @@ class _DetailsStep extends ConsumerWidget {
                       // The design's `.required-tag`: pinned to the well
                       // itself, regardless of whether a photo is picked
                       // yet — not just the field label's own "(zorunlu)".
+                      // Top-left, not bottom-left: the upload-failed badge
+                      // also anchors bottom-left and would overlap it.
                       const Positioned(
                         left: AppSpacing.s2,
-                        bottom: AppSpacing.s2,
+                        top: AppSpacing.s2,
                         child: _RequiredTag(),
                       ),
                     ],
