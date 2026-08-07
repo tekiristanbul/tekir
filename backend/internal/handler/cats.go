@@ -121,6 +121,12 @@ type catDetailResponse struct {
 	// of the cat's photo archive (GET /v1/cats/{cat_id}/media) — the
 	// design's cover pill count and the "medya N" tab label.
 	MediaCount int `json:"media_count"`
+	// IsOwner (issue #156) is true only for the cat's own creator's
+	// authenticated read — false for a guest read or any other account.
+	// The client uses this, and only this, to decide whether to offer the
+	// "change cover photo" affordance; PATCH /v1/cats/{cat_id}/cover
+	// re-checks ownership server-side regardless.
+	IsOwner bool `json:"is_owner"`
 }
 
 // updateResponse is one entry of a cat's newest-first history. NeedsHelp
@@ -412,14 +418,22 @@ func parseLatLng(rawLat, rawLng string) (lat, lng float64, err error) {
 }
 
 // Detail answers GET /v1/cats/{cat_id} with the cat-detail representation.
+// OptionalBearer (issue #156) resolves the caller's own account when a
+// valid bearer is presented, without requiring one — a guest read is
+// unaffected; it's used only to derive is_owner.
 func (h *CatsHandler) Detail(w http.ResponseWriter, r *http.Request) {
-	detail, err := h.cats.GetCatDetail(r.Context(), chi.URLParam(r, "cat_id"))
+	caller := UserFromContext(r.Context())
+	detail, err := h.cats.GetCatDetail(r.Context(), chi.URLParam(r, "cat_id"), caller.UserID)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, catDetailResponse{
+	writeJSON(w, http.StatusOK, toCatDetailResponse(detail))
+}
+
+func toCatDetailResponse(detail service.CatDetail) catDetailResponse {
+	return catDetailResponse{
 		ID:           detail.ID,
 		Name:         detail.Name,
 		Area:         areaLatLng{Lat: detail.Lat, Lng: detail.Lng},
@@ -432,7 +446,8 @@ func (h *CatsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		LastWaterAt:  detail.LastWaterAt,
 		ActiveAlert:  toActiveAlertResponse(detail.ActiveAlert),
 		MediaCount:   detail.MediaCount,
-	})
+		IsOwner:      detail.IsOwner,
+	}
 }
 
 // catMediaResponse is one entry of GET /v1/cats/{cat_id}/media's newest-first
@@ -463,6 +478,41 @@ func (h *CatsHandler) Media(w http.ResponseWriter, r *http.Request) {
 		resp = append(resp, catMediaResponse{ID: m.ID, URL: m.URL, IsCover: m.IsCover, CreatedAt: m.CreatedAt, UploaderDisplayName: m.UploaderDisplayName})
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// setCoverRequest is the body of PATCH /v1/cats/{cat_id}/cover (issue
+// #156). DisallowUnknownFields rejects any client-supplied field beyond
+// media_id, mirroring createUpdateRequest's own guarantee.
+type setCoverRequest struct {
+	MediaID string `json:"media_id"`
+}
+
+// SetCover answers PATCH /v1/cats/{cat_id}/cover: the cat's own owning
+// account promotes an existing entry from its media gallery (GET
+// /v1/cats/{cat_id}/media) to be the cover photo. Only the cat's owner may
+// do this (issue #156) — CatsService.SetCoverPhoto re-checks
+// created_by_user_id against the authenticated caller server-side,
+// regardless of what the client believes is_owner to be. media_id must
+// already belong to this cat's own cat_media archive; the update or photo
+// it originally came from is never modified — only cats.primary_photo_id
+// moves.
+func (h *CatsHandler) SetCover(w http.ResponseWriter, r *http.Request) {
+	var req setCoverRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	user := UserFromContext(r.Context())
+	detail, err := h.cats.SetCoverPhoto(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, req.MediaID)
+	if err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toCatDetailResponse(detail))
 }
 
 // UpdateHistory answers GET /v1/cats/{cat_id}/updates?cursor=&limit= with one
@@ -717,6 +767,12 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the update author"})
 	case errors.Is(err, service.ErrCorrectionWindowExpired):
 		writeJSON(w, http.StatusGone, map[string]string{"error": "correction window expired"})
+	case errors.Is(err, service.ErrNotCatOwner):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the cat owner"})
+	case errors.Is(err, service.ErrInvalidMediaID):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid media id"})
+	case errors.Is(err, service.ErrMediaNotInGallery):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "media not in cat gallery"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 	}
