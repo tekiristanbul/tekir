@@ -554,11 +554,11 @@ class _TopBanner extends StatelessWidget {
 }
 
 /// The map topbar's search field (prototype/app.js's `renderMap`,
-/// `.search-field`) — visual parity only. The prototype's own input has no
-/// wired handler either (no oninput, no search-results rendering; the
-/// audit at docs/design/issue-121-visual-parity-audit.md confirmed this),
-/// so this stays a plain typeable field with no behavior behind it rather
-/// than inventing a search feature issue #121 doesn't scope.
+/// `.search-field`) — visual parity only, not editable. The prototype's own
+/// input has no wired handler either (no oninput, no search-results
+/// rendering; the audit at docs/design/issue-121-visual-parity-audit.md
+/// confirmed this), and issue #138 removed the typeable `TextField` since it
+/// never did anything but pop the keyboard with no way to dismiss it.
 class _MapSearchField extends StatelessWidget {
   const _MapSearchField({required this.hintText});
 
@@ -577,23 +577,16 @@ class _MapSearchField extends StatelessWidget {
       child: SizedBox(
         height: kTapMin,
         child: Row(
-          // stretches the TextField to the full 44px height so its
-          // semantics/hit-test size meets the tap-target guideline instead
-          // of shrinking to the text's own line height.
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             const SizedBox(width: AppSpacing.s4),
             const Icon(Icons.search, size: 17, color: AppColors.muted),
             const SizedBox(width: AppSpacing.s2),
             Expanded(
-              child: TextField(
-                style: const TextStyle(fontSize: 15, color: AppColors.ink),
-                decoration: InputDecoration(
-                  isDense: true,
-                  border: InputBorder.none,
-                  hintText: hintText,
-                  hintStyle: const TextStyle(color: AppColors.faint),
-                ),
+              child: Text(
+                hintText,
+                style: const TextStyle(fontSize: 15, color: AppColors.faint),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
             const SizedBox(width: AppSpacing.s4),
