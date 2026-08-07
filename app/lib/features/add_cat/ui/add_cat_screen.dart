@@ -372,7 +372,7 @@ class _DetailsStep extends ConsumerWidget {
               // The design's `.photo-well`: a dashed line-strong outline
               // around the whole well, in both its empty and filled state.
               child: CustomPaint(
-                painter: const _DashedBorderPainter(
+                foregroundPainter: const _DashedBorderPainter(
                   color: AppColors.lineStrong,
                   radius: AppRadius.lg,
                 ),
