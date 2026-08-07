@@ -34,6 +34,8 @@
 	     (prototype/app.js renderPerm) — the app is tr-TR only for 0.1 -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Yakınındaki kedileri gösterebilmemiz için konumuna ihtiyacımız var. İzin vermezsen haritayı Kadıköy merkezli görebilirsin.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Yakınındaki kedileri gösterebilmemiz için konumuna ihtiyacımız var. İzin vermezsen haritayı Kadıköy merkezli görebilirsin.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Kedi fotoğrafı çekip paylaşabilmen için kamera erişimi gerekiyor.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
