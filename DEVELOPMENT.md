@@ -207,7 +207,7 @@ build with `ANALYTICS_PROVIDER=firebase` against the non-production project and 
 
 - **web**: supported for foreground push and analytics out of the box; background/terminated web push additionally requires the configured `firebase-messaging-sw.js` and `FCM_VAPID_KEY`.
 - **android**: 0.1 release target (product-owner decision 2026-07-29); publish timing is the product owner's. the Flutter Android target exists (`app/android`, package id `istanbul.tekir`, portrait-only) with generated launcher/adaptive icons and a prototype-aligned native launch screen, and builds from this repo. `flutter build appbundle` produces the Play-ready artifact once `android/key.properties` points at an upload keystore (see `android/key.properties.example`); without it, release builds fall back to debug signing for local runs. still console-side: play listing + data-safety form, play app signing, firebase android app registration if push/analytics ship enabled, real-build screenshots.
-- **ios**: 0.1 release target (product-owner decision 2026-07-29). the Flutter iOS target exists (`app/ios`, bundle id `istanbul.tekir`, min iOS 15) with generated icons and a prototype-aligned native launch screen, but it was scaffolded from linux and has never been built: before treating it as release-ready, run `pod install` + a real Xcode build on a mac, register the `istanbul.tekir` iOS app in Firebase (`GoogleService-Info.plist` is not committed), and configure the APNs key for push.
+- **ios**: 0.1 release target (product-owner decision 2026-07-29). the Flutter iOS target exists (`app/ios`, bundle id `istanbul.tekir`, min iOS 15) with generated icons and a prototype-aligned native launch screen, but it was scaffolded from linux and has never been built: before treating it as release-ready, run `pod install` + a real Xcode build on a mac, register the `istanbul.tekir` iOS app in Firebase (`GoogleService-Info.plist` is not committed), and configure the APNs key for push. see [ios development](#ios-development) for the full setup and testflight path.
 
 ## object storage providers
 
@@ -289,7 +289,140 @@ cd app
 flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8081
 ```
 
-only the web target is currently configured.
+only the web target is currently configured for `--dart-define=API_BASE_URL=...`; ios/android read the same default (`http://localhost:8080`) unless you pass the same flag to `flutter run`/`flutter build ios`.
+
+## ios development
+
+a mac with Xcode is required for everything in this section — none of it works on linux/windows. this covers the path from a clean clone to a physical-device run and a testflight-ready build; see [firebase](#firebase-push--analytics-issue-84) above for the shared push/analytics setup this section builds on.
+
+### ios-specific prerequisites
+
+- a mac running a current Xcode, with the ios 15+ simulator/platform components installed.
+- an [Apple Developer](https://developer.apple.com/account) account (free personal team works for physical-device development; a paid membership ($99/year) is required to submit to TestFlight/App Store).
+- [CocoaPods](https://cocoapods.org) (`sudo gem install cocoapods`, or via `brew install cocoapods`).
+- the flutter/dart versions from [prerequisites](#prerequisites) above, plus `flutter pub get` already run in `app/`.
+
+### apple developer team and signing
+
+the checked-in project (`app/ios/Runner.xcodeproj`) has no `DEVELOPMENT_TEAM` set and `CODE_SIGN_STYLE = Automatic` — signing is a per-contributor local setting, not something committed to the repo:
+
+1. open `app/ios/Runner.xcworkspace` in Xcode (not the `.xcodeproj` — CocoaPods requires the workspace; see [pod install](#pod-install-and-opening-the-project) below).
+2. select the **Runner** target → **Signing & Capabilities**.
+3. under **Team**, pick your Apple Developer account (personal team is fine for device testing).
+4. leave **Automatically manage signing** checked; Xcode provisions a development certificate and an ad-hoc provisioning profile for the bundle identifier below.
+
+never commit a team id, provisioning profile, or signing certificate — these stay local/Xcode-managed.
+
+### bundle identifier
+
+the app ships as `istanbul.tekir` (`PRODUCT_BUNDLE_IDENTIFIER` in `project.pbxproj`, matching the Android `applicationId`). register this exact identifier under your Apple Developer account (**Certificates, Identifiers & Profiles → Identifiers**) before the first device run or archive — Xcode's automatic signing creates it for you the first time you build to a device, but App Store Connect requires it to exist as an App ID before you can create the app record for TestFlight.
+
+if you need a personal scratch identifier instead (e.g. testing signing without registering the real one), change `PRODUCT_BUNDLE_IDENTIFIER` locally and never commit the change.
+
+### google maps sdk (ios)
+
+`google_maps_flutter` is in `app/pubspec.yaml`, and CocoaPods pulls the native `GoogleMaps` sdk automatically — but unlike the web target (see [google maps local key](#google-maps-local-key)), nothing in `app/ios` currently supplies an api key to it: `app/ios/Runner/AppDelegate.swift` does not call `GMSServices.provideAPIKey`. add it locally, once, before your first run:
+
+```swift
+import Flutter
+import UIKit
+import GoogleMaps
+
+@main
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  override func application(
+    _ application: UIApplication,
+    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+  ) -> Bool {
+    GMSServices.provideAPIKey("YOUR_IOS_MAPS_KEY")
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+  }
+}
+```
+
+use a development-only key restricted to the **iOS SDK** and this bundle identifier (`istanbul.tekir`) in the google cloud console — a separate key from the one used by `app/.env.local` for web. `AppDelegate.swift` is a tracked file: keep the real key as an uncommitted local change (`git diff` should show it before every commit), the same rule as never placing a real key in `app/web/index.html`.
+
+### firebase (`GoogleService-Info.plist`)
+
+the shared firebase project setup is in [firebase](#firebase-push--analytics-issue-84) above. for ios specifically:
+
+1. run `flutterfire configure` from `app/` (as in the shared one-time setup) and select the **ios** platform when prompted, using the bundle id `istanbul.tekir`. this both updates `app/lib/firebase_options.dart` with a real ios entry (currently a placeholder that throws `UnsupportedError`) and downloads `GoogleService-Info.plist` into `app/ios/Runner/`.
+2. in Xcode, confirm `GoogleService-Info.plist` shows up under the `Runner` group with **Target Membership** set to `Runner`; if `flutterfire configure` didn't add it to the project automatically, drag it in and check the box yourself.
+3. `GoogleService-Info.plist` is not committed (matches the android/`google-services.json` posture — see [release targets](#release-targets-01)); `firebase_options.dart` is committable public client configuration, same as the web entry already in the repo.
+4. push (`NOTIFICATION_PROVIDER=fcm`) additionally needs an APNs authentication key uploaded to the firebase project (**Project settings → Cloud Messaging → Apple app configuration**) — created once in the Apple Developer portal (**Keys**, "Apple Push Notifications service (APNs)").
+
+### running on a physical iphone
+
+```text
+cd app
+pod install --project-directory=ios
+flutter run -d <device-id> --dart-define=API_BASE_URL=http://<your-mac-lan-ip>:8080
+```
+
+- `flutter devices` lists connected/paired devices and their `<device-id>`.
+- the simulator can reach `localhost:8080` directly; a physical iphone cannot — it must reach the mac over the lan, so point `API_BASE_URL` at your mac's lan ip (not `localhost`) and start the backend with `docker compose up -d` first (see [local services](#local-services)).
+- the phone must be unlocked and paired, with "trust this computer" accepted, and (first run only) the generated development certificate trusted on-device: **Settings → General → VPN & Device Management**.
+
+#### pod install and opening the project
+
+`flutter pub get` regenerates `ios/Flutter/Generated.xcconfig`; `pod install` (or the implicit one `flutter run`/`flutter build ios` triggers) reads it and updates `Runner.xcworkspace`. always open `Runner.xcworkspace`, never `Runner.xcodeproj` directly — the plain project has no pod targets linked and fails to build.
+
+### recommended local config workflow
+
+there's no `app/ios/.env.local` equivalent — ios config lives in two places, both untracked/local by convention:
+
+- the maps api key: a local, uncommitted edit to `AppDelegate.swift` (above).
+- `GoogleService-Info.plist`: downloaded by `flutterfire configure`, not committed.
+- everything else (api base url, analytics/notification provider) goes through `--dart-define`, same flags as [firebase variables](#flutter-variables-appenvlocal-forwarded-by-scriptsrun_websh) and [api base url](#api-base-url) above, e.g.:
+
+  ```text
+  flutter run -d <device-id> \
+    --dart-define=API_BASE_URL=http://<your-mac-lan-ip>:8080 \
+    --dart-define=NOTIFICATION_PROVIDER=fcm \
+    --dart-define=ANALYTICS_PROVIDER=firebase
+  ```
+
+### building an app store ipa
+
+```text
+cd app
+flutter build ipa --release
+```
+
+this produces `build/ios/archive/Runner.xcarchive` and, if an export method resolves (automatic signing with a valid team does this by default), `build/ios/ipa/*.ipa`. if the export step fails, open the archive in Xcode's Organizer (`open build/ios/archive/Runner.xcarchive`) and use **Distribute App → TestFlight & App Store** to export/upload instead.
+
+### build numbers for testflight
+
+App Store Connect rejects a re-upload with a build number it has already seen for the same version. the build number is the `+N` suffix in `app/pubspec.yaml`'s `version:` (currently `1.0.0+1`, feeding `CURRENT_PROJECT_VERSION`/`FLUTTER_BUILD_NUMBER` in Xcode) — bump it before every new TestFlight upload:
+
+```text
+flutter build ipa --release --build-number=2
+```
+
+or edit `version: 1.0.0+2` in `app/pubspec.yaml` directly. the marketing version (`1.0.0`, before the `+`) only needs to change for a user-visible release, not every TestFlight build.
+
+### uploading through transporter / app store connect
+
+1. create the app record in [App Store Connect](https://appstoreconnect.apple.com) first (**My Apps → +**), using bundle id `istanbul.tekir` (already registered per [bundle identifier](#bundle-identifier) above) — the upload fails if the app record doesn't exist yet.
+2. upload with either:
+   - Xcode Organizer's **Distribute App → TestFlight & App Store** flow straight from the archive, or
+   - the standalone [Transporter](https://apps.apple.com/app/transporter/id1450874784) app: point it at the `.ipa` from `flutter build ipa`.
+3. wait for Apple's automated processing (usually a few minutes to an hour) before the build appears under **TestFlight** in App Store Connect.
+4. add internal testers (immediate, no review) or external testers (requires a first-time beta app review).
+
+### common ios failure modes
+
+- **blank/gray map, no crash**: `GMSServices.provideAPIKey` was never called, or the key isn't restricted for the iOS SDK — see [google maps sdk (ios)](#google-maps-sdk-ios).
+- **crash on launch mentioning `FirebaseApp` or `GoogleService-Info.plist`**: `flutterfire configure` wasn't run for the ios platform, or the plist wasn't added to the Runner target — see [firebase](#firebase-googleservice-infoplist) above. this only affects `NOTIFICATION_PROVIDER=fcm`/`ANALYTICS_PROVIDER=firebase` builds; the local defaults (`fake`/`none`) don't initialize firebase at all.
+- **`Generated.xcconfig must exist` when running `pod install` manually**: run `flutter pub get` first (see [pod install and opening the project](#pod-install-and-opening-the-project)).
+- **build fails / red signing errors in Xcode**: no team selected, or the bundle id isn't registered to your account yet — see [apple developer team and signing](#apple-developer-team-and-signing).
+- **app installs but can't reach the api from a physical device**: `API_BASE_URL` pointed at `localhost` instead of the mac's lan ip, or the mac's firewall is blocking the incoming connection — see [running on a physical iphone](#running-on-a-physical-iphone).
+- **App Store Connect rejects the upload with "already used a build number"**: bump `+N` in `app/pubspec.yaml` or pass `--build-number` — see [build numbers for testflight](#build-numbers-for-testflight).
+- **push permission prompt never appears on device**: confirm the build used `--dart-define=NOTIFICATION_PROVIDER=fcm` — the local `fake` default keeps the opt-in sheet ui-only and never requests the real system permission (same behavior documented in [firebase](#firebase-push--analytics-issue-84) above).
 
 ## validation
 
