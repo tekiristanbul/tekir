@@ -320,7 +320,9 @@ void main() {
       // The row is replaced by the server-confirmed entry — and the old
       // success toast is gone: the row itself was the feedback.
       expect(find.byType(OptimisticInlineRow), findsNothing);
-      expect(find.text('görüldü'), findsOneWidget);
+      // "görüldü" appears twice: the three-stat header's own label
+      // (issue #121) plus this entry's timeline chip.
+      expect(find.text('görüldü'), findsNWidgets(2));
       expect(find.text('Güncelleme paylaşıldı'), findsNothing);
     },
   );
@@ -365,7 +367,9 @@ void main() {
       // Sheet closed immediately; the confirmed entry is on the timeline
       // and no success toast fires for the optimistic path.
       expect(find.text('Paylaş'), findsNothing);
-      expect(find.text('görüldü'), findsOneWidget);
+      // "görüldü" appears twice: the three-stat header's own label
+      // (issue #121) plus this entry's timeline chip.
+      expect(find.text('görüldü'), findsNWidgets(2));
       expect(find.text('mama verildi'), findsOneWidget);
       expect(find.text('Güncelleme paylaşıldı'), findsNothing);
     },
@@ -1004,7 +1008,9 @@ void main() {
       expect(api.createUpdateCalls, 1);
       expect(api.lastStatuses, ['seen']);
       // The optimistic row settled into the confirmed timeline entry.
-      expect(find.text('görüldü'), findsOneWidget);
+      // "görüldü" appears twice: the three-stat header's own label
+      // (issue #121) plus this entry's timeline chip.
+      expect(find.text('görüldü'), findsNWidgets(2));
       expect(find.byType(OptimisticInlineRow), findsNothing);
     },
   );

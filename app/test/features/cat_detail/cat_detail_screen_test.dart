@@ -149,7 +149,9 @@ void main() {
       expect(find.text('Galata Kulesi çevresi, Beyoğlu'), findsOneWidget);
       // structured statuses render as turkish tags, the comment as
       // separate (non-italic) body text — both present, never merged.
-      expect(find.text('görüldü'), findsOneWidget);
+      // "görüldü" appears twice: once as the three-stat header's own
+      // label (issue #121), once as this entry's timeline chip.
+      expect(find.text('görüldü'), findsNWidgets(2));
       expect(find.text('su verildi'), findsOneWidget);
       expect(find.text('kase boştu, doldurduk'), findsOneWidget);
       // raw lat/lng must never render anywhere on the detail screen.
@@ -342,7 +344,10 @@ void main() {
 
       expect(find.text('yardım gerekiyor'), findsOneWidget);
       expect(find.text('suya ihtiyacı var'), findsNothing);
-      expect(find.textContaining('su'), findsNothing);
+      // the three-stat header's own "su" label is unrelated to the legacy
+      // category and legitimately renders (issue #121) — only the leaked
+      // category text itself must never appear.
+      expect(find.textContaining('suya'), findsNothing);
       // an expired entry must never render with the active help color —
       // that emphasis is reserved for the active-alert banner alone, and
       // this fixture has no active alert at all.
@@ -401,9 +406,18 @@ void main() {
         ),
       );
 
+      // Scoped to the chip row's own Wrap: "görüldü" also legitimately
+      // appears as the three-stat header's label (issue #121), which
+      // isn't inside this Wrap.
       Color chipColor(String label) {
         final container = tester.widget<Container>(
-          find.ancestor(of: find.text(label), matching: find.byType(Container)),
+          find.ancestor(
+            of: find.descendant(
+              of: find.byType(Wrap),
+              matching: find.text(label),
+            ),
+            matching: find.byType(Container),
+          ),
         );
         return (container.decoration! as BoxDecoration).color!;
       }
