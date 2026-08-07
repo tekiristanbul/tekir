@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +7,7 @@ import 'package:app/core/identity/session_identity.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/core/utils/relative_time.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
+import 'package:app/features/cat_detail/data/cat_detail_api.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_screen.dart';
 
@@ -76,7 +78,54 @@ class _GuestSessionIdentityService implements SessionIdentityService {
   Future<void> logout({String? deviceToken}) async {}
 }
 
-Future<void> _pump(WidgetTester tester, CatDetailState state) async {
+// Only fetchMedia is ever exercised through this file's screen tests — the
+// fixed notifier above (see _FixedCatDetailNotifier) bypasses
+// fetchDetail/fetchUpdates entirely, and none of these tests submit or
+// correct an update — so every other method stays an UnimplementedError
+// tripwire rather than a real fake.
+class _FakeCatMediaApi implements CatDetailApi {
+  _FakeCatMediaApi([this.media = const []]);
+
+  final List<CatMediaItem> media;
+
+  @override
+  Future<CatDetail> fetchDetail(String catId) => throw UnimplementedError();
+
+  @override
+  Future<UpdatesPage> fetchUpdates(String catId, {String? cursor}) =>
+      throw UnimplementedError();
+
+  @override
+  Future<CatUpdateEntry> createUpdate(
+    String catId, {
+    required List<String> statuses,
+    bool needsHelp = false,
+    String? comment,
+    required String idempotencyKey,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<CatUpdateEntry> correctUpdate(
+    String catId,
+    String updateId, {
+    required List<String> statuses,
+    String? comment,
+    bool clearNeedsHelp = false,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> deleteUpdate(String catId, String updateId) =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<CatMediaItem>> fetchMedia(String catId) async => media;
+}
+
+Future<void> _pump(
+  WidgetTester tester,
+  CatDetailState state, {
+  List<CatMediaItem> media = const [],
+}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
@@ -86,6 +135,7 @@ Future<void> _pump(WidgetTester tester, CatDetailState state) async {
         sessionIdentityServiceProvider.overrideWithValue(
           _GuestSessionIdentityService(),
         ),
+        catDetailApiProvider.overrideWithValue(_FakeCatMediaApi(media)),
       ],
       child: const MaterialApp(home: CatDetailScreen(catId: _catId)),
     ),
@@ -556,4 +606,142 @@ void main() {
       expect(find.byIcon(Icons.person_outline), findsNWidgets(2));
     },
   );
+
+  group('issue #121 media parity', () {
+    testWidgets(
+      'cover photo counter: shown with the real media_count, hidden at zero',
+      (tester) async {
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: CatDetail(
+              id: _catId,
+              name: 'tekir',
+              lat: 41.0256,
+              lng: 28.9744,
+              areaLabel: null,
+              primaryPhoto: null,
+              createdAt: DateTime.utc(2026, 1, 1),
+              lastUpdateAt: null,
+              mediaCount: 3,
+            ),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+        );
+
+        expect(find.byIcon(Icons.camera_alt_outlined), findsOneWidget);
+        // both the cover pill and the segmented control's "medya" badge
+        // read the same real media_count — two "3"s, not an invented one.
+        expect(find.text('3'), findsNWidgets(2));
+      },
+    );
+
+    testWidgets('cover photo counter: never shown when media_count is zero', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
+      );
+
+      expect(find.byIcon(Icons.camera_alt_outlined), findsNothing);
+    });
+
+    testWidgets(
+      'timeline thumbnail: rendered only when an entry carries a photo_url',
+      (tester) async {
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: _detail,
+            updates: [
+              CatUpdateEntry(
+                id: 'u1',
+                statuses: const ['seen'],
+                comment: null,
+                createdAt: DateTime.utc(2026, 1, 2),
+                photoUrl: 'https://example.com/photo.jpg',
+              ),
+              CatUpdateEntry(
+                id: 'u2',
+                statuses: const ['fed'],
+                comment: null,
+                createdAt: DateTime.utc(2026, 1, 1),
+              ),
+            ],
+            hasLoadedOnce: true,
+          ),
+        );
+
+        expect(find.byType(CachedNetworkImage), findsOneWidget);
+      },
+    );
+
+    testWidgets('medya tab: switching shows the archive grid with the ana '
+        'badge on the cover entry, never on any other', (tester) async {
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: CatDetail(
+            id: _catId,
+            name: 'tekir',
+            lat: 41.0256,
+            lng: 28.9744,
+            areaLabel: null,
+            primaryPhoto: null,
+            createdAt: DateTime.utc(2026, 1, 1),
+            lastUpdateAt: null,
+            mediaCount: 2,
+          ),
+          updates: const [],
+          hasLoadedOnce: true,
+        ),
+        media: [
+          CatMediaItem(
+            id: 'm1',
+            url: 'https://example.com/cover.jpg',
+            isCover: true,
+            createdAt: DateTime.utc(2026, 1, 2),
+          ),
+          CatMediaItem(
+            id: 'm2',
+            url: 'https://example.com/other.jpg',
+            isCover: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        ],
+      );
+
+      // The segmented control sits below the fold at the default test
+      // viewport size — scroll it into view before tapping.
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pump();
+      await tester.tap(find.text('medya'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('ana'), findsOneWidget);
+      expect(find.byType(CachedNetworkImage), findsNWidgets(2));
+    });
+
+    testWidgets('medya tab: an empty archive shows the empty-state message', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
+      );
+
+      // The segmented control sits below the fold at the default test
+      // viewport size — scroll it into view before tapping.
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pump();
+      await tester.tap(find.text('medya'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Henüz medya yok'), findsOneWidget);
+    });
+  });
 }

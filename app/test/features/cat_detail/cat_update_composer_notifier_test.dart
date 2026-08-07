@@ -162,6 +162,9 @@ class _FakeCatDetailApi implements CatDetailApi {
   @override
   Future<void> deleteUpdate(String catId, String updateId) =>
       throw UnimplementedError();
+
+  @override
+  Future<List<CatMediaItem>> fetchMedia(String catId) async => const [];
 }
 
 // Returns a malformed (missing device_id/device_token) body on the first

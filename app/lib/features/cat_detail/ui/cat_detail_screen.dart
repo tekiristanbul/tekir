@@ -195,37 +195,17 @@ class _CatDetailBody extends ConsumerWidget {
               ],
               _ThreeStatHeader(detail: detail),
               const SizedBox(height: AppSpacing.s4),
-              Text(
-                'Son güncellemeler',
-                style: Theme.of(context).textTheme.titleMedium,
+              _HistoryMediaSection(
+                catId: detail.id,
+                mediaCount: detail.mediaCount,
+                updates: state.updates,
+                pending: pending,
+                hasNextPage: state.hasNextPage,
+                isLoadingMore: state.isLoadingMore,
+                onLoadMore: () => ref
+                    .read(catDetailProvider(detail.id).notifier)
+                    .loadMoreUpdates(),
               ),
-              const SizedBox(height: AppSpacing.s2),
-              if (pending != null) ...[
-                OptimisticInlineRow(
-                  label: optimisticUpdateLabelTr(pending),
-                  status: pending.status,
-                ),
-                const SizedBox(height: AppSpacing.s3),
-              ],
-              if (state.updates.isEmpty && pending == null)
-                const _EmptyHistory()
-              else if (state.updates.isNotEmpty) ...[
-                for (var i = 0; i < state.updates.length; i++)
-                  _TimelineItem(
-                    catId: detail.id,
-                    update: state.updates[i],
-                    isLast: i == state.updates.length - 1 && !state.hasNextPage,
-                  ),
-                if (state.hasNextPage) ...[
-                  const SizedBox(height: AppSpacing.s2),
-                  _LoadMoreButton(
-                    isLoading: state.isLoadingMore,
-                    onPressed: () => ref
-                        .read(catDetailProvider(detail.id).notifier)
-                        .loadMoreUpdates(),
-                  ),
-                ],
-              ],
             ],
           ),
         ),
@@ -238,12 +218,12 @@ class _CatDetailBody extends ConsumerWidget {
 /// full width at a fixed 16:9, controlled crop (`cover`) — the ratio is
 /// never distorted and the height never depends on the source image.
 /// Tapping it opens the uncropped full-screen view; the design marks
-/// tappability with a media counter, but its count must come from a real
-/// total whose source field the design leaves unverified ("açık kalan"),
-/// so no counter is rendered yet. The name/area caption lives below the
-/// photo (see [_IdentityBlock]), not overlaid on it — only the back and
-/// follow glass controls sit on the photo itself, matching the design's
-/// frames A/B.
+/// tappability with a media counter (camera icon + count), backed since
+/// issue #121 by [CatDetail.mediaCount] — the field the design's own
+/// bottom-right pill previously had no real source for. The name/area
+/// caption lives below the photo (see [_IdentityBlock]), not overlaid on
+/// it — only the back, follow glass controls, and the counter pill sit on
+/// the photo itself, matching the design's frames A/B.
 class _HeroPhoto extends StatelessWidget {
   const _HeroPhoto({required this.detail, this.openSource});
 
@@ -299,6 +279,12 @@ class _HeroPhoto extends StatelessWidget {
                 glass: true,
               ),
             ),
+            if (detail.mediaCount > 0)
+              Positioned(
+                right: AppSpacing.s3,
+                bottom: AppSpacing.s2,
+                child: _CoverPhotoCounter(count: detail.mediaCount),
+              ),
           ],
         ),
       ),
@@ -315,6 +301,42 @@ class _HeroPhoto extends StatelessWidget {
       MaterialPageRoute<void>(
         fullscreenDialog: true,
         builder: (_) => _FullScreenPhoto(photo: photo),
+      ),
+    );
+  }
+}
+
+/// The cover's bottom-right "tappable for more" indicator (binding design):
+/// a camera glyph plus [count], the cat's [CatDetail.mediaCount] — never
+/// shown at zero, since a zero pill would only advertise an archive with
+/// nothing in it.
+class _CoverPhotoCounter extends StatelessWidget {
+  const _CoverPhotoCounter({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(AppRadius.full),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.camera_alt_outlined, size: 13, color: Colors.white),
+          const SizedBox(width: 6),
+          Text(
+            '$count',
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -656,6 +678,349 @@ class _StatTile extends StatelessWidget {
             time != null ? relativeTimeTr(time!) : 'henüz yok',
             style: const TextStyle(fontSize: 13, color: AppColors.ink),
             overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _ProfileTab { history, media }
+
+/// The "geçmiş / medya" segmented control (binding design's `.seg`) and its
+/// switched content: the update timeline, or the photo archive (issue
+/// #121's media-tab/archive parity gap). Which tab is selected is pure
+/// local navigation state, not data to persist or reconcile against the
+/// server. The medya side's count badge comes straight from
+/// [CatDetail.mediaCount] (a real field); geçmiş shows no count, since the
+/// timeline's own total isn't a field this api exposes (only one loaded
+/// page at a time) — inventing one would repeat the exact mistake the
+/// cover counter itself used to make before issue #121 gave it a real
+/// source.
+class _HistoryMediaSection extends ConsumerStatefulWidget {
+  const _HistoryMediaSection({
+    required this.catId,
+    required this.mediaCount,
+    required this.updates,
+    required this.pending,
+    required this.hasNextPage,
+    required this.isLoadingMore,
+    required this.onLoadMore,
+  });
+
+  final String catId;
+  final int mediaCount;
+  final List<CatUpdateEntry> updates;
+  final PendingUpdate? pending;
+  final bool hasNextPage;
+  final bool isLoadingMore;
+  final VoidCallback onLoadMore;
+
+  @override
+  ConsumerState<_HistoryMediaSection> createState() =>
+      _HistoryMediaSectionState();
+}
+
+class _HistoryMediaSectionState extends ConsumerState<_HistoryMediaSection> {
+  _ProfileTab _tab = _ProfileTab.history;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ProfileSegmentedControl(
+          selected: _tab,
+          mediaCount: widget.mediaCount,
+          onChanged: (tab) => setState(() => _tab = tab),
+        ),
+        const SizedBox(height: AppSpacing.s3),
+        if (_tab == _ProfileTab.history) _buildHistory() else _buildMedia(),
+      ],
+    );
+  }
+
+  Widget _buildHistory() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.pending != null) ...[
+          OptimisticInlineRow(
+            label: optimisticUpdateLabelTr(widget.pending!),
+            status: widget.pending!.status,
+          ),
+          const SizedBox(height: AppSpacing.s3),
+        ],
+        if (widget.updates.isEmpty && widget.pending == null)
+          const _EmptyHistory()
+        else if (widget.updates.isNotEmpty) ...[
+          for (var i = 0; i < widget.updates.length; i++)
+            _TimelineItem(
+              catId: widget.catId,
+              update: widget.updates[i],
+              isLast: i == widget.updates.length - 1 && !widget.hasNextPage,
+            ),
+          if (widget.hasNextPage) ...[
+            const SizedBox(height: AppSpacing.s2),
+            _LoadMoreButton(
+              isLoading: widget.isLoadingMore,
+              onPressed: widget.onLoadMore,
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Widget _buildMedia() {
+    final media = ref.watch(catMediaProvider(widget.catId));
+    return media.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.s6),
+        child: Center(
+          child: InlineSpinner(
+            size: 22,
+            color: AppColors.primary,
+            trackColor: AppColors.line,
+          ),
+        ),
+      ),
+      error: (_, _) => const _EmptyMedia(message: 'Medya yüklenemedi'),
+      data: (items) {
+        if (items.isEmpty) {
+          return const _EmptyMedia(message: 'Henüz medya yok');
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: items.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: AppSpacing.s2,
+                crossAxisSpacing: AppSpacing.s2,
+                childAspectRatio: 1,
+              ),
+              itemBuilder: (context, i) => _MediaTile(item: items[i]),
+            ),
+            const SizedBox(height: AppSpacing.s3),
+            const SizedBox(
+              width: double.infinity,
+              child: Text(
+                'her görsel bir güncellemeye ait · dokun, tam ekran aç',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: AppColors.faint),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ProfileSegmentedControl extends StatelessWidget {
+  const _ProfileSegmentedControl({
+    required this.selected,
+    required this.mediaCount,
+    required this.onChanged,
+  });
+
+  final _ProfileTab selected;
+  final int mediaCount;
+  final ValueChanged<_ProfileTab> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(5),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ProfileSegment(
+              label: 'geçmiş',
+              isOn: selected == _ProfileTab.history,
+              onTap: () => onChanged(_ProfileTab.history),
+            ),
+          ),
+          Expanded(
+            child: _ProfileSegment(
+              label: 'medya',
+              count: mediaCount,
+              isOn: selected == _ProfileTab.media,
+              onTap: () => onChanged(_ProfileTab.media),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileSegment extends StatelessWidget {
+  const _ProfileSegment({
+    required this.label,
+    required this.isOn,
+    required this.onTap,
+    this.count,
+  });
+
+  final String label;
+  final bool isOn;
+  final VoidCallback onTap;
+  final int? count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: isOn ? AppColors.surface : Colors.transparent,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      elevation: isOn ? 1 : 0,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        onTap: onTap,
+        // A minimum, not a fixed, height — mirrors _UpdateBar's own
+        // constraint — so the label can wrap taller at large system text
+        // scale instead of clipping or overflowing the segment.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: kTapMin),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s2,
+              vertical: AppSpacing.s2,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                      color: isOn ? AppColors.ink : AppColors.faint,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (count != null) ...[
+                  const SizedBox(width: 7),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isOn ? AppColors.primary : AppColors.line,
+                      borderRadius: BorderRadius.circular(AppRadius.full),
+                    ),
+                    child: Text(
+                      '$count',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: isOn ? AppColors.primaryInk : AppColors.faint,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One entry of the "medya" archive grid (binding design's `.med.sm` tile):
+/// square, rounded, tap opens the same uncropped full-screen view the cover
+/// photo uses. [CatMediaItem.isCover] marks the cat's current cover photo
+/// with the design's "ana" badge — never any other entry.
+class _MediaTile extends StatelessWidget {
+  const _MediaTile({required this.item});
+
+  final CatMediaItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          fullscreenDialog: true,
+          builder: (_) => _FullScreenPhoto(photo: item.url),
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CachedNetworkImage(
+              imageUrl: item.url,
+              fit: BoxFit.cover,
+              placeholder: (context, _) =>
+                  const _HeroPlaceholder(loading: true),
+              errorWidget: (context, _, _) => const _HeroPlaceholder(),
+            ),
+            if (item.isCover)
+              Positioned(
+                left: 6,
+                top: 6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: const Text(
+                    'ana',
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primaryInk,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyMedia extends StatelessWidget {
+  const _EmptyMedia({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.s6),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.photo_library_outlined,
+            color: AppColors.faint,
+            size: 22,
+          ),
+          const SizedBox(width: AppSpacing.s3),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(color: AppColors.muted),
+            ),
           ),
         ],
       ),
@@ -1006,11 +1371,52 @@ class _TimelineItem extends StatelessWidget {
                         ),
                       ),
                   ],
+                  if (update.photoUrl != null) ...[
+                    const SizedBox(height: 11),
+                    _TimelineThumbnail(url: update.photoUrl!),
+                  ],
                 ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A timeline entry's inline media thumbnail (binding design's `.med`):
+/// only rendered when [CatUpdateEntry.photoUrl] is set — always null today
+/// (issue #121's timeline-thumbnail parity gap: the read plumbing exists,
+/// but no write path attaches media to an update yet), so this stays inert
+/// in the running app until a future write path populates it. Tap opens
+/// the same uncropped full-screen view the cover photo and media grid use.
+class _TimelineThumbnail extends StatelessWidget {
+  const _TimelineThumbnail({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          fullscreenDialog: true,
+          builder: (_) => _FullScreenPhoto(photo: url),
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: SizedBox(
+          width: 98,
+          height: 98,
+          child: CachedNetworkImage(
+            imageUrl: url,
+            fit: BoxFit.cover,
+            placeholder: (context, _) => const _HeroPlaceholder(loading: true),
+            errorWidget: (context, _, _) => const _HeroPlaceholder(),
+          ),
+        ),
       ),
     );
   }

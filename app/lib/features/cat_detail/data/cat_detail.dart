@@ -20,6 +20,7 @@ class CatDetail {
     this.lastFedAt,
     this.lastWaterAt,
     this.activeAlert,
+    this.mediaCount = 0,
   });
 
   final String id;
@@ -43,6 +44,11 @@ class CatDetail {
   final DateTime? lastFedAt;
   final DateTime? lastWaterAt;
   final ActiveAlert? activeAlert;
+
+  /// Size of the cat's photo archive (`GET /v1/cats/{cat_id}/media`) — the
+  /// cover photo's count pill and the "medya N" tab label (issue #121's
+  /// media-archive/cover-counter parity gap).
+  final int mediaCount;
 
   factory CatDetail.fromJson(Map<String, dynamic> json) {
     final area = json['area'] as Map<String, dynamic>;
@@ -68,6 +74,34 @@ class CatDetail {
       activeAlert: rawActiveAlert != null
           ? ActiveAlert.fromJson(rawActiveAlert)
           : null,
+      mediaCount: (json['media_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+/// One entry of `GET /v1/cats/{cat_id}/media`'s newest-first photo archive
+/// (issue #121's media-archive parity gap). [isCover] mirrors the cat's
+/// current cover photo — the client renders the design's "ana" badge on
+/// exactly that entry.
+class CatMediaItem {
+  const CatMediaItem({
+    required this.id,
+    required this.url,
+    required this.isCover,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String url;
+  final bool isCover;
+  final DateTime createdAt;
+
+  factory CatMediaItem.fromJson(Map<String, dynamic> json) {
+    return CatMediaItem(
+      id: json['id'] as String,
+      url: json['url'] as String,
+      isCover: json['is_cover'] as bool? ?? false,
+      createdAt: DateTime.parse(json['created_at'] as String),
     );
   }
 }
@@ -100,6 +134,7 @@ class CatUpdateEntry {
     this.authorIsMe = false,
     this.correctionExpiresAt,
     this.authorDisplayName,
+    this.photoUrl,
   });
 
   final String id;
@@ -115,6 +150,11 @@ class CatUpdateEntry {
   /// author never set one — the timeline renders a generic avatar in that
   /// case rather than inventing a name or initial (issue #121).
   final String? authorDisplayName;
+
+  /// Url of the media this entry carries, null when it carries none
+  /// (issue #121's timeline-thumbnail parity gap) — always null today,
+  /// since no write path attaches media to an update yet.
+  final String? photoUrl;
 
   /// Server-derived (issue #80): true only when this entry was returned to
   /// its own author's authenticated read of `GET .../updates` — always
@@ -165,6 +205,7 @@ class CatUpdateEntry {
           ? DateTime.parse(rawCorrectionExpiresAt)
           : null,
       authorDisplayName: json['author_display_name'] as String?,
+      photoUrl: json['photo_url'] as String?,
     );
   }
 }

@@ -97,6 +97,24 @@ class CatDetailApi {
     return UpdatesPage.fromJson(response.data!);
   }
 
+  /// Fetches catId's photo archive, newest-first (issue #121's
+  /// media-archive parity gap) — backs the cat-profile "medya" tab.
+  Future<List<CatMediaItem>> fetchMedia(String catId) async {
+    try {
+      final response = await _apiClient.dio.get<List<dynamic>>(
+        '/v1/cats/$catId/media',
+      );
+      return (response.data ?? const [])
+          .map((e) => CatMediaItem.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        throw const CatNotFoundException();
+      }
+      rethrow;
+    }
+  }
+
   /// Submits an update (issue #43, moved onto authenticated accounts by
   /// issue #65; help folded in by issue #101): one or more of the fixed mvp
   /// statuses, the `yardıma ihtiyacı var` flag, or both, plus an optional
