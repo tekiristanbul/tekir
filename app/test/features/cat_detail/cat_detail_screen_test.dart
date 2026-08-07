@@ -730,6 +730,7 @@ void main() {
             url: 'https://example.com/cover.jpg',
             isCover: true,
             createdAt: DateTime.utc(2026, 1, 2),
+            uploaderDisplayName: 'asli',
           ),
           CatMediaItem(
             id: 'm2',
@@ -750,6 +751,9 @@ void main() {
 
       expect(find.text('ana'), findsOneWidget);
       expect(find.byType(CachedNetworkImage), findsNWidgets(2));
+      // issue #154: the uploader's name surfaces via the same tile the
+      // "ana" badge sits on, consistent with the timeline's own avatar.
+      expect(find.byTooltip('asli'), findsOneWidget);
     });
 
     testWidgets('medya tab: an empty archive shows the empty-state message', (

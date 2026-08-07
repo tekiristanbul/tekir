@@ -947,7 +947,11 @@ class _ProfileSegment extends StatelessWidget {
 /// One entry of the "medya" archive grid (binding design's `.med.sm` tile):
 /// square, rounded, tap opens the same uncropped full-screen view the cover
 /// photo uses. [CatMediaItem.isCover] marks the cat's current cover photo
-/// with the design's "ana" badge — never any other entry.
+/// with the design's "ana" badge — never any other entry. The uploader
+/// (issue #154's media-attribution parity gap) renders with the same
+/// [_TimelineAvatar] the update timeline already uses, so a media entry's
+/// attribution reads identically to a text update's — never a second
+/// visual language just because the entry happens to carry a photo.
 class _MediaTile extends StatelessWidget {
   const _MediaTile({required this.item});
 
@@ -997,6 +1001,18 @@ class _MediaTile extends StatelessWidget {
                   ),
                 ),
               ),
+            Positioned(
+              right: 6,
+              bottom: 6,
+              child: Tooltip(
+                message: item.uploaderDisplayName ?? '',
+                child: Transform.scale(
+                  scale: 0.7,
+                  alignment: Alignment.bottomRight,
+                  child: _TimelineAvatar(name: item.uploaderDisplayName),
+                ),
+              ),
+            ),
           ],
         ),
       ),
