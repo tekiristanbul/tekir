@@ -46,3 +46,7 @@ app.*.map.json
 
 # local secrets (google maps api key) — see scripts/run_web.sh
 .env.local
+
+# firebase platform config — not committed (DEVELOPMENT.md "ios development")
+ios/Runner/GoogleService-Info.plist
+android/app/google-services.json
