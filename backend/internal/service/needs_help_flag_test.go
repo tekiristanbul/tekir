@@ -30,7 +30,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithNeedsHelp(t *testing.T) {
 	}, WithClock(func() time.Time { return fixedNow }))
 
 	note := "kabı bomboştu ve halsizdi"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), userID.String(), "", nil, []string{"water_provided"}, true, &note)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), userID.String(), "", nil, []string{"water_provided"}, true, &note, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -76,7 +76,7 @@ func TestCatsService_CreateOrdinaryUpdate_HelpOnlyNoStatuses(t *testing.T) {
 		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
 	}, WithClock(time.Now))
 
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, nil, true, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, nil, true, nil, nil)
 	if err != nil {
 		t.Fatalf("expected a help-only update (no statuses, no note) to be valid, got %v", err)
 	}
@@ -90,7 +90,7 @@ func TestCatsService_CreateOrdinaryUpdate_HelpOnlyNoStatuses(t *testing.T) {
 
 func TestCatsService_CreateOrdinaryUpdate_EmptyWithoutHelpStaysInvalid(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
-	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, nil, false, nil); !errors.Is(err, ErrInvalidStatuses) {
+	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, nil, false, nil, nil); !errors.Is(err, ErrInvalidStatuses) {
 		t.Fatalf("expected ErrInvalidStatuses, got %v", err)
 	}
 }
@@ -100,7 +100,7 @@ func TestCatsService_NeedsHelpNoteCap(t *testing.T) {
 	over := strings.Repeat("ğ", needsHelpNoteMaxChars+1)
 	atCap := strings.Repeat("ğ", needsHelpNoteMaxChars)
 
-	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, nil, true, &over); !errors.Is(err, ErrNoteTooLong) {
+	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, nil, true, &over, nil); !errors.Is(err, ErrNoteTooLong) {
 		t.Fatalf("expected ErrNoteTooLong on the combined write, got %v", err)
 	}
 	if _, err := svc.CreateNeedsHelpUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", "trapped", &over); !errors.Is(err, ErrNoteTooLong) {
@@ -113,12 +113,12 @@ func TestCatsService_NeedsHelpNoteCap(t *testing.T) {
 		exists:    true,
 		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
 	}, WithClock(time.Now))
-	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, nil, true, &atCap); err != nil {
+	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, nil, true, &atCap, nil); err != nil {
 		t.Fatalf("expected a %d-rune note to be accepted, got %v", needsHelpNoteMaxChars, err)
 	}
 
 	// an ordinary (no-help) comment is deliberately not capped by this rule.
-	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, []string{"seen"}, false, &over); err != nil {
+	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, []string{"seen"}, false, &over, nil); err != nil {
 		t.Fatalf("expected the cap to apply only to help notes, got %v", err)
 	}
 }

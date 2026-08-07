@@ -85,10 +85,17 @@ type fakeCatsLister struct {
 
 	userRow repository.User
 	userErr error
+
+	getMediaRow repository.Medium
+	getMediaErr error
 }
 
 func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error) {
 	return f.userRow, f.userErr
+}
+
+func (f fakeCatsLister) GetMediaByID(ctx context.Context, id pgtype.UUID) (repository.Medium, error) {
+	return f.getMediaRow, f.getMediaErr
 }
 
 func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {
@@ -774,7 +781,7 @@ func TestCatsService_CreateOrdinaryUpdate_Success(t *testing.T) {
 	}, WithClock(func() time.Time { return fixedNow }))
 
 	comment := "mama verildi, su tazelendi"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), userID.String(), deviceID.String(), nil, []string{"water_provided", "fed"}, false, &comment)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), catID.String(), userID.String(), deviceID.String(), nil, []string{"water_provided", "fed"}, false, &comment, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -830,7 +837,7 @@ func TestCatsService_CreateOrdinaryUpdate_NoComment(t *testing.T) {
 	var captured repository.CreateOrdinaryUpdateParams
 	svc := NewCatsService(fakeCatsLister{exists: true, captured: &captured})
 
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -847,7 +854,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithoutDeviceToken_StillSucceeds(t *te
 	svc := NewCatsService(fakeCatsLister{exists: true, captured: &captured})
 
 	userID := uuid.New()
-	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), userID.String(), "", nil, []string{"seen"}, false, nil); err != nil {
+	if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), userID.String(), "", nil, []string{"seen"}, false, nil, nil); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if captured.AuthorDeviceID.Valid {
@@ -860,7 +867,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithoutDeviceToken_StillSucceeds(t *te
 
 func TestCatsService_CreateOrdinaryUpdate_InvalidUserID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), "not-a-uuid", "", nil, []string{"seen"}, false, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), "not-a-uuid", "", nil, []string{"seen"}, false, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid user id, got nil")
 	}
@@ -868,7 +875,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidUserID(t *testing.T) {
 
 func TestCatsService_CreateOrdinaryUpdate_InvalidDeviceID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true})
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "not-a-uuid", nil, []string{"seen"}, false, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "not-a-uuid", nil, []string{"seen"}, false, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid device id, got nil")
 	}
@@ -890,7 +897,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidStatuses(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, c.statuses, false, nil); !errors.Is(err, ErrInvalidStatuses) {
+			if _, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, c.statuses, false, nil, nil); !errors.Is(err, ErrInvalidStatuses) {
 				t.Fatalf("expected ErrInvalidStatuses, got %v", err)
 			}
 		})
@@ -900,7 +907,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidStatuses(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_InvalidCatID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), "not-a-uuid", uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), "not-a-uuid", uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil, nil)
 	if !errors.Is(err, ErrInvalidCatID) {
 		t.Fatalf("expected ErrInvalidCatID, got %v", err)
 	}
@@ -909,7 +916,7 @@ func TestCatsService_CreateOrdinaryUpdate_InvalidCatID(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_UnknownCat(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: false})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil, nil)
 	if !errors.Is(err, ErrCatNotFound) {
 		t.Fatalf("expected ErrCatNotFound, got %v", err)
 	}
@@ -918,9 +925,65 @@ func TestCatsService_CreateOrdinaryUpdate_UnknownCat(t *testing.T) {
 func TestCatsService_CreateOrdinaryUpdate_RepositoryFailure(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: true, createErr: errors.New("connection refused")})
 
-	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil)
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), nil, []string{"seen"}, false, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_WithOwnMediaAttachesPhoto(t *testing.T) {
+	authorID := uuid.New()
+	mediaID := uuid.New()
+	returnedID := uuid.New()
+	var captured repository.CreateOrdinaryUpdateParams
+	svc := NewCatsService(fakeCatsLister{
+		exists:    true,
+		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		captured:  &captured,
+		getMediaRow: repository.Medium{
+			ID:               pgtype.UUID{Bytes: mediaID, Valid: true},
+			Url:              "https://media.example/cat.jpg",
+			UploadedByUserID: pgtype.UUID{Bytes: authorID, Valid: true},
+		},
+	})
+
+	mediaIDStr := mediaID.String()
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), authorID.String(), "", nil, []string{"seen"}, false, nil, &mediaIDStr)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if update.PhotoURL == nil || *update.PhotoURL != "https://media.example/cat.jpg" {
+		t.Errorf("expected the response to carry the attached photo's url, got %v", update.PhotoURL)
+	}
+	if uuid.UUID(captured.MediaID.Bytes).String() != mediaID.String() || !captured.MediaID.Valid {
+		t.Errorf("expected the repository write to carry the media id, got %v", captured.MediaID)
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_MediaNotFoundRejected(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{exists: true, getMediaErr: pgx.ErrNoRows})
+
+	mediaIDStr := uuid.New().String()
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, []string{"seen"}, false, nil, &mediaIDStr)
+	if !errors.Is(err, ErrMediaNotFound) {
+		t.Fatalf("expected ErrMediaNotFound, got %v", err)
+	}
+}
+
+func TestCatsService_CreateOrdinaryUpdate_MediaOwnedBySomeoneElseRejected(t *testing.T) {
+	mediaID := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		exists: true,
+		getMediaRow: repository.Medium{
+			ID:               pgtype.UUID{Bytes: mediaID, Valid: true},
+			UploadedByUserID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		},
+	})
+
+	mediaIDStr := mediaID.String()
+	_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, []string{"seen"}, false, nil, &mediaIDStr)
+	if !errors.Is(err, ErrMediaNotFound) {
+		t.Fatalf("expected ErrMediaNotFound for media owned by another user, got %v", err)
 	}
 }
 
@@ -941,7 +1004,7 @@ func TestCatsService_CreateOrdinaryUpdate_IdempotentRetryReturnsExistingWithoutW
 	})
 
 	key := "seen-tap-key"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, false, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, false, nil, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -970,7 +1033,7 @@ func TestCatsService_CreateOrdinaryUpdate_NoExistingKeyProceedsToCreate(t *testi
 	})
 
 	key := "first-attempt-key"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, false, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, false, nil, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -1020,7 +1083,7 @@ func TestCatsService_CreateOrdinaryUpdate_RaceOnIdempotencyKeyRecoversExisting(t
 	svc := NewCatsService(lister)
 
 	key := "race-seen-key"
-	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, false, nil)
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", &key, []string{"seen"}, false, nil, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
