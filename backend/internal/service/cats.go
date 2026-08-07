@@ -416,6 +416,13 @@ type CatDetail struct {
 	LastFedAt    *time.Time
 	LastWaterAt  *time.Time
 	ActiveAlert  *ActiveAlert
+	// MediaCount (issue #121's cover photo-counter parity gap) is the size
+	// of the cat's cat_media archive — the design's cover pill and "medya"
+	// tab count. Every cat created through POST /v1/cats has at least one
+	// (its cover, inserted by CreateCatWithMedia); a pre-#70 seed cat with
+	// only photo_url set has zero, matching that it has no media row to
+	// archive.
+	MediaCount int
 }
 
 // CatUpdate is one entry in a cat's newest-first history: either an
@@ -438,6 +445,13 @@ type CatUpdate struct {
 	// (pre-#65) row or an account that never set one; the handler falls
 	// back to a generic avatar rather than inventing a name or initial.
 	AuthorDisplayName *string
+
+	// PhotoURL (issue #121's timeline-thumbnail parity gap) is the url of
+	// the media this update carries, nil when it carries none — every row
+	// reads nil today, since no write path sets updates.media_id yet (see
+	// migration 00024's comment); the field exists so the client can render
+	// the design's inline thumbnail the moment a future write path does.
+	PhotoURL *string
 
 	// NeedsHelp (issue #101) is the flag itself — the field 0.2 clients
 	// read. The four fields below are populated exactly when it is true:
@@ -496,6 +510,8 @@ type CatsStore interface {
 	CreateCatWithMedia(ctx context.Context, arg repository.CreateCatWithMediaParams) (repository.CreateCatWithMediaRow, error)
 	ListCatsByDistance(ctx context.Context, arg repository.ListCatsByDistanceParams) ([]repository.ListCatsByDistanceRow, error)
 	ListActiveNeedsHelpCatsByDistance(ctx context.Context, arg repository.ListActiveNeedsHelpCatsByDistanceParams) ([]repository.ListActiveNeedsHelpCatsByDistanceRow, error)
+	CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error)
+	ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatMediaRow, error)
 }
 
 type CatsService struct {
@@ -816,6 +832,11 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		return CatDetail{}, err
 	}
 
+	mediaCount, err := s.db.CountCatMedia(ctx, catID)
+	if err != nil {
+		return CatDetail{}, err
+	}
+
 	return CatDetail{
 		ID:           uuid.UUID(row.ID.Bytes).String(),
 		Name:         row.Name.String,
@@ -829,7 +850,52 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		LastFedAt:    timestamptzPtr(row.LastFedAt),
 		LastWaterAt:  timestamptzPtr(row.LastWaterAt),
 		ActiveAlert:  deriveActiveAlert(s.clock, row.NeedsHelpCategory, row.NeedsHelpComment, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),
+		MediaCount:   int(mediaCount),
 	}, nil
+}
+
+// CatMediaItem is one entry of the cat-profile "medya" archive tab (issue
+// #121's media-archive parity gap): a photo linked to the cat via
+// cat_media, newest-first. IsCover mirrors cats.primary_photo_id, letting
+// the client render the design's "ana" badge without a second lookup.
+type CatMediaItem struct {
+	ID        string
+	URL       string
+	IsCover   bool
+	CreatedAt time.Time
+}
+
+// ListCatMedia returns id's photo archive, newest-first, or ErrCatNotFound
+// if no cat exists with that id.
+func (s *CatsService) ListCatMedia(ctx context.Context, id string) ([]CatMediaItem, error) {
+	catID, err := parseCatID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	exists, err := s.db.CatExists(ctx, catID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrCatNotFound
+	}
+
+	rows, err := s.db.ListCatMedia(ctx, catID)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]CatMediaItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, CatMediaItem{
+			ID:        uuid.UUID(r.ID.Bytes).String(),
+			URL:       r.Url,
+			IsCover:   r.IsCover,
+			CreatedAt: r.CreatedAt.Time,
+		})
+	}
+	return items, nil
 }
 
 // ListCatUpdates returns one newest-first page of id's update history.
@@ -919,6 +985,7 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 			CreatedAt:         r.CreatedAt.Time,
 			NeedsHelp:         r.NeedsHelp,
 			AuthorDisplayName: textPtr(r.AuthorDisplayName),
+			PhotoURL:          textPtr(r.PhotoUrl),
 		}
 		if r.NeedsHelp {
 			category := needsHelpCompatCategory

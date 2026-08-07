@@ -117,6 +117,10 @@ type catDetailResponse struct {
 	LastFedAt   *time.Time           `json:"last_fed_at"`
 	LastWaterAt *time.Time           `json:"last_water_at"`
 	ActiveAlert *activeAlertResponse `json:"active_alert"`
+	// MediaCount (issue #121's cover photo-counter parity gap) is the size
+	// of the cat's photo archive (GET /v1/cats/{cat_id}/media) — the
+	// design's cover pill count and the "medya N" tab label.
+	MediaCount int `json:"media_count"`
 }
 
 // updateResponse is one entry of a cat's newest-first history. NeedsHelp
@@ -145,6 +149,10 @@ type updateResponse struct {
 	// author never set one — the client falls back to a generic avatar,
 	// never inventing a name or initial.
 	AuthorDisplayName *string `json:"author_display_name"`
+	// PhotoURL (issue #121's timeline-thumbnail parity gap) is the url of
+	// the media this update carries, null when it carries none — always
+	// null today, since no write path sets media on an update yet.
+	PhotoURL *string `json:"photo_url"`
 	// AuthorIsMe/CorrectionExpiresAt (issue #80): on GET
 	// /v1/cats/{cat_id}/updates (OptionalBearer), both stay their zero
 	// value (false/null) for a guest read. This same struct also backs
@@ -423,7 +431,35 @@ func (h *CatsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		LastFedAt:    detail.LastFedAt,
 		LastWaterAt:  detail.LastWaterAt,
 		ActiveAlert:  toActiveAlertResponse(detail.ActiveAlert),
+		MediaCount:   detail.MediaCount,
 	})
+}
+
+// catMediaResponse is one entry of GET /v1/cats/{cat_id}/media's newest-first
+// photo archive (issue #121's media-archive/media-tab parity gap). IsCover
+// mirrors the cat's primary_photo — the client renders the design's "ana"
+// badge on exactly that entry.
+type catMediaResponse struct {
+	ID        string    `json:"id"`
+	URL       string    `json:"url"`
+	IsCover   bool      `json:"is_cover"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Media answers GET /v1/cats/{cat_id}/media with the cat's photo archive,
+// newest-first — the "medya" tab's data source.
+func (h *CatsHandler) Media(w http.ResponseWriter, r *http.Request) {
+	items, err := h.cats.ListCatMedia(r.Context(), chi.URLParam(r, "cat_id"))
+	if err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+
+	resp := make([]catMediaResponse, 0, len(items))
+	for _, m := range items {
+		resp = append(resp, catMediaResponse{ID: m.ID, URL: m.URL, IsCover: m.IsCover, CreatedAt: m.CreatedAt})
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // UpdateHistory answers GET /v1/cats/{cat_id}/updates?cursor=&limit= with one
@@ -474,6 +510,7 @@ func toUpdateResponse(u service.CatUpdate) updateResponse {
 		NeedsHelpExpiresAt:     u.NeedsHelpExpiresAt,
 		NeedsHelpActive:        u.NeedsHelpActive,
 		AuthorDisplayName:      u.AuthorDisplayName,
+		PhotoURL:               u.PhotoURL,
 		AuthorIsMe:             u.AuthorIsMe,
 		CorrectionExpiresAt:    u.CorrectionExpiresAt,
 	}

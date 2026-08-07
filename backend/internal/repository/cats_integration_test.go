@@ -164,6 +164,52 @@ func TestStore_CreateCatWithMedia_Success(t *testing.T) {
 	}
 }
 
+// TestStore_CreateCatWithMedia_ArchivesCoverPhoto covers issue #121: the
+// cover photo CreateCatWithMedia inserts must also land in cat_media, so
+// CountCatMedia/ListCatMedia see it as the cat's first archive entry
+// without any separate write.
+func TestStore_CreateCatWithMedia_ArchivesCoverPhoto(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set, skipping integration test")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+	store := repository.NewStore(pool)
+
+	userID := createTestUser(t, ctx, store)
+	result, err := store.CreateCatWithMedia(ctx, newCreateCatWithMediaParams(userID, 41.03, 28.98, pgtype.Text{}))
+	if err != nil {
+		t.Fatalf("CreateCatWithMedia: %v", err)
+	}
+
+	count, err := store.CountCatMedia(ctx, result.Cat.ID)
+	if err != nil {
+		t.Fatalf("CountCatMedia: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected media_count 1, got %d", count)
+	}
+
+	rows, err := store.ListCatMedia(ctx, result.Cat.ID)
+	if err != nil {
+		t.Fatalf("ListCatMedia: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 archive row, got %d", len(rows))
+	}
+	if rows[0].MediaID != result.Media.ID {
+		t.Errorf("expected archive entry to reference media %v, got %v", result.Media.ID, rows[0].MediaID)
+	}
+	if !rows[0].IsCover {
+		t.Error("expected the cover photo's archive entry to be flagged is_cover")
+	}
+}
+
 func TestStore_CreateCatWithMedia_IdempotencyUniqueIndex(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {

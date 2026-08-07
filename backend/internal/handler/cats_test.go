@@ -98,6 +98,20 @@ type fakeCatsLister struct {
 
 	needsHelpDistanceRows []repository.ListActiveNeedsHelpCatsByDistanceRow
 	needsHelpDistanceErr  error
+
+	mediaCount    int64
+	mediaCountErr error
+
+	mediaRows []repository.ListCatMediaRow
+	mediaErr  error
+}
+
+func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {
+	return f.mediaCount, f.mediaCountErr
+}
+
+func (f fakeCatsLister) ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatMediaRow, error) {
+	return f.mediaRows, f.mediaErr
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
@@ -218,6 +232,7 @@ func routerFor(h *CatsHandler) http.Handler {
 func routerForWithResolver(h *CatsHandler, resolver DeviceTokenResolver, validator AccessTokenValidator) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/v1/cats/{cat_id}", h.Detail)
+	r.Get("/v1/cats/{cat_id}/media", h.Media)
 	r.With(OptionalBearer(validator)).Get("/v1/cats/{cat_id}/updates", h.UpdateHistory)
 	r.With(RequireBearer(validator), OptionalDeviceToken(resolver)).Post("/v1/cats/{cat_id}/updates", h.CreateUpdate)
 	r.With(RequireBearer(validator), OptionalDeviceToken(resolver)).Post("/v1/cats/{cat_id}/needs-help", h.CreateNeedsHelp)
@@ -435,6 +450,77 @@ func TestCatsHandler_Detail_ThreeStatTimestamps(t *testing.T) {
 	}
 }
 
+// TestCatsHandler_Detail_MediaCount covers issue #121's cover
+// photo-counter parity gap on the wire.
+func TestCatsHandler_Detail_MediaCount(t *testing.T) {
+	id := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow:     repository.GetCatByIDRow{ID: pgtype.UUID{Bytes: id, Valid: true}, Name: pgtype.Text{String: "tekir", Valid: true}},
+		mediaCount: 2,
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String(), nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	var body catDetailResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.MediaCount != 2 {
+		t.Errorf("expected media_count 2, got %d", body.MediaCount)
+	}
+}
+
+func TestCatsHandler_Media(t *testing.T) {
+	id := uuid.New()
+	coverID := uuid.New()
+	created := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists: true,
+		mediaRows: []repository.ListCatMediaRow{
+			{ID: pgtype.UUID{Bytes: coverID, Valid: true}, Url: "https://placecats.com/millie/300/200", CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, IsCover: true},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String()+"/media", nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body []catMediaResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(body))
+	}
+	if body[0].ID != coverID.String() {
+		t.Errorf("unexpected id: %q", body[0].ID)
+	}
+	if body[0].URL != "https://placecats.com/millie/300/200" {
+		t.Errorf("unexpected url: %q", body[0].URL)
+	}
+	if !body[0].IsCover {
+		t.Error("expected is_cover true")
+	}
+}
+
+func TestCatsHandler_Media_NotFound(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{exists: false}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String()+"/media", nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCatsHandler_Detail_NotFound(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{catErr: pgx.ErrNoRows}), testMaxUploadBytes)
 
@@ -554,6 +640,39 @@ func TestCatsHandler_UpdateHistory_AuthorDisplayName(t *testing.T) {
 	}
 	if body.Items[1].AuthorDisplayName != nil {
 		t.Errorf("expected null author_display_name for authorless entry, got %v", *body.Items[1].AuthorDisplayName)
+	}
+}
+
+// TestCatsHandler_UpdateHistory_PhotoURL covers issue #121's
+// timeline-thumbnail parity gap on the wire.
+func TestCatsHandler_UpdateHistory_PhotoURL(t *testing.T) {
+	created := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists: true,
+		updateRows: []repository.ListCatUpdatesRow{
+			{
+				ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: created, Valid: true},
+				Seq:       pgtype.Int8{Int64: 1, Valid: true},
+				Statuses:  []string{"seen"},
+				PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+			},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String()+"/updates", nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	var body updateHistoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(body.Items))
+	}
+	if body.Items[0].PhotoURL == nil || *body.Items[0].PhotoURL != "https://placecats.com/millie/300/200" {
+		t.Errorf("expected photo_url set, got %v", body.Items[0].PhotoURL)
 	}
 }
 

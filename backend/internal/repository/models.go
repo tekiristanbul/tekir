@@ -23,6 +23,13 @@ type Cat struct {
 	IdempotencyKey    pgtype.Text        `json:"idempotency_key"`
 }
 
+type CatMedium struct {
+	ID        pgtype.UUID        `json:"id"`
+	CatID     pgtype.UUID        `json:"cat_id"`
+	MediaID   pgtype.UUID        `json:"media_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type CatTrait struct {
 	CatID    pgtype.UUID `json:"cat_id"`
 	TraitKey string      `json:"trait_key"`
@@ -125,6 +132,7 @@ type Update struct {
 	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
 	IdempotencyKey     pgtype.Text        `json:"idempotency_key"`
 	NeedsHelp          bool               `json:"needs_help"`
+	MediaID            pgtype.UUID        `json:"media_id"`
 }
 
 type UpdateStatus struct {

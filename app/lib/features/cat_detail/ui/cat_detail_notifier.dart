@@ -148,6 +148,7 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
         createdAt: detail.createdAt,
         lastUpdateAt: entry.createdAt,
         activeAlert: activeAlert,
+        mediaCount: detail.mediaCount,
       ),
     );
   }
@@ -204,6 +205,7 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
           createdAt: detail.createdAt,
           lastUpdateAt: detail.lastUpdateAt,
           activeAlert: null,
+          mediaCount: detail.mediaCount,
         ),
       );
     }
@@ -214,3 +216,15 @@ final catDetailProvider =
     NotifierProvider.family<CatDetailNotifier, CatDetailState, String>(
       CatDetailNotifier.new,
     );
+
+/// Backs the cat-profile "medya" tab (issue #121's media-archive parity
+/// gap): one lazily-fetched, cached-per-cat list — the archive has no
+/// pagination or optimistic-mutation contract of its own, so a plain
+/// [FutureProvider] is enough, unlike [catDetailProvider]'s hand-rolled
+/// notifier for the timeline.
+final catMediaProvider = FutureProvider.family<List<CatMediaItem>, String>((
+  ref,
+  catId,
+) {
+  return ref.watch(catDetailApiProvider).fetchMedia(catId);
+});

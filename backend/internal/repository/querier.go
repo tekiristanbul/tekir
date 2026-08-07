@@ -104,6 +104,9 @@ type Querier interface {
 	// flag-less husk affects zero rows and the service reports it as invalid
 	// content — the author deletes the update instead.
 	CorrectOrdinaryUpdate(ctx context.Context, arg CorrectOrdinaryUpdateParams) (CorrectOrdinaryUpdateRow, error)
+	// backs the cover photo's count pill (docs/design/screens/cat-profile.html)
+	// without fetching the full archive.
+	CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error)
 	// issue #70: created_by_user_id is required (resolved from the
 	// authenticated bearer session, never client-supplied); created_by_device_id
 	// is optional (X-Device-Token, installation/abuse-control association only).
@@ -123,6 +126,14 @@ type Querier interface {
 	// than `returning *`, so CatsService never has to special-case this row's
 	// shape against every other cat-reading query.
 	CreateCat(ctx context.Context, arg CreateCatParams) (CreateCatRow, error)
+	// issue #121: links a media row into a cat's photo archive. On conflict do
+	// nothing on the (cat_id, media_id) unique index so a retried insert of the
+	// same photo (e.g. CreateCatWithMedia's own transaction, called again after
+	// an idempotent-retry resolves to the same cat and media) never creates a
+	// second archive entry — the caller falls back to GetCatMediaByCatAndMedia
+	// when no row comes back, mirroring CreateMedia/CreateCat's own idempotent
+	// pattern.
+	CreateCatMedia(ctx context.Context, arg CreateCatMediaParams) (CatMedium, error)
 	// no endpoint sets this yet — trait selection is out of scope for issue #21
 	// and belongs to the future add/edit-cat flow. used by seed data only.
 	CreateCatTrait(ctx context.Context, arg CreateCatTraitParams) error
@@ -231,9 +242,16 @@ type Querier interface {
 	// display_name without hand-rolling composite-type aggregation in sql. the
 	// lateral join is the same latest-needs-help-update lookup as
 	// ListCatsInBounds, unfiltered by expiry for the same reason. photo_url
-	// coalesce mirrors ListCatsInBounds — see its comment.
+	// coalesce mirrors ListCatsInBounds — see its comment. last_seen_at/
+	// last_fed_at/last_water_at (issue #121's three-stat header parity gap)
+	// are each the created_at of the cat's most recent update carrying that
+	// structured status — one lateral per status, same shape as the nh lateral
+	// above, rather than a single group-by (each status's own latest update
+	// may not be the same row). soft-deleted updates are excluded, matching
+	// every other read path.
 	GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error)
 	GetCatByIdempotencyKey(ctx context.Context, arg GetCatByIdempotencyKeyParams) (GetCatByIdempotencyKeyRow, error)
+	GetCatMediaByCatAndMedia(ctx context.Context, arg GetCatMediaByCatAndMediaParams) (CatMedium, error)
 	// batch display lookup (name + resolved primary photo) for exactly the cat
 	// ids the profile's recent-contributions list is about to render — never
 	// the caller's full contribution history, which can be much larger. Mirrors
@@ -306,6 +324,10 @@ type Querier interface {
 	// showing it. a trait with no group (group_key null) sorts after every
 	// grouped trait rather than interleaving arbitrarily.
 	ListActiveTraits(ctx context.Context) ([]ListActiveTraitsRow, error)
+	// backs the "medya" archive tab: newest-first, each row carrying the media
+	// it points to plus whether it's the cat's current cover (cats.primary_photo_id)
+	// so the client can render the design's "ana" badge without a second lookup.
+	ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]ListCatMediaRow, error)
 	// joins the vocabulary (and its group) so cat detail can render a display
 	// label without a separate vocabulary fetch. intentionally not filtered by
 	// traits.active: retiring a trait must not erase a cat's existing,
@@ -323,6 +345,16 @@ type Querier interface {
 	// reader's view, author included — the service layer, not this query,
 	// decides whether the caller is the author for the purpose of surfacing a
 	// correction affordance (author_user_id is returned for exactly that).
+	// author_display_name (issue #121's timeline-avatar parity gap) is the
+	// author's users.display_name at read time — nullable both because
+	// author_user_id itself can be null (a pre-#65 or seed row) and because a
+	// linked account may never have set one (00015); the service falls back to
+	// a generic avatar when absent, never invents a name. photo_url (issue
+	// #121's timeline-thumbnail parity gap) resolves u.media_id to its media
+	// row's url, left-joined since no write path sets media_id yet (see
+	// migration 00024) — every row reads null today, and the client omits the
+	// thumbnail exactly like it already omits the correction menu for a
+	// comment-less row.
 	ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) ([]ListCatUpdatesRow, error)
 	// issue #82: powers GET /v1/cats/discover?filter=nearby — every active cat,
 	// nearest-first from the caller's own (lat, lng), keyset-paginated on

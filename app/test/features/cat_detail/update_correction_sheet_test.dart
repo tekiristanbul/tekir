@@ -98,6 +98,10 @@ class _FakeCatDetailApi implements CatDetailApi {
     deleteCalls++;
     if (deleteError != null) throw deleteError!;
   }
+
+  @override
+  Future<List<CatMediaItem>> fetchMedia(String catId) =>
+      throw UnimplementedError();
 }
 
 /// Mutable holder for the sheet's pop result — `showModalBottomSheet`'s
