@@ -280,6 +280,19 @@ cd app
 
 restrict the development key to the maps javascript api and the local origin used by the script. use a separate restricted production key with independent quota and billing controls.
 
+### google maps sdk (ios)
+
+`google_maps_flutter` is in `app/pubspec.yaml`, and CocoaPods pulls the native `GoogleMaps` sdk automatically. the sdk requires `GMSServices.provideAPIKey(...)` to run before any map view is created, or it terminates the process. `app/ios/Runner/AppDelegate.swift` calls this on startup, reading the key from the `GMSApiKey` entry in `Info.plist`, which is filled in at build time from an xcconfig variable. if the key is missing or still the placeholder, the app fails fast with a `fatalError` that names the fix instead of crashing with the native `GMSServicesException`.
+
+supply a real key locally, once, before your first run:
+
+```text
+cd app/ios/Flutter
+cp GoogleMaps.xcconfig.example GoogleMaps.xcconfig
+```
+
+edit `GoogleMaps.xcconfig` and set `GOOGLE_MAPS_API_KEY` to a development-only ios key. the file is gitignored — never commit a real key. restrict it to the ios sdk and the app's bundle id; use a separate restricted production key with independent quota and billing controls.
+
 ### api base url
 
 the flutter client uses `http://localhost:8080` by default. override it when the api is exposed elsewhere:
