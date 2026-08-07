@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../../core/analytics/analytics.dart';
 import '../../../core/states/inline_spinner.dart';
@@ -1539,7 +1540,10 @@ class _TimelineItem extends StatelessWidget {
                   ],
                   if (update.photoUrl != null) ...[
                     const SizedBox(height: 11),
-                    _TimelineThumbnail(url: update.photoUrl!),
+                    _TimelineThumbnail(
+                      url: update.photoUrl!,
+                      isVideo: update.isVideoMedia,
+                    ),
                   ],
                 ],
               ),
@@ -1554,12 +1558,17 @@ class _TimelineItem extends StatelessWidget {
 /// A timeline entry's inline media thumbnail (binding design's `.med`):
 /// only rendered when [CatUpdateEntry.photoUrl] is set — issue #121 added
 /// the read plumbing, issue #153 the write path (the update composer's
-/// optional photo attachment). Tap opens the same uncropped full-screen
-/// view the cover photo and media grid use.
+/// optional photo attachment, later extended to video). [isVideo] mirrors
+/// [CatUpdateEntry.isVideoMedia] and picks the thumbnail/full-screen widget
+/// pair: a photo opens the same uncropped full-screen view the cover photo
+/// and media grid use, a video opens its own playing full-screen view — a
+/// video is never eligible to become the cat's cover, so that view carries
+/// no such action.
 class _TimelineThumbnail extends StatelessWidget {
-  const _TimelineThumbnail({required this.url});
+  const _TimelineThumbnail({required this.url, required this.isVideo});
 
   final String url;
+  final bool isVideo;
 
   @override
   Widget build(BuildContext context) {
@@ -1567,7 +1576,9 @@ class _TimelineThumbnail extends StatelessWidget {
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute<void>(
           fullscreenDialog: true,
-          builder: (_) => _FullScreenPhoto(photo: url),
+          builder: (_) => isVideo
+              ? _FullScreenVideo(url: url)
+              : _FullScreenPhoto(photo: url),
         ),
       ),
       child: ClipRRect(
@@ -1575,13 +1586,178 @@ class _TimelineThumbnail extends StatelessWidget {
         child: SizedBox(
           width: 98,
           height: 98,
-          child: CachedNetworkImage(
-            imageUrl: url,
-            fit: BoxFit.cover,
-            placeholder: (context, _) => const _HeroPlaceholder(loading: true),
-            errorWidget: (context, _, _) => const _HeroPlaceholder(),
-          ),
+          child: isVideo
+              ? _VideoThumbnail(url: url)
+              : CachedNetworkImage(
+                  imageUrl: url,
+                  fit: BoxFit.cover,
+                  placeholder: (context, _) =>
+                      const _HeroPlaceholder(loading: true),
+                  errorWidget: (context, _, _) => const _HeroPlaceholder(),
+                ),
         ),
+      ),
+    );
+  }
+}
+
+/// A video timeline entry's static thumbnail — the first decoded frame of
+/// the uploaded video (via [VideoPlayerController], paused), with a
+/// play-glyph overlay so it reads apart from a plain photo. Never decoded
+/// from local bytes before upload (see [_MediaPicker]'s own doc for why);
+/// this only ever renders an already-uploaded, network-hosted video.
+class _VideoThumbnail extends StatefulWidget {
+  const _VideoThumbnail({required this.url});
+
+  final String url;
+
+  @override
+  State<_VideoThumbnail> createState() => _VideoThumbnailState();
+}
+
+class _VideoThumbnailState extends State<_VideoThumbnail> {
+  late final VideoPlayerController _controller;
+  late final Future<void> _initialize;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _initialize = _controller.initialize();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppColors.bgElevated,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          FutureBuilder<void>(
+            future: _initialize,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const _HeroPlaceholder(loading: true);
+              }
+              return FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: _controller.value.size.width,
+                  height: _controller.value.size.height,
+                  child: VideoPlayer(_controller),
+                ),
+              );
+            },
+          ),
+          const Center(
+            child: Icon(Icons.play_circle_fill, size: 32, color: Colors.white),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The full-screen view for a video timeline entry (issue #153's video
+/// support) — mirrors [_FullScreenPhoto]'s dark surface and single close
+/// action, autoplaying looped with a tap-to-pause/resume affordance
+/// instead of a static `contain`ed image. Never carries a "make cover"
+/// action: a video is never eligible to become the cat's cover.
+class _FullScreenVideo extends StatefulWidget {
+  const _FullScreenVideo({required this.url});
+
+  final String url;
+
+  @override
+  State<_FullScreenVideo> createState() => _FullScreenVideoState();
+}
+
+class _FullScreenVideoState extends State<_FullScreenVideo> {
+  late final VideoPlayerController _controller;
+  late final Future<void> _initialize;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _initialize = _controller.initialize().then((_) {
+      _controller.setLooping(true);
+      _controller.play();
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _togglePlay() {
+    if (!_controller.value.isInitialized) return;
+    setState(() {
+      if (_controller.value.isPlaying) {
+        _controller.pause();
+      } else {
+        _controller.play();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF141010),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: FutureBuilder<void>(
+              future: _initialize,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const InlineSpinner(
+                    size: 28,
+                    color: AppColors.primarySoft,
+                    trackColor: Color(0x33FFFFFF),
+                  );
+                }
+                return GestureDetector(
+                  onTap: _togglePlay,
+                  child: AspectRatio(
+                    aspectRatio: _controller.value.aspectRatio,
+                    child: VideoPlayer(_controller),
+                  ),
+                );
+              },
+            ),
+          ),
+          Positioned(
+            top: AppSpacing.s3,
+            left: AppSpacing.s4,
+            child: SafeArea(
+              child: Material(
+                color: Colors.white.withValues(alpha: 0.14),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: 'Kapat',
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  constraints: const BoxConstraints(
+                    minWidth: kTapMin,
+                    minHeight: kTapMin,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
