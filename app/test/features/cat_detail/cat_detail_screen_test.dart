@@ -119,8 +119,8 @@ class _FakeCatMediaApi implements CatDetailApi {
 
   @override
   Future<String> uploadMedia({
-    required Uint8List photoBytes,
-    required String photoFilename,
+    required Uint8List mediaBytes,
+    required String mediaFilename,
     required String idempotencyKey,
     void Function(int sent, int total)? onSendProgress,
   }) => throw UnimplementedError();
@@ -728,6 +728,33 @@ void main() {
         );
 
         expect(find.byType(CachedNetworkImage), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'timeline thumbnail: a video-carrying entry renders as a video, '
+      'never as a plain image (issue #153)',
+      (tester) async {
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: _detail,
+            updates: [
+              CatUpdateEntry(
+                id: 'u1',
+                statuses: const ['seen'],
+                comment: null,
+                createdAt: DateTime.utc(2026, 1, 2),
+                photoUrl: 'https://example.com/clip.mp4',
+                mediaContentType: 'video/mp4',
+              ),
+            ],
+            hasLoadedOnce: true,
+          ),
+        );
+
+        expect(find.byType(CachedNetworkImage), findsNothing);
+        expect(find.byIcon(Icons.play_circle_fill), findsOneWidget);
       },
     );
 
