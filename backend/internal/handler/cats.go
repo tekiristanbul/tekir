@@ -438,12 +438,15 @@ func (h *CatsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 // catMediaResponse is one entry of GET /v1/cats/{cat_id}/media's newest-first
 // photo archive (issue #121's media-archive/media-tab parity gap). IsCover
 // mirrors the cat's primary_photo — the client renders the design's "ana"
-// badge on exactly that entry.
+// badge on exactly that entry. UploaderDisplayName (issue #154's
+// media-attribution parity gap) mirrors updateResponse's own
+// author_display_name field.
 type catMediaResponse struct {
-	ID        string    `json:"id"`
-	URL       string    `json:"url"`
-	IsCover   bool      `json:"is_cover"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                  string    `json:"id"`
+	URL                 string    `json:"url"`
+	IsCover             bool      `json:"is_cover"`
+	CreatedAt           time.Time `json:"created_at"`
+	UploaderDisplayName *string   `json:"uploader_display_name"`
 }
 
 // Media answers GET /v1/cats/{cat_id}/media with the cat's photo archive,
@@ -457,7 +460,7 @@ func (h *CatsHandler) Media(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]catMediaResponse, 0, len(items))
 	for _, m := range items {
-		resp = append(resp, catMediaResponse{ID: m.ID, URL: m.URL, IsCover: m.IsCover, CreatedAt: m.CreatedAt})
+		resp = append(resp, catMediaResponse{ID: m.ID, URL: m.URL, IsCover: m.IsCover, CreatedAt: m.CreatedAt, UploaderDisplayName: m.UploaderDisplayName})
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
