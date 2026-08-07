@@ -406,9 +406,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           if (mapState.isLoading) const _LoadingBar(),
           if (mapState.error != null)
             Positioned(
-              top: 12,
-              left: 12,
-              right: 12,
+              top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+              left: AppSpacing.s3,
+              right: AppSpacing.s3,
               // on web, GoogleMap is a real platform view (an html
               // element), not flutter-rendered pixels — widgets stacked
               // above it need PointerInterceptor or their taps can fall
@@ -465,9 +465,9 @@ class _InitialReadOverlay extends StatelessWidget {
         if (phase == InitialReadPhase.hidden) return const SizedBox.shrink();
         if (phase == InitialReadPhase.timedOut) {
           return Positioned(
-            top: 12,
-            left: 12,
-            right: 12,
+            top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+            left: AppSpacing.s3,
+            right: AppSpacing.s3,
             child: PointerInterceptor(child: MapErrorBanner(onRetry: onRetry)),
           );
         }
@@ -531,9 +531,9 @@ class _TopBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Positioned(
-      top: 12,
-      left: 12,
-      right: 12,
+      top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+      left: AppSpacing.s3,
+      right: AppSpacing.s3,
       child: Material(
         color: AppColors.surface,
         elevation: 2,
