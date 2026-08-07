@@ -148,6 +148,7 @@ class CatUpdateEntry {
     this.correctionExpiresAt,
     this.authorDisplayName,
     this.photoUrl,
+    this.mediaContentType,
   });
 
   final String id;
@@ -166,8 +167,20 @@ class CatUpdateEntry {
 
   /// Url of the media this entry carries, null when it carries none
   /// (issue #121's timeline-thumbnail parity gap, wired up by issue #153's
-  /// optional update composer photo attachment).
+  /// optional update composer photo attachment). Despite the name, this is
+  /// set for both a photo and a video attachment — [mediaContentType] is
+  /// what tells them apart.
   final String? photoUrl;
+
+  /// The attached media's content type (e.g. `image/jpeg`, `video/mp4`),
+  /// null under the same conditions as [photoUrl] (issue #153's video
+  /// support). [isVideoMedia] is the derived check the ui reads instead of
+  /// comparing this prefix itself.
+  final String? mediaContentType;
+
+  /// Whether [photoUrl] — when set — points at a video rather than an
+  /// image, per the server's `media_content_type` (issue #153).
+  bool get isVideoMedia => mediaContentType?.startsWith('video/') ?? false;
 
   /// Server-derived (issue #80): true only when this entry was returned to
   /// its own author's authenticated read of `GET .../updates` — always
@@ -219,6 +232,7 @@ class CatUpdateEntry {
           : null,
       authorDisplayName: json['author_display_name'] as String?,
       photoUrl: json['photo_url'] as String?,
+      mediaContentType: json['media_content_type'] as String?,
     );
   }
 }
