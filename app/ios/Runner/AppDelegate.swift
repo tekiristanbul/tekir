@@ -18,7 +18,8 @@ import UIKit
   /// before that happens, and fail with a diagnostic that points at the fix
   /// instead of the native exception.
   private static func configureGoogleMaps() {
-    let key = Bundle.main.object(forInfoDictionaryKey: "GMSApiKey") as? String
+    let raw = Bundle.main.object(forInfoDictionaryKey: "GMSApiKey") as? String
+    let key = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let key, !key.isEmpty, !key.hasPrefix("$("), key != "YOUR_IOS_MAPS_KEY" else {
       fatalError(
         "Google Maps iOS API key is missing. Copy "
