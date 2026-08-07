@@ -35,4 +35,51 @@ void main() {
       );
     });
   });
+
+  group('Env.unrecognizedProviderWarningsFor', () {
+    test('returns nothing for known provider values', () {
+      expect(
+        Env.unrecognizedProviderWarningsFor(
+          analyticsProvider: 'firebase',
+          notificationProvider: 'fcm',
+        ),
+        isEmpty,
+      );
+      expect(
+        Env.unrecognizedProviderWarningsFor(
+          analyticsProvider: 'none',
+          notificationProvider: 'fake',
+        ),
+        isEmpty,
+      );
+    });
+
+    test('warns on an unrecognized ANALYTICS_PROVIDER value', () {
+      final warnings = Env.unrecognizedProviderWarningsFor(
+        analyticsProvider: 'firebse',
+        notificationProvider: 'fake',
+      );
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('ANALYTICS_PROVIDER="firebse"'));
+    });
+
+    test('warns on an unrecognized NOTIFICATION_PROVIDER value', () {
+      final warnings = Env.unrecognizedProviderWarningsFor(
+        analyticsProvider: 'none',
+        notificationProvider: 'fmc',
+      );
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('NOTIFICATION_PROVIDER="fmc"'));
+    });
+
+    test('warns on both when both are unrecognized', () {
+      expect(
+        Env.unrecognizedProviderWarningsFor(
+          analyticsProvider: 'nope',
+          notificationProvider: 'nope',
+        ),
+        hasLength(2),
+      );
+    });
+  });
 }

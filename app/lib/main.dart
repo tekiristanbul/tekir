@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/analytics/analytics.dart';
 import 'core/analytics/screen_view_logging.dart';
 import 'core/config/env.dart';
+import 'core/config/startup_validation.dart';
 import 'core/firebase/firebase_bootstrap.dart';
 import 'core/identity/device_identity.dart';
 import 'core/identity/session_identity.dart';
@@ -24,6 +25,11 @@ Future<void> main() async {
   // means a release build without it crashes at startup instead (issue
   // #128 review).
   Env.apiBaseUrl;
+
+  // Non-fatal config diagnostics (issue #131) — anything checked here
+  // degrades to a safe default elsewhere instead of failing startup, so
+  // this only logs; it never throws.
+  runStartupConfigDiagnostics();
 
   // Firebase only comes up when a firebase-backed provider is selected
   // (issue #84); under the local none/fake defaults this returns false

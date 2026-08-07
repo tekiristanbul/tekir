@@ -71,4 +71,48 @@ class Env {
     'FCM_VAPID_KEY',
     defaultValue: '',
   );
+
+  static const _knownAnalyticsProviders = {'none', 'firebase'};
+  static const _knownNotificationProviders = {'fake', 'fcm'};
+
+  /// Diagnostics for [analyticsProvider]/[notificationProvider] (issue
+  /// #131). Unlike [apiBaseUrl], an invalid value here must not fail
+  /// startup — analytics.dart and push_notifications.dart already treat
+  /// anything but an exact known value as the safe default, because
+  /// analytics/push may never block the product (issue #84). That silent
+  /// fallback would otherwise hide a typo'd `--dart-define` indefinitely,
+  /// so surface it here instead.
+  static List<String> unrecognizedProviderWarnings() =>
+      unrecognizedProviderWarningsFor(
+        analyticsProvider: analyticsProvider,
+        notificationProvider: notificationProvider,
+      );
+
+  /// Extracted from [unrecognizedProviderWarnings] so it's unit-testable —
+  /// [analyticsProvider]/[notificationProvider] are compile-time consts
+  /// `flutter test` can't override, same reasoning as
+  /// [resolveApiBaseUrl].
+  static List<String> unrecognizedProviderWarningsFor({
+    required String analyticsProvider,
+    required String notificationProvider,
+  }) {
+    final warnings = <String>[];
+    if (!_knownAnalyticsProviders.contains(analyticsProvider)) {
+      warnings.add(
+        'ANALYTICS_PROVIDER="$analyticsProvider" is not recognized '
+        '(expected one of: ${_knownAnalyticsProviders.join(', ')}). '
+        'Falling back to "none" — analytics is disabled. See '
+        'DEVELOPMENT.md > "firebase (push + analytics, issue #84)".',
+      );
+    }
+    if (!_knownNotificationProviders.contains(notificationProvider)) {
+      warnings.add(
+        'NOTIFICATION_PROVIDER="$notificationProvider" is not recognized '
+        '(expected one of: ${_knownNotificationProviders.join(', ')}). '
+        'Falling back to "fake" — push notifications are disabled. See '
+        'DEVELOPMENT.md > "firebase (push + analytics, issue #84)".',
+      );
+    }
+    return warnings;
+  }
 }

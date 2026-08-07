@@ -36,9 +36,15 @@ Future<bool> bootstrapFirebase() async {
     ).timeout(const Duration(seconds: 5));
     return true;
   } catch (error) {
-    if (kDebugMode) {
-      debugPrint('[firebase] init failed, analytics/push disabled: $error');
-    }
+    // Not gated on kDebugMode (issue #131) — a release build silently
+    // running without analytics/push is exactly the "partially functional
+    // state" this diagnostic exists to catch. debugPrint still reaches
+    // release logs (adb logcat / Console.app), unlike a bare print guarded
+    // by kDebugMode.
+    debugPrint(
+      '[firebase] init failed, analytics/push disabled: $error. See '
+      'DEVELOPMENT.md > "firebase (push + analytics, issue #84)".',
+    );
     return false;
   }
 }
