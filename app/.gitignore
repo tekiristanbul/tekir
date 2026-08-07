@@ -46,3 +46,6 @@ app.*.map.json
 
 # local secrets (google maps api key) — see scripts/run_web.sh
 .env.local
+
+# google maps ios sdk key — not committed (DEVELOPMENT.md "google maps sdk (ios)")
+ios/Flutter/GoogleMaps.xcconfig

@@ -24,6 +24,10 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<!-- sourced from Flutter/GoogleMaps.xcconfig (gitignored) — see
+	     DEVELOPMENT.md > "google maps sdk (ios)" -->
+	<key>GMSApiKey</key>
+	<string>$(GOOGLE_MAPS_API_KEY)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<!-- permission copy mirrors the approved prototype wording
