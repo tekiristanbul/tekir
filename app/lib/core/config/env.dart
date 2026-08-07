@@ -1,12 +1,34 @@
+import 'package:flutter/foundation.dart' show kReleaseMode;
+
 /// Build-time environment configuration.
 ///
 /// Override with `--dart-define=API_BASE_URL=https://...` at build/run time
 /// (scripts/run_web.sh forwards the values found in app/.env.local).
 class Env {
-  static const apiBaseUrl = String.fromEnvironment(
+  static const _rawApiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
     defaultValue: 'http://localhost:8080',
   );
+
+  /// The `localhost` default only ever applies to debug/profile runs, where
+  /// it points at a backend reachable from the same machine (issue #128). A
+  /// release build that reaches this default was never given a real
+  /// `API_BASE_URL`; it would otherwise launch normally, render the map, and
+  /// silently fail to load any backend-backed content. Fail fast instead,
+  /// with a diagnostic that names the fix.
+  static final apiBaseUrl = _resolveApiBaseUrl();
+
+  static String _resolveApiBaseUrl() {
+    if (kReleaseMode && _rawApiBaseUrl == 'http://localhost:8080') {
+      throw StateError(
+        'API_BASE_URL was not provided. Release builds must set it '
+        'explicitly, e.g. '
+        '--dart-define=API_BASE_URL=https://app.tekir.istanbul/api. '
+        'See DEVELOPMENT.md > "api base url".',
+      );
+    }
+    return _rawApiBaseUrl;
+  }
 
   /// `none` | `firebase` (issue #84). Local/test default is `none`; the
   /// production 0.1 build sets `firebase` explicitly. Selection logic lives

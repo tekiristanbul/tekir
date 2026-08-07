@@ -289,6 +289,13 @@ cd app
 flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8081
 ```
 
+the `localhost` default only applies to debug/profile runs (issue #128). release builds (`flutter run --release`, `flutter build ...`) that don't get an explicit `API_BASE_URL` fail fast at startup with a `StateError` naming the fix, instead of launching normally with a map that renders but no backend data. the production value used for testing is `https://app.tekir.istanbul/api`:
+
+```text
+cd app
+flutter build ios --release --dart-define=API_BASE_URL=https://app.tekir.istanbul/api
+```
+
 only the web target is currently configured.
 
 ## validation
