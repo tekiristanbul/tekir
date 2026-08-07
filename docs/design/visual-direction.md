@@ -1,5 +1,12 @@
 # visual direction
 
+> **historical — superseded.** This document predates the hi-fi prototype
+> and describes an earlier (ink/paper/amber) palette that `prototype/`'s
+> kiremit direction has since replaced in practice. Kept for record only —
+> not a source of truth for any implemented screen. See
+> `docs/design/implementation-contract.md`'s "authoritative vs historical"
+> section (issue #121).
+
 ## goal
 
 give whoever builds the real figma file a concrete starting point instead of a blank canvas. this is a direction, not a finished visual identity — the wireframes in [[wireframes]] are structural and intentionally placeholder-grade; this is what should replace that placeholder.

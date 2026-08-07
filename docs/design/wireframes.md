@@ -1,5 +1,12 @@
 # wireframes
 
+> **historical — superseded.** These are low-fi structural wireframes that
+> predate the hi-fi prototype (`prototype/`), which has since superseded
+> them as the visual/interaction baseline. Kept for record only — not a
+> source of truth for any implemented screen. See
+> `docs/design/implementation-contract.md`'s "authoritative vs historical"
+> section (issue #121).
+
 ## goal
 
 low-fidelity wireframes for the 9 mvp screens, produced from the information architecture and user-flow pass that preceded `docs/architecture/`.
