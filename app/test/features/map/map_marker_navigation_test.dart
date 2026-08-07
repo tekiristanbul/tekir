@@ -66,6 +66,9 @@ class _GuestSessionIdentityService implements SessionIdentityService {
   Future<SessionIdentity?> restore() async => null;
 
   @override
+  Future<SessionIdentity?> refreshIfExpired() async => null;
+
+  @override
   Future<void> save(SessionIdentity identity) async {}
 
   @override

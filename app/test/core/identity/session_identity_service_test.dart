@@ -1,9 +1,23 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/identity/session_identity.dart';
+
+// Builds a minimally-shaped access token jwt — unsigned, since
+// refreshIfExpired only ever reads the `exp` claim locally and never
+// verifies the signature (the server does that).
+String _jwt({required Duration expiresIn}) {
+  String segment(Object value) =>
+      base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
+  final header = segment({'alg': 'HS256', 'typ': 'JWT'});
+  final exp = DateTime.now().add(expiresIn).millisecondsSinceEpoch ~/ 1000;
+  final payload = segment({'sub': 'user-1', 'exp': exp});
+  return '$header.$payload.sig';
+}
 
 // A fixed device identity, for SessionNotifier.logout's own test group
 // below — mirrors the plain-fake convention used throughout this test
@@ -229,6 +243,183 @@ void main() {
       expect(svc.cached, isNull);
       await svc.restore();
       expect(svc.cached, isNotNull);
+    });
+  });
+
+  group('SessionIdentityService.refreshIfExpired', () {
+    test('is a no-op for a guest (nothing cached)', () async {
+      final svc = SessionIdentityService(
+        storage: _FakeStorage(),
+        dio: _dioWith(_ErrorAdapter()),
+      );
+
+      final identity = await svc.refreshIfExpired();
+
+      expect(identity, isNull);
+      expect(svc.cached, isNull);
+    });
+
+    test('is a no-op when the access token is still fresh', () async {
+      final adapter = _FixedRefreshAdapter(
+        accessToken: 'unused',
+        refreshToken: 'unused',
+      );
+      final svc = SessionIdentityService(
+        storage: _FakeStorage(),
+        dio: _dioWith(adapter),
+      );
+      final fresh = _jwt(expiresIn: const Duration(minutes: 15));
+      await svc.save(
+        SessionIdentity(accessToken: fresh, refreshToken: 'rt', userId: 'u'),
+      );
+
+      final identity = await svc.refreshIfExpired();
+
+      expect(identity?.accessToken, fresh);
+      expect(adapter.callCount, 0);
+    });
+
+    test('rotates the tokens when the access token has expired', () async {
+      final adapter = _FixedRefreshAdapter(
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+      );
+      final storage = _FakeStorage();
+      final svc = SessionIdentityService(
+        storage: storage,
+        dio: _dioWith(adapter),
+      );
+      final expired = _jwt(expiresIn: const Duration(minutes: -1));
+      await svc.save(
+        SessionIdentity(
+          accessToken: expired,
+          refreshToken: 'old-refresh',
+          userId: 'u',
+        ),
+      );
+
+      final identity = await svc.refreshIfExpired();
+
+      expect(identity?.accessToken, 'new-access');
+      expect(svc.cached?.accessToken, 'new-access');
+      expect(await storage.read('session_access_token'), 'new-access');
+    });
+
+    test(
+      'clears the session (guest fallback) when the refresh token is dead',
+      () async {
+        final storage = _FakeStorage();
+        final svc = SessionIdentityService(
+          storage: storage,
+          dio: _dioWith(_ErrorAdapter()),
+        );
+        final expired = _jwt(expiresIn: const Duration(minutes: -1));
+        await svc.save(
+          SessionIdentity(
+            accessToken: expired,
+            refreshToken: 'dead-refresh',
+            userId: 'u',
+          ),
+        );
+
+        final identity = await svc.refreshIfExpired();
+
+        expect(identity, isNull);
+        expect(svc.cached, isNull);
+        expect(await storage.read('session_access_token'), isNull);
+      },
+    );
+
+    test('concurrent calls share one in-flight rotation', () async {
+      final adapter = _FixedRefreshAdapter(
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+      );
+      final svc = SessionIdentityService(
+        storage: _FakeStorage(),
+        dio: _dioWith(adapter),
+      );
+      final expired = _jwt(expiresIn: const Duration(minutes: -1));
+      await svc.save(
+        SessionIdentity(
+          accessToken: expired,
+          refreshToken: 'old-refresh',
+          userId: 'u',
+        ),
+      );
+
+      final results = await Future.wait([
+        svc.refreshIfExpired(),
+        svc.refreshIfExpired(),
+      ]);
+
+      expect(adapter.callCount, 1);
+      for (final r in results) {
+        expect(r?.accessToken, 'new-access');
+      }
+    });
+  });
+
+  group('SessionNotifier.refreshIfNeeded', () {
+    test('rotates an expired session and updates state', () async {
+      final adapter = _FixedRefreshAdapter(
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sessionIdentityServiceProvider.overrideWithValue(
+            SessionIdentityService(
+              storage: _FakeStorage(),
+              dio: _dioWith(adapter),
+            ),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final expired = _jwt(expiresIn: const Duration(minutes: -1));
+      await container
+          .read(sessionProvider.notifier)
+          .save(
+            SessionIdentity(
+              accessToken: expired,
+              refreshToken: 'old-refresh',
+              userId: 'u',
+            ),
+          );
+
+      await container.read(sessionProvider.notifier).refreshIfNeeded();
+
+      expect(container.read(sessionProvider).value?.accessToken, 'new-access');
+    });
+
+    test('moves to the guest state when the refresh token can no longer be '
+        'rotated', () async {
+      final container = ProviderContainer(
+        overrides: [
+          sessionIdentityServiceProvider.overrideWithValue(
+            SessionIdentityService(
+              storage: _FakeStorage(),
+              dio: _dioWith(_ErrorAdapter()),
+            ),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final expired = _jwt(expiresIn: const Duration(minutes: -1));
+      await container
+          .read(sessionProvider.notifier)
+          .save(
+            SessionIdentity(
+              accessToken: expired,
+              refreshToken: 'dead-refresh',
+              userId: 'u',
+            ),
+          );
+
+      await container.read(sessionProvider.notifier).refreshIfNeeded();
+
+      expect(container.read(sessionProvider).value, isNull);
     });
   });
 

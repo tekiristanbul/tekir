@@ -62,6 +62,9 @@ class _FakeSessionIdentityService implements SessionIdentityService {
   SessionIdentity? get cached => _cached;
 
   @override
+  Future<SessionIdentity?> refreshIfExpired() async => _cached;
+
+  @override
   Future<SessionIdentity?> restore() async => _cached;
 
   @override
