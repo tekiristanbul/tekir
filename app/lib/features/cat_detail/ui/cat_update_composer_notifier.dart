@@ -43,9 +43,9 @@ String updateSubmitErrorMessageTr(UpdateSubmitError error) {
     UpdateSubmitError.network => 'Bağlantı sorunu, tekrar dene.',
     UpdateSubmitError.server => 'Sunucuya ulaşılamadı, birazdan tekrar dene.',
     UpdateSubmitError.mediaTooLarge =>
-      'Fotoğraf çok büyük, daha küçük bir fotoğraf seç.',
-    UpdateSubmitError.unsupportedMedia => 'Desteklenmeyen fotoğraf türü.',
-    UpdateSubmitError.mediaNotFound => 'Fotoğraf gönderilemedi, tekrar seç.',
+      'Medya çok büyük, daha küçük bir dosya seç.',
+    UpdateSubmitError.unsupportedMedia => 'Desteklenmeyen medya türü.',
+    UpdateSubmitError.mediaNotFound => 'Medya gönderilemedi, tekrar seç.',
   };
 }
 
@@ -105,8 +105,9 @@ class CatUpdateComposerState {
     this.isSubmitting = false,
     this.error,
     this.pending,
-    this.photoBytes,
-    this.photoFilename,
+    this.mediaBytes,
+    this.mediaFilename,
+    this.mediaContentType,
     this.uploadProgress,
   });
 
@@ -127,22 +128,32 @@ class CatUpdateComposerState {
   /// sheet stays open and synchronous for those instead.
   final PendingUpdate? pending;
 
-  /// An optional photo attached in the sheet (issue #153) — read via
-  /// `XFile.readAsBytes`, never a raw file path, mirroring
-  /// `AddCatState.photoBytes` exactly (see its own doc for why: flutter
-  /// web has no `dart:io` `File`). Null means the update carries no photo,
-  /// the common case.
-  final Uint8List? photoBytes;
-  final String? photoFilename;
+  /// An optional photo or (issue #153's video support) short video attached
+  /// in the sheet — read via `XFile.readAsBytes`, never a raw file path,
+  /// mirroring `AddCatState.photoBytes` exactly (see its own doc for why:
+  /// flutter web has no `dart:io` `File`). Null means the update carries no
+  /// media, the common case. A photo and a video are mutually exclusive —
+  /// picking one replaces whatever the other already held.
+  final Uint8List? mediaBytes;
+  final String? mediaFilename;
 
-  /// 0..1 while the picked photo's multipart upload is leaving the device
+  /// The picked media's content type (e.g. `image/jpeg`, `video/mp4`), set
+  /// alongside [mediaBytes] so the sheet knows which preview widget to
+  /// render and the upload can pick the right fallback filename extension.
+  /// Null exactly when [mediaBytes] is null.
+  final String? mediaContentType;
+
+  /// Whether [mediaBytes] — when set — is a video rather than a photo.
+  bool get isVideoMedia => mediaContentType?.startsWith('video/') ?? false;
+
+  /// 0..1 while the picked media's multipart upload is leaving the device
   /// — mirrors `AddCatState.uploadProgress` exactly. Null whenever no
   /// upload is in flight.
   final double? uploadProgress;
 
   /// The create invariant (docs/architecture/api.md): at least one status
-  /// or the help flag; comment-only submissions stay invalid. A photo is
-  /// always optional and never satisfies this on its own.
+  /// or the help flag; comment-only submissions stay invalid. Attached
+  /// media is always optional and never satisfies this on its own.
   bool get canSubmit =>
       (selectedStatuses.isNotEmpty || needsHelp) && !isSubmitting;
 
@@ -155,9 +166,10 @@ class CatUpdateComposerState {
     bool clearError = false,
     PendingUpdate? pending,
     bool clearPending = false,
-    Uint8List? photoBytes,
-    String? photoFilename,
-    bool clearPhoto = false,
+    Uint8List? mediaBytes,
+    String? mediaFilename,
+    String? mediaContentType,
+    bool clearMedia = false,
     double? uploadProgress,
     bool clearUploadProgress = false,
   }) {
@@ -168,8 +180,11 @@ class CatUpdateComposerState {
       isSubmitting: isSubmitting ?? this.isSubmitting,
       error: clearError ? null : (error ?? this.error),
       pending: clearPending ? null : (pending ?? this.pending),
-      photoBytes: clearPhoto ? null : (photoBytes ?? this.photoBytes),
-      photoFilename: clearPhoto ? null : (photoFilename ?? this.photoFilename),
+      mediaBytes: clearMedia ? null : (mediaBytes ?? this.mediaBytes),
+      mediaFilename: clearMedia ? null : (mediaFilename ?? this.mediaFilename),
+      mediaContentType: clearMedia
+          ? null
+          : (mediaContentType ?? this.mediaContentType),
       uploadProgress: clearUploadProgress
           ? null
           : (uploadProgress ?? this.uploadProgress),
@@ -210,10 +225,11 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   // repeat tap or a retried request can never create a second update row.
   String _idempotencyKey = _generateIdempotencyKey();
 
-  // issue #153: a separate key for the photo's own standalone upload —
-  // regenerated whenever the picked photo itself changes (a new upload is
-  // a new attempt), but kept stable across a retry of the same picked
-  // photo, so a retried upload can never create a second media row.
+  // issue #153: a separate key for the picked media's own standalone
+  // upload — regenerated whenever the picked photo or video itself
+  // changes (a new upload is a new attempt), but kept stable across a
+  // retry of the same picked media, so a retried upload can never create
+  // a second media row.
   String _mediaIdempotencyKey = _generateIdempotencyKey();
 
   void toggleStatus(String status) {
@@ -236,25 +252,49 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   /// between [ImageSource.camera] and [ImageSource.gallery] (issue #153;
   /// mirrors [AddCatNotifier.pickPhoto] exactly, including reading bytes
   /// via `XFile.readAsBytes` for flutter web compatibility). Replaces
-  /// whatever photo was already picked, if any — the sheet's picker
-  /// affordance doubles as "replace" once a photo is showing.
+  /// whatever media was already picked, if any (photo or video) — the
+  /// sheet's picker affordance doubles as "replace" once media is showing.
   Future<void> pickPhoto(ImageSource source) async {
     if (state.isSubmitting) return;
     final picked = await ImagePicker().pickImage(source: source);
     if (picked == null) return;
+    await _setPickedMedia(picked, fallbackContentType: 'image/jpeg');
+  }
+
+  /// Picks a video from the given source (issue #153's video support) —
+  /// capped at the product-approved 30-second maximum duration; a longer
+  /// gallery pick is truncated to that cap by the platform picker itself.
+  /// Otherwise mirrors [pickPhoto] exactly, including replacing whatever
+  /// media was already picked.
+  Future<void> pickVideo(ImageSource source) async {
+    if (state.isSubmitting) return;
+    final picked = await ImagePicker().pickVideo(
+      source: source,
+      maxDuration: const Duration(seconds: 30),
+    );
+    if (picked == null) return;
+    await _setPickedMedia(picked, fallbackContentType: 'video/mp4');
+  }
+
+  Future<void> _setPickedMedia(
+    XFile picked, {
+    required String fallbackContentType,
+  }) async {
     final bytes = await picked.readAsBytes();
     _mediaIdempotencyKey = _generateIdempotencyKey();
     state = state.copyWith(
-      photoBytes: bytes,
-      photoFilename: picked.name,
+      mediaBytes: bytes,
+      mediaFilename: picked.name,
+      mediaContentType: picked.mimeType ?? fallbackContentType,
       clearError: true,
     );
   }
 
-  /// Removes the currently picked photo, if any (issue #153).
-  void removePhoto() {
+  /// Removes the currently picked media (photo or video), if any (issue
+  /// #153).
+  void removeMedia() {
     if (state.isSubmitting) return;
-    state = state.copyWith(clearPhoto: true, clearError: true);
+    state = state.copyWith(clearMedia: true, clearError: true);
   }
 
   /// Clears any selection, draft comment, and stale error from a previous
@@ -294,18 +334,18 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     bool needsHelp = false,
   }) async {
     if (state.isSubmitting) return false;
-    final photoBytes = state.photoBytes;
-    // An ordinary, photo-less submission drops its optimistic row here, in
+    final mediaBytes = state.mediaBytes;
+    // An ordinary, media-less submission drops its optimistic row here, in
     // the same synchronous state change as the in-flight guard — feedback
     // starts in the frame of the tap. A help-carrying submission never
-    // gets a row (see the class doc); neither does one carrying a photo —
-    // the sheet stays open and synchronous for those too, so the upload's
-    // own progress and any failure have somewhere to show (issue #153;
-    // CatUpdateSheet._submit mirrors this exact condition).
+    // gets a row (see the class doc); neither does one carrying a photo or
+    // video — the sheet stays open and synchronous for those too, so the
+    // upload's own progress and any failure have somewhere to show (issue
+    // #153; CatUpdateSheet._submit mirrors this exact condition).
     state = state.copyWith(
       isSubmitting: true,
       clearError: true,
-      pending: (needsHelp || photoBytes != null)
+      pending: (needsHelp || mediaBytes != null)
           ? null
           : PendingUpdate(statuses: statuses, status: InlineSaveStatus.saving),
     );
@@ -321,20 +361,23 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
         _fail(UpdateSubmitError.unauthorized);
         return false;
       }
-      // issue #153: a photo is uploaded standalone via POST /v1/media
-      // first (driving uploadProgress as its multipart body leaves the
-      // device), then referenced by id on the update write below — never
-      // sent as part of that request's own body. This must stay the first
-      // await in this branch (device identity init below runs after it)
-      // so the very first progress event lands in the same synchronous
-      // stretch as the tap, matching AddCatState's upload feedback.
+      // issue #153: a photo or video is uploaded standalone via POST
+      // /v1/media first (driving uploadProgress as its multipart body
+      // leaves the device), then referenced by id on the update write
+      // below — never sent as part of that request's own body. This must
+      // stay the first await in this branch (device identity init below
+      // runs after it) so the very first progress event lands in the same
+      // synchronous stretch as the tap, matching AddCatState's upload
+      // feedback.
       String? mediaId;
-      if (photoBytes != null) {
+      if (mediaBytes != null) {
         mediaId = await ref
             .read(catDetailApiProvider)
             .uploadMedia(
-              photoBytes: photoBytes,
-              photoFilename: state.photoFilename ?? 'photo.jpg',
+              mediaBytes: mediaBytes,
+              mediaFilename:
+                  state.mediaFilename ??
+                  (state.isVideoMedia ? 'video.mp4' : 'photo.jpg'),
               idempotencyKey: _mediaIdempotencyKey,
               onSendProgress: (sent, total) {
                 if (total <= 0 || !state.isSubmitting) return;
@@ -409,11 +452,11 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     } on UpdateMediaUnsupportedException {
       _fail(UpdateSubmitError.unsupportedMedia);
     } on UpdateMediaNotFoundException {
-      // The uploaded photo no longer resolves by the time the update write
+      // The uploaded media no longer resolves by the time the update write
       // ran — retrying with the same (now-gone) media id could only fail
-      // again, so the photo is dropped and a fresh pick is required,
-      // unlike every other failure here which keeps the draft untouched.
-      state = state.copyWith(clearPhoto: true);
+      // again, so it is dropped and a fresh pick is required, unlike every
+      // other failure here which keeps the draft untouched.
+      state = state.copyWith(clearMedia: true);
       _mediaIdempotencyKey = _generateIdempotencyKey();
       _fail(UpdateSubmitError.mediaNotFound);
     } on UpdateNetworkException {
