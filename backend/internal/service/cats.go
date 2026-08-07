@@ -120,6 +120,14 @@ var ErrMediaNotInGallery = errors.New("media not in cat gallery")
 // closed — mirrors the otp/verify 410 convention (docs/architecture/api.md).
 var ErrCorrectionWindowExpired = errors.New("correction window expired")
 
+// ErrMediaNotFound means the caller supplied a media_id (issue #153) that
+// either doesn't exist or wasn't uploaded by them. Both cases collapse into
+// the same error and the same 404 — unlike ErrNotUpdateAuthor's public
+// timeline, media ownership is never public, so confirming "this media
+// exists, but isn't yours" would leak information a caller has no way to
+// see otherwise.
+var ErrMediaNotFound = errors.New("media not found")
+
 // updateCorrectionWindow is the fixed mvp grace period during which an
 // ordinary update's author may correct or delete it (docs/product/updates.md,
 // issue #80) — never configurable per-request or per-account.
@@ -539,6 +547,7 @@ type CatsStore interface {
 	CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error)
 	ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatMediaRow, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error)
+	GetMediaByID(ctx context.Context, id pgtype.UUID) (repository.Medium, error)
 	GetCatMediaByCatAndMedia(ctx context.Context, arg repository.GetCatMediaByCatAndMediaParams) (repository.CatMedium, error)
 	SetCatCoverPhoto(ctx context.Context, arg repository.SetCatCoverPhotoParams) error
 }
@@ -1155,10 +1164,10 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 // recorded alongside it purely for installation/abuse-control association,
 // never as authorization). statuses must be a non-empty set drawn from the
 // closed mvp vocabulary with no duplicates; comment is optional and never
-// sufficient on its own. kind, media, needs-help fields, timestamps,
-// sequence, and author identity are never accepted from the caller — kind
-// is always "ordinary" here, created_at/author_user_id/author_device_id
-// are server-derived, and the update row, its statuses, and the cat's
+// sufficient on its own. kind, needs-help fields, timestamps, sequence, and
+// author identity are never accepted from the caller — kind is always
+// "ordinary" here, created_at/author_user_id/author_device_id are
+// server-derived, and the update row, its statuses, and the cat's
 // last_update_at commit as one transaction (see
 // repository.Store.CreateOrdinaryUpdate).
 //
@@ -1176,7 +1185,15 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 // an active help state), and the optional comment doubles as the help note
 // under the contract's 500-rune cap. statuses may then be empty — the
 // create invariant is "at least one status or the help flag".
-func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, deviceID string, idempotencyKey *string, statuses []string, needsHelp bool, comment *string) (CatUpdate, error) {
+//
+// mediaID (issue #153) is optional and, when non-nil, must name a media
+// row the caller themselves uploaded via POST /v1/media beforehand — never
+// raw media bytes; this endpoint only ever links an id, mirroring the
+// standalone-upload-then-link shape media.go's own doc comment already
+// described. A mediaID that doesn't exist or wasn't uploaded by userID
+// fails closed with ErrMediaNotFound rather than silently dropping it or
+// attaching someone else's photo.
+func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, deviceID string, idempotencyKey *string, statuses []string, needsHelp bool, comment *string, mediaID *string) (CatUpdate, error) {
 	catID, err := parseCatID(id)
 	if err != nil {
 		return CatUpdate{}, err
@@ -1225,6 +1242,11 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		return CatUpdate{}, ErrCatNotFound
 	}
 
+	media, err := s.resolveOwnMedia(ctx, mediaID, authorUserID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
 	// always a non-nil slice: a help-only update has no statuses, but the
 	// response field must marshal as [] (never null) — Flutter's
 	// CatUpdateEntry.fromJson casts statuses as a non-nullable List.
@@ -1245,6 +1267,9 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 	if needsHelp {
 		params.NeedsHelp = true
 		params.NeedsHelpExpiresAt = pgtype.Timestamptz{Time: NeedsHelpExpiresAt(createdAt), Valid: true}
+	}
+	if media != nil {
+		params.MediaID = media.ID
 	}
 	row, err := s.db.CreateOrdinaryUpdate(ctx, params)
 	if err != nil {
@@ -1278,6 +1303,9 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		CorrectionExpiresAt: &expiresAt,
 		AuthorDisplayName:   authorDisplayName,
 	}
+	if media != nil {
+		result.PhotoURL = &media.Url
+	}
 	if needsHelp {
 		category := needsHelpCompatCategory
 		label := needsHelpCompatCategoryLabel
@@ -1289,6 +1317,33 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		result.NeedsHelpActive = &active
 	}
 	return result, nil
+}
+
+// resolveOwnMedia looks up mediaID (when non-nil) and confirms
+// authorUserID uploaded it, for the ordinary-update write path's optional
+// photo attachment (issue #153). Returns (nil, nil) when mediaID is nil —
+// the update simply carries no photo, same as today. A malformed id or a
+// media row that doesn't exist or belongs to someone else both fail
+// closed with ErrMediaNotFound; the caller never learns which.
+func (s *CatsService) resolveOwnMedia(ctx context.Context, mediaID *string, authorUserID uuid.UUID) (*repository.Medium, error) {
+	if mediaID == nil {
+		return nil, nil
+	}
+	parsed, err := uuid.Parse(*mediaID)
+	if err != nil {
+		return nil, ErrMediaNotFound
+	}
+	media, err := s.db.GetMediaByID(ctx, pgtype.UUID{Bytes: parsed, Valid: true})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrMediaNotFound
+		}
+		return nil, err
+	}
+	if uuid.UUID(media.UploadedByUserID.Bytes) != authorUserID || !media.UploadedByUserID.Valid {
+		return nil, ErrMediaNotFound
+	}
+	return &media, nil
 }
 
 // fetchIdempotentOrdinaryUpdate resolves a presented Idempotency-Key to the
@@ -1323,6 +1378,7 @@ func (s *CatsService) fetchIdempotentOrdinaryUpdate(ctx context.Context, authorU
 		AuthorIsMe:          true,
 		CorrectionExpiresAt: &expiresAt,
 		AuthorDisplayName:   authorDisplayName,
+		PhotoURL:            textPtr(row.PhotoUrl),
 	}
 	if row.NeedsHelp {
 		category := needsHelpCompatCategory

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -79,6 +81,15 @@ class _FakeCatDetailApi implements CatDetailApi {
     bool needsHelp = false,
     String? comment,
     String idempotencyKey = '',
+    String? mediaId,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<String> uploadMedia({
+    required Uint8List photoBytes,
+    required String photoFilename,
+    required String idempotencyKey,
+    void Function(int sent, int total)? onSendProgress,
   }) => throw UnimplementedError();
 
   @override

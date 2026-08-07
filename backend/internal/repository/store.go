@@ -75,6 +75,10 @@ type CreateOrdinaryUpdateParams struct {
 	NeedsHelp          bool
 	NeedsHelpCategory  pgtype.Text
 	NeedsHelpExpiresAt pgtype.Timestamptz
+	// MediaID (issue #153) is nullable — set only when the caller attached a
+	// photo, already uploaded via POST /v1/media and resolved/owned by
+	// CatsService.CreateOrdinaryUpdate before this write runs.
+	MediaID pgtype.UUID
 }
 
 // CreateOrdinaryUpdate inserts an ordinary (kind = 'ordinary') update, its
@@ -158,6 +162,7 @@ func (s *Store) CreateOrdinaryUpdate(ctx context.Context, arg CreateOrdinaryUpda
 			AuthorDeviceID:     arg.AuthorDeviceID,
 			AuthorUserID:       arg.AuthorUserID,
 			IdempotencyKey:     arg.IdempotencyKey,
+			MediaID:            arg.MediaID,
 		})
 		if err != nil {
 			return err

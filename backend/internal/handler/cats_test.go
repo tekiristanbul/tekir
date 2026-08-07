@@ -108,6 +108,9 @@ type fakeCatsLister struct {
 	userRow repository.User
 	userErr error
 
+	getMediaRow repository.Medium
+	getMediaErr error
+
 	catMediaRow repository.CatMedium
 	catMediaErr error
 
@@ -116,6 +119,10 @@ type fakeCatsLister struct {
 
 func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error) {
 	return f.userRow, f.userErr
+}
+
+func (f fakeCatsLister) GetMediaByID(ctx context.Context, id pgtype.UUID) (repository.Medium, error) {
+	return f.getMediaRow, f.getMediaErr
 }
 
 func (f fakeCatsLister) GetCatMediaByCatAndMedia(ctx context.Context, arg repository.GetCatMediaByCatAndMediaParams) (repository.CatMedium, error) {
@@ -1046,6 +1053,68 @@ func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
 	}
 	if len(captured.Statuses) != 1 || captured.Statuses[0] != "seen" {
 		t.Errorf("unexpected captured statuses: %v", captured.Statuses)
+	}
+}
+
+func TestCatsHandler_CreateUpdate_WithMediaID(t *testing.T) {
+	catID := uuid.New()
+	userID := uuid.New()
+	mediaID := uuid.New()
+	returnedID := uuid.New()
+	var captured repository.CreateOrdinaryUpdateParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists:    true,
+		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		captured:  &captured,
+		getMediaRow: repository.Medium{
+			ID:               pgtype.UUID{Bytes: mediaID, Valid: true},
+			Url:              "https://media.example/cat.jpg",
+			UploadedByUserID: pgtype.UUID{Bytes: userID, Valid: true},
+		},
+	}), testMaxUploadBytes)
+
+	r := routerForWithResolver(h,
+		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.New().String()}},
+		fakeAccessValidator{userID: userID.String()},
+	)
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(catID.String(), `{"statuses":["seen"],"media_id":"`+mediaID.String()+`"}`)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body updateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.PhotoURL == nil || *body.PhotoURL != "https://media.example/cat.jpg" {
+		t.Errorf("expected the response to carry the attached photo's url, got %v", body.PhotoURL)
+	}
+	if uuid.UUID(captured.MediaID.Bytes).String() != mediaID.String() || !captured.MediaID.Valid {
+		t.Errorf("expected the repository write to carry the media id, got %v", captured.MediaID)
+	}
+}
+
+func TestCatsHandler_CreateUpdate_UnknownMediaIDRejected(t *testing.T) {
+	catID := uuid.New()
+	userID := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists:      true,
+		getMediaErr: pgx.ErrNoRows,
+	}), testMaxUploadBytes)
+
+	r := routerForWithResolver(h,
+		fakeDeviceResolver{identity: service.DeviceIdentity{DeviceID: uuid.New().String()}},
+		fakeAccessValidator{userID: userID.String()},
+	)
+	rec := httptest.NewRecorder()
+	req := newCreateUpdateRequest(catID.String(), `{"statuses":["seen"],"media_id":"`+uuid.New().String()+`"}`)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

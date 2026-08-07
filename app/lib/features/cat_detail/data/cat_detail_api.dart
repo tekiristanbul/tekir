@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -44,6 +46,29 @@ class UpdateNetworkException implements Exception {
 /// retryable, but not attributable to the client's own connectivity.
 class UpdateServerException implements Exception {
   const UpdateServerException();
+}
+
+/// Thrown when the update composer's attached photo exceeds the server's
+/// size limit (issue #153) — mirrors [AddCatMediaTooLargeException] for
+/// the standalone `POST /v1/media` upload this composer uses instead.
+class UpdateMediaTooLargeException implements Exception {
+  const UpdateMediaTooLargeException();
+}
+
+/// Thrown when the update composer's attached photo isn't a supported
+/// image type (issue #153).
+class UpdateMediaUnsupportedException implements Exception {
+  const UpdateMediaUnsupportedException();
+}
+
+/// Thrown when `POST .../updates` answers 404 with `media not found` —
+/// the media id the composer uploaded moments earlier no longer resolves
+/// (deleted, or somehow not owned by the caller). Distinct from
+/// [CatNotFoundException], which shares the same 404 status: the two are
+/// told apart by the response body's `error` field (see
+/// `_mapCreateUpdateError`).
+class UpdateMediaNotFoundException implements Exception {
+  const UpdateMediaNotFoundException();
 }
 
 /// Thrown when PATCH/DELETE `.../updates/{update_id}` answers 403 — the
@@ -108,7 +133,7 @@ class CatDetailApi {
   Future<UpdatesPage> fetchUpdates(String catId, {String? cursor}) async {
     final response = await _apiClient.dio.get<Map<String, dynamic>>(
       '/v1/cats/$catId/updates',
-      queryParameters: {'cursor': ?cursor},
+      queryParameters: {'cursor': cursor},
     );
     return UpdatesPage.fromJson(response.data!);
   }
@@ -182,12 +207,18 @@ class CatDetailApi {
   /// [AddCatApi.createCat]'s exact contract — so a rapid repeat "Gördüm" tap
   /// or a retried request can never create a second update row; the backend
   /// resolves a retried key to the original update instead of erroring.
+  ///
+  /// mediaId (issue #153) is the id [uploadMedia] returned for an optional
+  /// photo attached in the composer — the composer uploads the photo
+  /// first, then references it here; this method never accepts raw media
+  /// bytes itself.
   Future<CatUpdateEntry> createUpdate(
     String catId, {
     required List<String> statuses,
     bool needsHelp = false,
     String? comment,
     required String idempotencyKey,
+    String? mediaId,
   }) async {
     try {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
@@ -196,6 +227,7 @@ class CatDetailApi {
           'statuses': statuses,
           'needs_help': needsHelp,
           'comment': comment,
+          'media_id': mediaId,
         },
         options: Options(headers: {'Idempotency-Key': idempotencyKey}),
       );
@@ -215,7 +247,61 @@ class CatDetailApi {
       case 401:
         return const UpdateUnauthorizedException();
       case 404:
+        final body = e.response?.data;
+        if (body is Map<String, dynamic> &&
+            body['error'] == 'media not found') {
+          return const UpdateMediaNotFoundException();
+        }
         return const CatNotFoundException();
+    }
+    if (status != null) return const UpdateServerException();
+    return const UpdateNetworkException();
+  }
+
+  /// Uploads a photo standalone via `POST /v1/media` (issue #153's optional
+  /// update-composer attachment), returning the created media's id for
+  /// [createUpdate]'s `mediaId`. photoBytes/photoFilename come from the
+  /// picked image the same way [AddCatApi.createCat] reads them (`XFile.
+  /// readAsBytes`, never a raw file path — see that method's own doc for
+  /// why). idempotencyKey must be the same value across retries of the same
+  /// upload attempt, mirroring every other multipart write in this app.
+  /// [onSendProgress] reports raw request-body bytes leaving the device,
+  /// driving the composer's own upload-percentage overlay.
+  Future<String> uploadMedia({
+    required Uint8List photoBytes,
+    required String photoFilename,
+    required String idempotencyKey,
+    void Function(int sent, int total)? onSendProgress,
+  }) async {
+    try {
+      final formData = FormData.fromMap({
+        'file': MultipartFile.fromBytes(photoBytes, filename: photoFilename),
+      });
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '/v1/media',
+        data: formData,
+        options: Options(headers: {'Idempotency-Key': idempotencyKey}),
+        onSendProgress: onSendProgress,
+      );
+      final body = response.data;
+      if (body == null) throw const UpdateServerException();
+      return body['media_id'] as String;
+    } on DioException catch (e) {
+      throw _mapUploadMediaError(e);
+    }
+  }
+
+  Exception _mapUploadMediaError(DioException e) {
+    final status = e.response?.statusCode;
+    switch (status) {
+      case 400:
+        return const UpdateValidationException();
+      case 401:
+        return const UpdateUnauthorizedException();
+      case 413:
+        return const UpdateMediaTooLargeException();
+      case 415:
+        return const UpdateMediaUnsupportedException();
     }
     if (status != null) return const UpdateServerException();
     return const UpdateNetworkException();

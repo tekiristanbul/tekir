@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
+import '../../../core/states/photo_upload_progress.dart';
 import '../../../core/theme/app_theme.dart';
 import 'cat_update_composer_notifier.dart';
 
@@ -64,20 +67,50 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
   Future<void> _submit() async {
     final notifier = ref.read(catUpdateComposerProvider(widget.catId).notifier);
     final state = ref.read(catUpdateComposerProvider(widget.catId));
-    // An ordinary submission is optimistic (docs/design/app-states.md,
-    // mutation affordances): the sheet closes in the same tap and the
-    // entry drops onto the timeline as a pending row while the request
-    // runs in the background — the parent screen owns the row and any
-    // failure surface. A help-carrying submission stays synchronous here:
-    // its note must remain visible in this sheet if it fails, and the
-    // active alert only ever renders from the server-confirmed entry.
-    if (!state.needsHelp) {
+    // An ordinary, photo-less submission is optimistic (docs/design/
+    // app-states.md, mutation affordances): the sheet closes in the same
+    // tap and the entry drops onto the timeline as a pending row while the
+    // request runs in the background — the parent screen owns the row and
+    // any failure surface. A help-carrying submission stays synchronous
+    // here: its note must remain visible in this sheet if it fails, and
+    // the active alert only ever renders from the server-confirmed entry.
+    // A submission carrying a photo (issue #153) stays synchronous too,
+    // for the same reason: the upload's own progress and any failure need
+    // this sheet to still be open to show them.
+    if (!state.needsHelp && state.photoBytes == null) {
       unawaited(notifier.submit());
       Navigator.of(context).pop(false);
       return;
     }
     final ok = await notifier.submit();
     if (ok && mounted) Navigator.of(context).pop(true);
+  }
+
+  Future<void> _choosePhotoSource() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Kameradan çek'),
+              onTap: () => Navigator.of(sheetContext).pop(ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Galeriden seç'),
+              onTap: () => Navigator.of(sheetContext).pop(ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+    await ref
+        .read(catUpdateComposerProvider(widget.catId).notifier)
+        .pickPhoto(source);
   }
 
   @override
@@ -163,6 +196,28 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
                   const SizedBox(height: AppSpacing.s3),
                   const _HelpNotifyBanner(),
                 ],
+                const SizedBox(height: AppSpacing.s4),
+                const Text(
+                  'Fotoğraf (opsiyonel)',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.muted,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.s2),
+                _PhotoPicker(
+                  photoBytes: state.photoBytes,
+                  uploading: state.isSubmitting,
+                  uploadProgress: state.uploadProgress,
+                  onPick: state.isSubmitting ? null : _choosePhotoSource,
+                  onRemove: state.isSubmitting
+                      ? null
+                      : () => ref
+                            .read(
+                              catUpdateComposerProvider(widget.catId).notifier,
+                            )
+                            .removePhoto(),
+                ),
                 const SizedBox(height: AppSpacing.s4),
                 const Text(
                   'Yorum (opsiyonel)',
@@ -363,6 +418,90 @@ class _HelpOption extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The sheet's optional photo attachment (issue #153): an empty tappable
+/// well that opens the camera/gallery choice, or the picked photo itself
+/// with a remove badge and — while [uploading] — the same upload-percentage
+/// overlay [AddCatScreen] uses for a new cat's required photo. Tapping the
+/// picked photo re-opens the camera/gallery choice, doubling as "replace".
+class _PhotoPicker extends StatelessWidget {
+  const _PhotoPicker({
+    required this.photoBytes,
+    required this.uploading,
+    required this.uploadProgress,
+    required this.onPick,
+    required this.onRemove,
+  });
+
+  final Uint8List? photoBytes;
+  final bool uploading;
+  final double? uploadProgress;
+  final VoidCallback? onPick;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = photoBytes;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      child: InkWell(
+        onTap: onPick,
+        child: Container(
+          height: 96,
+          width: 96,
+          decoration: BoxDecoration(
+            color: AppColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+          ),
+          alignment: Alignment.center,
+          child: bytes == null
+              ? const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.camera_alt, size: 22, color: AppColors.muted),
+                    SizedBox(height: AppSpacing.s1),
+                    Text(
+                      'Ekle',
+                      style: TextStyle(color: AppColors.muted, fontSize: 12),
+                    ),
+                  ],
+                )
+              : Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.memory(bytes, fit: BoxFit.cover),
+                    if (uploading && uploadProgress != null)
+                      PhotoUploadProgress(progress: uploadProgress!),
+                    if (!uploading && onRemove != null)
+                      Positioned(
+                        right: 4,
+                        top: 4,
+                        child: GestureDetector(
+                          key: const Key('removePhotoButton'),
+                          onTap: onRemove,
+                          child: const DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: AppColors.overlay,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Padding(
+                              padding: EdgeInsets.all(4),
+                              child: Icon(
+                                Icons.close,
+                                size: 16,
+                                color: AppColors.primaryInk,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
         ),
       ),
     );

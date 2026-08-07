@@ -132,7 +132,7 @@ func (q *Queries) CorrectOrdinaryUpdate(ctx context.Context, arg CorrectOrdinary
 }
 
 const createUpdate = `-- name: CreateUpdate :one
-insert into updates (id, cat_id, kind, comment, created_at, needs_help, needs_help_category, needs_help_expires_at, author_device_id, author_user_id, idempotency_key)
+insert into updates (id, cat_id, kind, comment, created_at, needs_help, needs_help_category, needs_help_expires_at, author_device_id, author_user_id, idempotency_key, media_id)
 values (
   $1,
   $2,
@@ -144,7 +144,8 @@ values (
   $8,
   $9,
   $10,
-  $11
+  $11,
+  $12
 )
 on conflict (id) do update set
   kind = excluded.kind,
@@ -155,7 +156,8 @@ on conflict (id) do update set
   needs_help_expires_at = excluded.needs_help_expires_at,
   author_device_id = excluded.author_device_id,
   author_user_id = excluded.author_user_id,
-  idempotency_key = excluded.idempotency_key
+  idempotency_key = excluded.idempotency_key,
+  media_id = excluded.media_id
 returning id, seq
 `
 
@@ -171,6 +173,7 @@ type CreateUpdateParams struct {
 	AuthorDeviceID     pgtype.UUID        `json:"author_device_id"`
 	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
 	IdempotencyKey     pgtype.Text        `json:"idempotency_key"`
+	MediaID            pgtype.UUID        `json:"media_id"`
 }
 
 type CreateUpdateRow struct {
@@ -198,6 +201,11 @@ type CreateUpdateRow struct {
 // else does. idempotency_key (issue #80) is nullable and only ever set on
 // the ordinary-update write path (mirrors cats.idempotency_key/
 // media.idempotency_key exactly) — needs-help and seed rows leave it null.
+// media_id (issue #153) is nullable and set only by the ordinary-update
+// write path when the caller attached a photo — the media row itself is
+// uploaded separately via POST /v1/media first (CatsService.CreateOrdinaryUpdate
+// resolves and owns it before this insert runs); needs-help and seed rows
+// leave it null, same as every other caller-optional field here.
 func (q *Queries) CreateUpdate(ctx context.Context, arg CreateUpdateParams) (CreateUpdateRow, error) {
 	row := q.db.QueryRow(ctx, createUpdate,
 		arg.ID,
@@ -211,6 +219,7 @@ func (q *Queries) CreateUpdate(ctx context.Context, arg CreateUpdateParams) (Cre
 		arg.AuthorDeviceID,
 		arg.AuthorUserID,
 		arg.IdempotencyKey,
+		arg.MediaID,
 	)
 	var i CreateUpdateRow
 	err := row.Scan(&i.ID, &i.Seq)
@@ -282,13 +291,15 @@ select
   u.created_at,
   u.needs_help,
   u.needs_help_expires_at,
+  um.url as photo_url,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
+left join media um on um.id = u.media_id
 where u.author_user_id = $1
   and u.idempotency_key = $2
   and u.kind = 'ordinary'
-group by u.id
+group by u.id, um.url
 `
 
 type GetUpdateByIdempotencyKeyParams struct {
@@ -303,6 +314,7 @@ type GetUpdateByIdempotencyKeyRow struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	NeedsHelp          bool               `json:"needs_help"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
+	PhotoUrl           pgtype.Text        `json:"photo_url"`
 	Statuses           []string           `json:"statuses"`
 }
 
@@ -310,8 +322,9 @@ type GetUpdateByIdempotencyKeyRow struct {
 // Idempotency-Key, same account) to the update it already created,
 // checked before any new write — mirrors GetCatByIdempotencyKey exactly.
 // Scoped to kind = 'ordinary' to match the partial unique index; the
-// statuses aggregation mirrors ListCatUpdates so the retry response is
-// identical to the original create response.
+// statuses aggregation and photo_url resolution (issue #153) mirror
+// ListCatUpdates so the retry response is identical to the original create
+// response.
 func (q *Queries) GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateByIdempotencyKeyParams) (GetUpdateByIdempotencyKeyRow, error) {
 	row := q.db.QueryRow(ctx, getUpdateByIdempotencyKey, arg.AuthorUserID, arg.IdempotencyKey)
 	var i GetUpdateByIdempotencyKeyRow
@@ -322,6 +335,7 @@ func (q *Queries) GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateBy
 		&i.CreatedAt,
 		&i.NeedsHelp,
 		&i.NeedsHelpExpiresAt,
+		&i.PhotoUrl,
 		&i.Statuses,
 	)
 	return i, err
@@ -441,10 +455,10 @@ type ListCatUpdatesRow struct {
 // linked account may never have set one (00015); the service falls back to
 // a generic avatar when absent, never invents a name. photo_url (issue
 // #121's timeline-thumbnail parity gap) resolves u.media_id to its media
-// row's url, left-joined since no write path sets media_id yet (see
-// migration 00024) — every row reads null today, and the client omits the
-// thumbnail exactly like it already omits the correction menu for a
-// comment-less row.
+// row's url, left-joined since it's null for any row created before issue
+// #153's write path started setting it (or one that simply carries no
+// photo) — the client omits the thumbnail exactly like it already omits
+// the correction menu for a comment-less row.
 func (q *Queries) ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) ([]ListCatUpdatesRow, error) {
 	rows, err := q.db.Query(ctx, listCatUpdates,
 		arg.CatID,

@@ -165,8 +165,8 @@ class CatUpdateEntry {
   final String? authorDisplayName;
 
   /// Url of the media this entry carries, null when it carries none
-  /// (issue #121's timeline-thumbnail parity gap) — always null today,
-  /// since no write path attaches media to an update yet.
+  /// (issue #121's timeline-thumbnail parity gap, wired up by issue #153's
+  /// optional update composer photo attachment).
   final String? photoUrl;
 
   /// Server-derived (issue #80): true only when this entry was returned to

@@ -155,9 +155,9 @@ type updateResponse struct {
 	// author never set one — the client falls back to a generic avatar,
 	// never inventing a name or initial.
 	AuthorDisplayName *string `json:"author_display_name"`
-	// PhotoURL (issue #121's timeline-thumbnail parity gap) is the url of
-	// the media this update carries, null when it carries none — always
-	// null today, since no write path sets media on an update yet.
+	// PhotoURL (issue #121's timeline-thumbnail parity gap, wired up by
+	// issue #153) is the url of the media this update carries, null when it
+	// carries none.
 	PhotoURL *string `json:"photo_url"`
 	// AuthorIsMe/CorrectionExpiresAt (issue #80): on GET
 	// /v1/cats/{cat_id}/updates (OptionalBearer), both stay their zero
@@ -571,14 +571,17 @@ func toUpdateResponse(u service.CatUpdate) updateResponse {
 
 // createUpdateRequest is the body of POST /v1/cats/{cat_id}/updates
 // (issue #36; needs_help added by issue #101's combined help model — a
-// bare boolean, no category, per the issue #100 contract).
-// DisallowUnknownFields rejects any client-supplied kind, media, category,
+// bare boolean, no category, per the issue #100 contract; media_id added
+// by issue #153 — a caller optionally attaches a photo already uploaded
+// via POST /v1/media, never raw media bytes here).
+// DisallowUnknownFields rejects any client-supplied kind, category,
 // expiry, timestamp, sequence, or author field outright — those are always
 // server-derived, never accepted from the caller.
 type createUpdateRequest struct {
 	Statuses  []string `json:"statuses"`
 	NeedsHelp bool     `json:"needs_help"`
 	Comment   *string  `json:"comment"`
+	MediaID   *string  `json:"media_id"`
 }
 
 // CreateUpdate answers POST /v1/cats/{cat_id}/updates: records a new
@@ -608,7 +611,7 @@ func (h *CatsHandler) CreateUpdate(w http.ResponseWriter, r *http.Request) {
 
 	user := UserFromContext(r.Context())
 	device := DeviceFromContext(r.Context())
-	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, device.DeviceID, idempotencyKey, req.Statuses, req.NeedsHelp, req.Comment)
+	update, err := h.cats.CreateOrdinaryUpdate(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, device.DeviceID, idempotencyKey, req.Statuses, req.NeedsHelp, req.Comment, req.MediaID)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return
@@ -767,6 +770,8 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the update author"})
 	case errors.Is(err, service.ErrCorrectionWindowExpired):
 		writeJSON(w, http.StatusGone, map[string]string{"error": "correction window expired"})
+	case errors.Is(err, service.ErrMediaNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "media not found"})
 	case errors.Is(err, service.ErrNotCatOwner):
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the cat owner"})
 	case errors.Is(err, service.ErrInvalidMediaID):
