@@ -409,19 +409,19 @@ void main() {
   testWidgets('a picked photo previews in the sheet and can be removed', (
     tester,
   ) async {
-    fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png');
+    fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png', path: 'photo.png');
     await _pump(tester, api: _FakeCatDetailApi());
     await _openComposer(tester);
 
     await _pickPhoto(tester);
 
     expect(find.byType(Image), findsOneWidget);
-    expect(find.byIcon(Icons.close), findsOneWidget);
+    expect(find.byKey(const Key('removePhotoButton')), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.close));
+    await tester.tap(find.byKey(const Key('removePhotoButton')));
     await tester.pump();
 
-    expect(find.byIcon(Icons.close), findsNothing);
+    expect(find.byKey(const Key('removePhotoButton')), findsNothing);
     expect(find.text('Ekle'), findsOneWidget);
   });
 
@@ -575,7 +575,7 @@ void main() {
   testWidgets(
     'a photo-carrying submission stays in the sheet for upload progress, then closes on success',
     (tester) async {
-      fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png');
+      fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png', path: 'photo.png');
       final api = _FakeCatDetailApi()
         ..nextResult = _entry('upd-1')
         ..uploadGate = Completer<void>()
@@ -590,7 +590,7 @@ void main() {
       await tester.pump();
 
       expect(find.byType(CatUpdateSheet), findsOneWidget);
-      expect(find.text('50%'), findsOneWidget);
+      expect(find.text('%50'), findsOneWidget);
       expect(api.uploadMediaCalls, 1);
       expect(api.lastPhotoFilename, 'photo.png');
 
@@ -606,7 +606,7 @@ void main() {
   testWidgets(
     'a photo upload failure stays in the sheet with a clear retryable error',
     (tester) async {
-      fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png');
+      fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png', path: 'photo.png');
       final api = _FakeCatDetailApi()
         ..uploadError = const UpdateMediaTooLargeException();
       await _pump(tester, api: api);
@@ -624,7 +624,7 @@ void main() {
         find.text(updateSubmitErrorMessageTr(UpdateSubmitError.mediaTooLarge)),
         findsOneWidget,
       );
-      expect(find.byIcon(Icons.close), findsOneWidget);
+      expect(find.byKey(const Key('removePhotoButton')), findsOneWidget);
       expect(api.createUpdateCalls, 0);
     },
   );
@@ -663,6 +663,9 @@ void main() {
       api
         ..nextError = null
         ..nextResult = _entry('upd-1', statuses: const ['water_provided']);
+      await tester.ensureVisible(
+        find.widgetWithText(ElevatedButton, 'Tekrar dene'),
+      );
       await tester.tap(find.widgetWithText(ElevatedButton, 'Tekrar dene'));
       await tester.pumpAndSettle();
 
@@ -819,6 +822,9 @@ void main() {
         await tester.pump();
         await tester.enterText(find.byType(TextField).last, 'kabı bomboştu');
         await tester.pump();
+        await tester.ensureVisible(
+          find.widgetWithText(ElevatedButton, 'yardım çağrısıyla paylaş'),
+        );
         await tester.tap(
           find.widgetWithText(ElevatedButton, 'yardım çağrısıyla paylaş'),
         );
@@ -852,6 +858,9 @@ void main() {
         await tester.tap(find.text('Su verildi'));
         await tester.tap(find.text('yardım'));
         await tester.pump();
+        await tester.ensureVisible(
+          find.widgetWithText(ElevatedButton, 'yardım çağrısıyla paylaş'),
+        );
         await tester.tap(
           find.widgetWithText(ElevatedButton, 'yardım çağrısıyla paylaş'),
         );
@@ -882,6 +891,7 @@ void main() {
 
         await tester.tap(find.text('yardım'));
         await tester.pump();
+        await tester.ensureVisible(sheetSubmitButton);
         await tester.tap(sheetSubmitButton);
         await tester.pump();
 
@@ -914,6 +924,9 @@ void main() {
           'kabı bomboştu ve halsizdi',
         );
         await tester.pump();
+        await tester.ensureVisible(
+          find.widgetWithText(ElevatedButton, 'yardım çağrısıyla paylaş'),
+        );
         await tester.tap(
           find.widgetWithText(ElevatedButton, 'yardım çağrısıyla paylaş'),
         );
@@ -936,6 +949,7 @@ void main() {
             'upd-1',
             comment: 'kabı bomboştu ve halsizdi',
           );
+        await tester.ensureVisible(retryButton);
         await tester.tap(retryButton);
         await tester.pumpAndSettle();
 

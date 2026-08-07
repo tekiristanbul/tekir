@@ -380,6 +380,7 @@ void main() {
     fakePlatform.nextFile = XFile.fromData(
       Uint8List.fromList([1, 2, 3]),
       name: 'photo.jpg',
+      path: 'photo.jpg',
     );
 
     await notifier.pickPhoto(ImageSource.gallery);
@@ -396,6 +397,7 @@ void main() {
     fakePlatform.nextFile = XFile.fromData(
       Uint8List.fromList([1, 2, 3]),
       name: 'photo.jpg',
+      path: 'photo.jpg',
     );
     await notifier.pickPhoto(ImageSource.gallery);
 
@@ -461,6 +463,7 @@ void main() {
     fakePlatform.nextFile = XFile.fromData(
       Uint8List.fromList([1, 2, 3]),
       name: 'photo.jpg',
+      path: 'photo.jpg',
     );
     await notifier.pickPhoto(ImageSource.gallery);
     notifier.toggleStatus('seen');
@@ -486,6 +489,7 @@ void main() {
     fakePlatform.nextFile = XFile.fromData(
       Uint8List.fromList([1, 2, 3]),
       name: 'photo.jpg',
+      path: 'photo.jpg',
     );
     await notifier.pickPhoto(ImageSource.gallery);
     notifier.toggleStatus('seen');
@@ -511,6 +515,7 @@ void main() {
     fakePlatform.nextFile = XFile.fromData(
       Uint8List.fromList([1, 2, 3]),
       name: 'photo.jpg',
+      path: 'photo.jpg',
     );
     await notifier.pickPhoto(ImageSource.gallery);
     notifier.toggleStatus('seen');
@@ -535,6 +540,7 @@ void main() {
     fakePlatform.nextFile = XFile.fromData(
       Uint8List.fromList([1, 2, 3]),
       name: 'photo.jpg',
+      path: 'photo.jpg',
     );
     await notifier.pickPhoto(ImageSource.gallery);
     notifier.toggleStatus('seen');
