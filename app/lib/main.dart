@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/analytics/analytics.dart';
 import 'core/analytics/screen_view_logging.dart';
+import 'core/config/env.dart';
 import 'core/firebase/firebase_bootstrap.dart';
 import 'core/identity/device_identity.dart';
 import 'core/identity/session_identity.dart';
@@ -15,6 +16,14 @@ import 'core/theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Forces Env.apiBaseUrl resolution here, synchronously, before anything
+  // else starts. Identity providers below also read it, but only inside
+  // `.ignore()`d futures (fire-and-forget by design) — a missing
+  // API_BASE_URL thrown there would never surface. Resolving it up front
+  // means a release build without it crashes at startup instead (issue
+  // #128 review).
+  Env.apiBaseUrl;
 
   // Firebase only comes up when a firebase-backed provider is selected
   // (issue #84); under the local none/fake defaults this returns false
