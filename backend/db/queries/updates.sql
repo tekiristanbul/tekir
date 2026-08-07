@@ -92,6 +92,11 @@ on conflict (update_id, status) do nothing;
 -- reader's view, author included — the service layer, not this query,
 -- decides whether the caller is the author for the purpose of surfacing a
 -- correction affordance (author_user_id is returned for exactly that).
+-- author_display_name (issue #121's timeline-avatar parity gap) is the
+-- author's users.display_name at read time — nullable both because
+-- author_user_id itself can be null (a pre-#65 or seed row) and because a
+-- linked account may never have set one (00015); the service falls back to
+-- a generic avatar when absent, never invents a name.
 select
   u.id,
   u.kind,
@@ -99,12 +104,14 @@ select
   u.created_at,
   u.seq,
   u.author_user_id,
+  au.display_name as author_display_name,
   u.needs_help,
   u.needs_help_category,
   u.needs_help_expires_at,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
+left join users au on au.id = u.author_user_id
 where u.cat_id = sqlc.arg(cat_id)
   and u.deleted_at is null
   and (
@@ -112,7 +119,7 @@ where u.cat_id = sqlc.arg(cat_id)
     or u.created_at < sqlc.narg(before_created_at)::timestamptz
     or (u.created_at = sqlc.narg(before_created_at)::timestamptz and u.seq < sqlc.narg(before_seq)::bigint)
   )
-group by u.id
+group by u.id, au.display_name
 order by u.created_at desc, u.seq desc
 limit sqlc.arg(row_limit)::int;
 

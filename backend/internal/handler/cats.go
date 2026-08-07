@@ -103,14 +103,20 @@ type activeAlertResponse struct {
 }
 
 type catDetailResponse struct {
-	ID           string               `json:"id"`
-	Name         string               `json:"name"`
-	Area         areaLatLng           `json:"area"`
-	AreaLabel    *string              `json:"area_label"`
-	PrimaryPhoto *string              `json:"primary_photo"`
-	CreatedAt    time.Time            `json:"created_at"`
-	LastUpdateAt *time.Time           `json:"last_update_at"`
-	ActiveAlert  *activeAlertResponse `json:"active_alert"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Area         areaLatLng `json:"area"`
+	AreaLabel    *string    `json:"area_label"`
+	PrimaryPhoto *string    `json:"primary_photo"`
+	CreatedAt    time.Time  `json:"created_at"`
+	LastUpdateAt *time.Time `json:"last_update_at"`
+	// LastSeenAt/LastFedAt/LastWaterAt (issue #121) back the cat-profile
+	// three-stat header — each null when the cat has never had an update
+	// carrying that status.
+	LastSeenAt  *time.Time           `json:"last_seen_at"`
+	LastFedAt   *time.Time           `json:"last_fed_at"`
+	LastWaterAt *time.Time           `json:"last_water_at"`
+	ActiveAlert *activeAlertResponse `json:"active_alert"`
 }
 
 // updateResponse is one entry of a cat's newest-first history. NeedsHelp
@@ -134,6 +140,11 @@ type updateResponse struct {
 	NeedsHelpCategoryLabel *string    `json:"needs_help_category_label"`
 	NeedsHelpExpiresAt     *time.Time `json:"needs_help_expires_at"`
 	NeedsHelpActive        *bool      `json:"needs_help_active"`
+	// AuthorDisplayName (issue #121's timeline-avatar parity gap) is the
+	// author's display name, null when the row has no author or the
+	// author never set one — the client falls back to a generic avatar,
+	// never inventing a name or initial.
+	AuthorDisplayName *string `json:"author_display_name"`
 	// AuthorIsMe/CorrectionExpiresAt (issue #80): on GET
 	// /v1/cats/{cat_id}/updates (OptionalBearer), both stay their zero
 	// value (false/null) for a guest read. This same struct also backs
@@ -408,6 +419,9 @@ func (h *CatsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		PrimaryPhoto: detail.PrimaryPhoto,
 		CreatedAt:    detail.CreatedAt,
 		LastUpdateAt: detail.LastUpdateAt,
+		LastSeenAt:   detail.LastSeenAt,
+		LastFedAt:    detail.LastFedAt,
+		LastWaterAt:  detail.LastWaterAt,
 		ActiveAlert:  toActiveAlertResponse(detail.ActiveAlert),
 	})
 }
@@ -459,6 +473,7 @@ func toUpdateResponse(u service.CatUpdate) updateResponse {
 		NeedsHelpCategoryLabel: u.NeedsHelpCategoryLabel,
 		NeedsHelpExpiresAt:     u.NeedsHelpExpiresAt,
 		NeedsHelpActive:        u.NeedsHelpActive,
+		AuthorDisplayName:      u.AuthorDisplayName,
 		AuthorIsMe:             u.AuthorIsMe,
 		CorrectionExpiresAt:    u.CorrectionExpiresAt,
 	}
