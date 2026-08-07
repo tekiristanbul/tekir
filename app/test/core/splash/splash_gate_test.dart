@@ -22,6 +22,9 @@ class _ControlledSessionService implements SessionIdentityService {
   Future<SessionIdentity?> restore() => _completer.future;
 
   @override
+  Future<SessionIdentity?> refreshIfExpired() async => null;
+
+  @override
   Future<void> save(SessionIdentity identity) async {}
 
   @override

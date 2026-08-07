@@ -34,6 +34,9 @@ class _FakeSessionIdentityService implements SessionIdentityService {
   Future<SessionIdentity?> restore() async => _cached;
 
   @override
+  Future<SessionIdentity?> refreshIfExpired() async => _cached;
+
+  @override
   Future<void> save(SessionIdentity identity) async => _cached = identity;
 
   @override

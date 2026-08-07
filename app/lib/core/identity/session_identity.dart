@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -51,6 +52,7 @@ class SessionIdentityService {
 
   SessionIdentity? _cached;
   Future<SessionIdentity?>? _restoreFuture;
+  Future<SessionIdentity?>? _refreshFuture;
 
   /// Returns the cached session without waiting for restoration. The
   /// [BearerInterceptor] calls this synchronously on each request so it can
@@ -83,7 +85,47 @@ class SessionIdentityService {
     final refreshToken = await _storage.read(_keyRefreshToken);
     final userId = await _storage.read(_keyUserId);
     if (refreshToken == null || userId == null) return null;
+    return _rotate(refreshToken: refreshToken, userId: userId);
+  }
 
+  /// Rotates the session's tokens if the cached access token has expired
+  /// (issue #155) — call when the app returns to the foreground, since
+  /// access tokens are short-lived (backend default 15m: [[api]]) and
+  /// nothing else proactively refreshes one mid-session. A no-op for a
+  /// guest (nothing cached) or a still-fresh token. Concurrent calls share
+  /// one in-flight rotation, mirroring [restore]. A failed rotation
+  /// (expired/revoked refresh token) clears the session so the app falls
+  /// back to the guest state instead of replaying a dead credential.
+  Future<SessionIdentity?> refreshIfExpired() {
+    final current = _cached;
+    if (current == null || !_isAccessTokenExpired(current.accessToken)) {
+      return Future.value(current);
+    }
+    _refreshFuture ??=
+        _rotate(
+          refreshToken: current.refreshToken,
+          userId: current.userId,
+        ).then(
+          (id) {
+            _cached = id;
+            _refreshFuture = null;
+            return id;
+          },
+          onError: (Object _) {
+            // An unexpected (non-DioException) failure, e.g. a local storage
+            // write error — leave the still-cached, if stale, session alone
+            // rather than forcing a sign-out over a transient local problem.
+            _refreshFuture = null;
+            return current;
+          },
+        );
+    return _refreshFuture!;
+  }
+
+  Future<SessionIdentity?> _rotate({
+    required String refreshToken,
+    required String userId,
+  }) async {
     try {
       final response = await _dio.post<Map<String, dynamic>>(
         '/v1/auth/refresh',
@@ -198,6 +240,32 @@ class SessionIdentityService {
   }
 }
 
+/// Reads (without verifying — the server is the only party that needs to
+/// trust it) the `exp` claim out of an access token jwt's payload segment,
+/// treating anything malformed as already expired. A 30s leeway means a
+/// token that's about to expire gets rotated proactively rather than
+/// possibly failing the very request it's attached to.
+bool _isAccessTokenExpired(String accessToken) {
+  final parts = accessToken.split('.');
+  if (parts.length != 3) return true;
+  try {
+    final payload =
+        jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))))
+            as Map<String, dynamic>;
+    final exp = payload['exp'];
+    if (exp is! int) return true;
+    final expiresAt = DateTime.fromMillisecondsSinceEpoch(
+      exp * 1000,
+      isUtc: true,
+    );
+    return !expiresAt
+        .subtract(const Duration(seconds: 30))
+        .isAfter(DateTime.now().toUtc());
+  } catch (_) {
+    return true;
+  }
+}
+
 /// Provides the [SessionIdentityService] as a singleton, mirroring
 /// [deviceIdentityServiceProvider]'s construction exactly.
 final sessionIdentityServiceProvider = Provider<SessionIdentityService>((ref) {
@@ -230,6 +298,20 @@ class SessionNotifier extends AsyncNotifier<SessionIdentity?> {
   Future<void> save(SessionIdentity identity) async {
     await ref.read(sessionIdentityServiceProvider).save(identity);
     state = AsyncData(identity);
+  }
+
+  /// Rotates the session's tokens if the access token expired while the
+  /// app was backgrounded (issue #155) — call when the app resumes to the
+  /// foreground. A no-op for a guest or an already-fresh token. Never
+  /// transitions state through `AsyncLoading`, so resuming never flashes a
+  /// loading state over screens already showing the previous session's
+  /// data; a failed rotation still lands here as `AsyncData(null)`, moving
+  /// the app to the guest state exactly like a normal logout would.
+  Future<void> refreshIfNeeded() async {
+    final refreshed = await ref
+        .read(sessionIdentityServiceProvider)
+        .refreshIfExpired();
+    state = AsyncData(refreshed);
   }
 
   /// Logs out and updates state immediately, regardless of whether the

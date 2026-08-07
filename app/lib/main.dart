@@ -49,11 +49,43 @@ Future<void> main() async {
   );
 }
 
-class CatsOfIstanbulApp extends ConsumerWidget {
+class CatsOfIstanbulApp extends ConsumerStatefulWidget {
   const CatsOfIstanbulApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CatsOfIstanbulApp> createState() => _CatsOfIstanbulAppState();
+}
+
+class _CatsOfIstanbulAppState extends ConsumerState<CatsOfIstanbulApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Issue #155: the access token is short-lived (backend default 15m)
+    // and nothing else proactively refreshes one mid-session, so a
+    // session left in the background past that point would otherwise stay
+    // broken until the user force-closes and reopens the app. Fire-and-
+    // forget, same convention as the cold-start restore below — never
+    // blocks the resumed ui, and is a no-op for a guest or a still-fresh
+    // token.
+    if (state == AppLifecycleState.resumed) {
+      ref.read(sessionProvider.notifier).refreshIfNeeded().ignore();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // Fire-and-forget: start identity initialization without blocking the UI.
     // Registration failures are silently ignored — public read routes remain
     // accessible. The interceptor attaches the token once init completes.
