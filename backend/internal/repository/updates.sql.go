@@ -383,10 +383,12 @@ select
   u.needs_help,
   u.needs_help_category,
   u.needs_help_expires_at,
+  um.url as photo_url,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
 left join users au on au.id = u.author_user_id
+left join media um on um.id = u.media_id
 where u.cat_id = $1
   and u.deleted_at is null
   and (
@@ -394,7 +396,7 @@ where u.cat_id = $1
     or u.created_at < $2::timestamptz
     or (u.created_at = $2::timestamptz and u.seq < $3::bigint)
   )
-group by u.id, au.display_name
+group by u.id, au.display_name, um.url
 order by u.created_at desc, u.seq desc
 limit $4::int
 `
@@ -417,6 +419,7 @@ type ListCatUpdatesRow struct {
 	NeedsHelp          bool               `json:"needs_help"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
+	PhotoUrl           pgtype.Text        `json:"photo_url"`
 	Statuses           []string           `json:"statuses"`
 }
 
@@ -432,9 +435,16 @@ type ListCatUpdatesRow struct {
 // reader's view, author included — the service layer, not this query,
 // decides whether the caller is the author for the purpose of surfacing a
 // correction affordance (author_user_id is returned for exactly that).
-// author_display_name (issue #121) is the author's users.display_name at
-// read time, nullable per that column's own contract (00015) — the service
-// falls back to a generic avatar when absent.
+// author_display_name (issue #121's timeline-avatar parity gap) is the
+// author's users.display_name at read time — nullable both because
+// author_user_id itself can be null (a pre-#65 or seed row) and because a
+// linked account may never have set one (00015); the service falls back to
+// a generic avatar when absent, never invents a name. photo_url (issue
+// #121's timeline-thumbnail parity gap) resolves u.media_id to its media
+// row's url, left-joined since no write path sets media_id yet (see
+// migration 00024) — every row reads null today, and the client omits the
+// thumbnail exactly like it already omits the correction menu for a
+// comment-less row.
 func (q *Queries) ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) ([]ListCatUpdatesRow, error) {
 	rows, err := q.db.Query(ctx, listCatUpdates,
 		arg.CatID,
@@ -460,6 +470,7 @@ func (q *Queries) ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) 
 			&i.NeedsHelp,
 			&i.NeedsHelpCategory,
 			&i.NeedsHelpExpiresAt,
+			&i.PhotoUrl,
 			&i.Statuses,
 		); err != nil {
 			return nil, err

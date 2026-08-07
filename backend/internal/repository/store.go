@@ -104,15 +104,18 @@ type CreateCatWithMediaRow struct {
 }
 
 // CreateCatWithMedia inserts the media row for a new cat's required photo,
-// then the cats row referencing it via primary_photo_id, both in one
-// transaction — mirroring CreateOrdinaryUpdate's shape below. If either
-// insert fails (including the cats-table idempotency conflict — see
-// CreateCat's comment — which surfaces as pgx.ErrNoRows here), the whole
-// transaction rolls back: the media row never survives without a cat
-// pointing at it. CatsService.Create is responsible for compensating the
-// object already uploaded to storage on any error this returns, and for
-// resolving the idempotency-conflict case to the cat an earlier, successful
-// call already created.
+// then the cats row referencing it via primary_photo_id, then the cat_media
+// archive row linking the two (issue #121: the cover photo is the cat's
+// first photo-archive entry, backing the design's cover photo-count pill
+// and "medya" tab from the moment a cat exists), all in one transaction —
+// mirroring CreateOrdinaryUpdate's shape below. If any insert fails
+// (including the cats-table idempotency conflict — see CreateCat's comment
+// — which surfaces as pgx.ErrNoRows here), the whole transaction rolls
+// back: the media row never survives without a cat pointing at it, and the
+// cat never survives without its archive entry. CatsService.Create is
+// responsible for compensating the object already uploaded to storage on
+// any error this returns, and for resolving the idempotency-conflict case
+// to the cat an earlier, successful call already created.
 func (s *Store) CreateCatWithMedia(ctx context.Context, arg CreateCatWithMediaParams) (CreateCatWithMediaRow, error) {
 	var result CreateCatWithMediaRow
 	err := s.withTx(ctx, func(q *Queries) error {
@@ -124,6 +127,13 @@ func (s *Store) CreateCatWithMedia(ctx context.Context, arg CreateCatWithMediaPa
 		catParams.PrimaryPhotoID = pgtype.UUID{Bytes: media.ID.Bytes, Valid: true}
 		cat, err := q.CreateCat(ctx, catParams)
 		if err != nil {
+			return err
+		}
+		if _, err := q.CreateCatMedia(ctx, CreateCatMediaParams{
+			CatID:     pgtype.UUID{Bytes: cat.ID.Bytes, Valid: true},
+			MediaID:   pgtype.UUID{Bytes: media.ID.Bytes, Valid: true},
+			CreatedAt: cat.CreatedAt,
+		}); err != nil {
 			return err
 		}
 		result = CreateCatWithMediaRow{Cat: cat, Media: media}

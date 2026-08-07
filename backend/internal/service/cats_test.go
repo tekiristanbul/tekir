@@ -76,6 +76,20 @@ type fakeCatsLister struct {
 	// capturedNeedsHelpDistance mirrors captured above, for
 	// ListActiveNeedsHelpCatsByDistance.
 	capturedNeedsHelpDistance *repository.ListActiveNeedsHelpCatsByDistanceParams
+
+	mediaCount    int64
+	mediaCountErr error
+
+	mediaRows []repository.ListCatMediaRow
+	mediaErr  error
+}
+
+func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {
+	return f.mediaCount, f.mediaCountErr
+}
+
+func (f fakeCatsLister) ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatMediaRow, error) {
+	return f.mediaRows, f.mediaErr
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
@@ -273,6 +287,28 @@ func TestCatsService_GetCatDetail(t *testing.T) {
 	}
 }
 
+// TestCatsService_GetCatDetail_MediaCount covers issue #121's cover
+// photo-counter parity gap: the count comes straight from CountCatMedia,
+// not derived from PrimaryPhoto's presence.
+func TestCatsService_GetCatDetail_MediaCount(t *testing.T) {
+	id := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:   pgtype.UUID{Bytes: id, Valid: true},
+			Name: pgtype.Text{String: "tekir", Valid: true},
+		},
+		mediaCount: 3,
+	})
+
+	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if detail.MediaCount != 3 {
+		t.Errorf("expected media_count 3, got %d", detail.MediaCount)
+	}
+}
+
 // TestCatsService_GetCatDetail_ThreeStatTimestamps covers issue #121's
 // three-stat header fields: each of last_seen_at/last_fed_at/last_water_at
 // is independent — a cat can have some, all, or none of them set, and a
@@ -467,6 +503,44 @@ func TestCatsService_ListCatUpdates_AuthorDisplayName(t *testing.T) {
 	}
 	if page.Items[1].AuthorDisplayName != nil {
 		t.Errorf("expected nil author_display_name for authorless row, got %v", *page.Items[1].AuthorDisplayName)
+	}
+}
+
+// TestCatsService_ListCatUpdates_PhotoURL covers issue #121's
+// timeline-thumbnail parity gap: a row whose media_id resolves to a media
+// url surfaces it, while a row with no media stays nil.
+func TestCatsService_ListCatUpdates_PhotoURL(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{
+		exists: true,
+		updateRows: []repository.ListCatUpdatesRow{
+			{
+				ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Valid: true},
+				Seq:       pgtype.Int8{Int64: 2, Valid: true},
+				Statuses:  []string{"seen"},
+				PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+			},
+			{
+				ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true},
+				Seq:       pgtype.Int8{Int64: 1, Valid: true},
+				Statuses:  []string{"fed"},
+			},
+		},
+	})
+
+	page, err := svc.ListCatUpdates(context.Background(), uuid.New().String(), "", 0, "")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(page.Items))
+	}
+	if page.Items[0].PhotoURL == nil || *page.Items[0].PhotoURL != "https://placecats.com/millie/300/200" {
+		t.Errorf("expected photo_url set, got %v", page.Items[0].PhotoURL)
+	}
+	if page.Items[1].PhotoURL != nil {
+		t.Errorf("expected nil photo_url for medialess row, got %v", *page.Items[1].PhotoURL)
 	}
 }
 
@@ -1749,5 +1823,52 @@ func TestCatsService_ListDiscover_EmptyResult(t *testing.T) {
 	}
 	if page.NextCursor != "" {
 		t.Errorf("expected no next cursor for an empty result, got %v", page.NextCursor)
+	}
+}
+
+// TestCatsService_ListCatMedia covers issue #121's media-archive parity
+// gap: the archive comes back newest-first with the cover entry flagged.
+func TestCatsService_ListCatMedia(t *testing.T) {
+	coverID := uuid.New()
+	otherID := uuid.New()
+	newest := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	oldest := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	svc := NewCatsService(fakeCatsLister{
+		exists: true,
+		mediaRows: []repository.ListCatMediaRow{
+			{ID: pgtype.UUID{Bytes: otherID, Valid: true}, Url: "https://placecats.com/a/300/200", CreatedAt: pgtype.Timestamptz{Time: newest, Valid: true}, IsCover: false},
+			{ID: pgtype.UUID{Bytes: coverID, Valid: true}, Url: "https://placecats.com/millie/300/200", CreatedAt: pgtype.Timestamptz{Time: oldest, Valid: true}, IsCover: true},
+		},
+	})
+
+	items, err := svc.ListCatMedia(context.Background(), uuid.New().String())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if items[1].ID != coverID.String() || !items[1].IsCover {
+		t.Errorf("expected the second item to be the flagged cover, got %+v", items[1])
+	}
+	if items[0].IsCover {
+		t.Errorf("expected the first item not to be flagged as cover, got %+v", items[0])
+	}
+}
+
+func TestCatsService_ListCatMedia_UnknownCat(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{exists: false})
+
+	if _, err := svc.ListCatMedia(context.Background(), uuid.New().String()); !errors.Is(err, ErrCatNotFound) {
+		t.Errorf("expected ErrCatNotFound, got %v", err)
+	}
+}
+
+func TestCatsService_ListCatMedia_InvalidCatID(t *testing.T) {
+	svc := NewCatsService(fakeCatsLister{})
+
+	if _, err := svc.ListCatMedia(context.Background(), "not-a-uuid"); !errors.Is(err, ErrInvalidCatID) {
+		t.Errorf("expected ErrInvalidCatID, got %v", err)
 	}
 }

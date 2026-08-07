@@ -96,7 +96,12 @@ on conflict (update_id, status) do nothing;
 -- author's users.display_name at read time — nullable both because
 -- author_user_id itself can be null (a pre-#65 or seed row) and because a
 -- linked account may never have set one (00015); the service falls back to
--- a generic avatar when absent, never invents a name.
+-- a generic avatar when absent, never invents a name. photo_url (issue
+-- #121's timeline-thumbnail parity gap) resolves u.media_id to its media
+-- row's url, left-joined since no write path sets media_id yet (see
+-- migration 00024) — every row reads null today, and the client omits the
+-- thumbnail exactly like it already omits the correction menu for a
+-- comment-less row.
 select
   u.id,
   u.kind,
@@ -108,10 +113,12 @@ select
   u.needs_help,
   u.needs_help_category,
   u.needs_help_expires_at,
+  um.url as photo_url,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
 left join users au on au.id = u.author_user_id
+left join media um on um.id = u.media_id
 where u.cat_id = sqlc.arg(cat_id)
   and u.deleted_at is null
   and (
@@ -119,7 +126,7 @@ where u.cat_id = sqlc.arg(cat_id)
     or u.created_at < sqlc.narg(before_created_at)::timestamptz
     or (u.created_at = sqlc.narg(before_created_at)::timestamptz and u.seq < sqlc.narg(before_seq)::bigint)
   )
-group by u.id, au.display_name
+group by u.id, au.display_name, um.url
 order by u.created_at desc, u.seq desc
 limit sqlc.arg(row_limit)::int;
 
