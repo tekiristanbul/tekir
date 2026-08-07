@@ -114,7 +114,7 @@ void main() {
       expect(uri.queryParameters['subject'], 'Tekir 0.1 geri bildirimi');
       expect(
         uri.queryParameters['body'],
-        'Uygulama sürümü: 0.1\n'
+        'Uygulama sürümü: 0.2\n'
         'Platform: Android\n'
         '\n'
         'Geri bildirimin:\n',

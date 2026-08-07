@@ -11,9 +11,9 @@ const kFeedbackEmail = 'hello@tekir.istanbul';
 
 const _feedbackSubject = 'Tekir 0.1 geri bildirimi';
 
-/// Hardcoded on purpose: 0.1 is the release identity, while pubspec's
-/// `version:` is the build/tooling version — they intentionally differ.
-const _appVersion = '0.1';
+/// Release identity shown to users, distinct from pubspec's `version:`
+/// (the build/tooling version). Bump alongside each release.
+const _appVersion = '0.2';
 
 /// Injectable so tests can capture the constructed [Uri] and simulate a
 /// device without a configured mail app; defaults to url_launcher.
