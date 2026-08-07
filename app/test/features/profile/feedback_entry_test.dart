@@ -111,7 +111,7 @@ void main() {
 
       expect(uri.scheme, 'mailto');
       expect(uri.path, 'hello@tekir.istanbul');
-      expect(uri.queryParameters['subject'], 'Tekir 0.1 geri bildirimi');
+      expect(uri.queryParameters['subject'], 'Tekir 0.2 geri bildirimi');
       expect(
         uri.queryParameters['body'],
         'Uygulama sürümü: 0.2\n'
