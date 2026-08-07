@@ -482,6 +482,7 @@ class _PhotoPicker extends StatelessWidget {
                         right: 4,
                         top: 4,
                         child: GestureDetector(
+                          key: const Key('removePhotoButton'),
                           onTap: onRemove,
                           child: const DecoratedBox(
                             decoration: BoxDecoration(

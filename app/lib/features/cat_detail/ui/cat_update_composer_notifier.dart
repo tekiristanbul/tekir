@@ -323,16 +323,13 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
         _fail(UpdateSubmitError.unauthorized);
         return false;
       }
-      // Lazily initializes (or awaits an in-flight, or retries a
-      // previously failed) device identity for optional association with
-      // the update (author_device_id) — never required for authorization,
-      // and never triggered merely by viewing the read-only cat-detail
-      // screen, only by an actual submit.
-      await ref.read(deviceIdentityServiceProvider).init();
       // issue #153: a photo is uploaded standalone via POST /v1/media
       // first (driving uploadProgress as its multipart body leaves the
       // device), then referenced by id on the update write below — never
-      // sent as part of that request's own body.
+      // sent as part of that request's own body. This must stay the first
+      // await in this branch (device identity init below runs after it)
+      // so the very first progress event lands in the same synchronous
+      // stretch as the tap, matching AddCatState's upload feedback.
       String? mediaId;
       if (photoBytes != null) {
         mediaId = await ref
@@ -349,6 +346,12 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
               },
             );
       }
+      // Lazily initializes (or awaits an in-flight, or retries a
+      // previously failed) device identity for optional association with
+      // the update (author_device_id) — never required for authorization,
+      // and never triggered merely by viewing the read-only cat-detail
+      // screen, only by an actual submit.
+      await ref.read(deviceIdentityServiceProvider).init();
       final entry = await ref
           .read(catDetailApiProvider)
           .createUpdate(
