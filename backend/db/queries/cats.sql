@@ -70,7 +70,9 @@ order by c.created_at desc;
 -- structured status — one lateral per status, same shape as the nh lateral
 -- above, rather than a single group-by (each status's own latest update
 -- may not be the same row). soft-deleted updates are excluded, matching
--- every other read path.
+-- every other read path. created_by_user_id (issue #156) lets CatsService
+-- derive is_owner without a second query — a pre-#70 seed cat has it null,
+-- so is_owner is always false for one, matching that no account can own it.
 select
   c.id,
   c.name,
@@ -78,6 +80,7 @@ select
   st_y(c.area::geometry)::float8 as lat,
   c.area_label,
   coalesce(c.photo_url, m.url, '') as photo_url,
+  c.created_by_user_id,
   c.created_at,
   c.last_update_at,
   nh.needs_help_category,
@@ -121,6 +124,14 @@ left join lateral (
   limit 1
 ) water on true
 where c.id = sqlc.arg(id);
+
+-- name: SetCatCoverPhoto :exec
+-- issue #156: switches a cat's cover to an existing entry from its own
+-- cat_media archive. CatsService verifies both ownership (created_by_user_id
+-- matches the caller) and gallery membership (a GetCatMediaByCatAndMedia hit)
+-- before ever issuing this update — this query itself trusts both checks
+-- already happened and only writes.
+update cats set primary_photo_id = sqlc.arg(primary_photo_id) where id = sqlc.arg(id);
 
 -- name: CatExists :one
 -- lets the updates-history endpoint 404 on an unknown cat instead of

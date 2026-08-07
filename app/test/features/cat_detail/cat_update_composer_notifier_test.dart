@@ -198,6 +198,10 @@ class _FakeCatDetailApi implements CatDetailApi {
 
   @override
   Future<List<CatMediaItem>> fetchMedia(String catId) async => const [];
+
+  @override
+  Future<CatDetail> setCoverPhoto(String catId, String mediaId) =>
+      throw UnimplementedError();
 }
 
 // Returns a malformed (missing device_id/device_token) body on the first
@@ -454,105 +458,127 @@ void main() {
     expect(api.lastComment, isNull);
   });
 
-  test('a submit with a picked photo uploads it first and passes media_id', () async {
-    final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
-    final container = _containerWith(api);
-    addTearDown(container.dispose);
-    await container.read(catDetailProvider(_catId).notifier).load();
-    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
-    fakePlatform.nextFile = XFile.fromData(
-      Uint8List.fromList([1, 2, 3]),
-      name: 'photo.jpg',
-      path: 'photo.jpg',
-    );
-    await notifier.pickPhoto(ImageSource.gallery);
-    notifier.toggleStatus('seen');
+  test(
+    'a submit with a picked photo uploads it first and passes media_id',
+    () async {
+      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      await notifier.pickPhoto(ImageSource.gallery);
+      notifier.toggleStatus('seen');
 
-    final ok = await notifier.submit();
+      final ok = await notifier.submit();
 
-    expect(ok, isTrue);
-    expect(api.uploadMediaCalls, 1);
-    expect(api.lastPhotoFilename, 'photo.jpg');
-    expect(api.lastMediaId, 'media-1');
-    expect(container.read(catUpdateComposerProvider(_catId)).pending, isNull);
-  });
+      expect(ok, isTrue);
+      expect(api.uploadMediaCalls, 1);
+      expect(api.lastPhotoFilename, 'photo.jpg');
+      expect(api.lastMediaId, 'media-1');
+      expect(container.read(catUpdateComposerProvider(_catId)).pending, isNull);
+    },
+  );
 
-  test('a photo upload drives progress while the sheet stays synchronous', () async {
-    final api = _FakeCatDetailApi()
-      ..nextResult = _entry('upd-1')
-      ..uploadGate = Completer<void>()
-      ..uploadProgressEvent = (3, 4);
-    final container = _containerWith(api);
-    addTearDown(container.dispose);
-    await container.read(catDetailProvider(_catId).notifier).load();
-    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
-    fakePlatform.nextFile = XFile.fromData(
-      Uint8List.fromList([1, 2, 3]),
-      name: 'photo.jpg',
-      path: 'photo.jpg',
-    );
-    await notifier.pickPhoto(ImageSource.gallery);
-    notifier.toggleStatus('seen');
+  test(
+    'a photo upload drives progress while the sheet stays synchronous',
+    () async {
+      final api = _FakeCatDetailApi()
+        ..nextResult = _entry('upd-1')
+        ..uploadGate = Completer<void>()
+        ..uploadProgressEvent = (3, 4);
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      await notifier.pickPhoto(ImageSource.gallery);
+      notifier.toggleStatus('seen');
 
-    final future = notifier.submit();
+      final future = notifier.submit();
 
-    final stateWhileUploading = container.read(catUpdateComposerProvider(_catId));
-    expect(stateWhileUploading.isSubmitting, isTrue);
-    expect(stateWhileUploading.uploadProgress, 0.75);
-    expect(stateWhileUploading.pending, isNull);
+      final stateWhileUploading = container.read(
+        catUpdateComposerProvider(_catId),
+      );
+      expect(stateWhileUploading.isSubmitting, isTrue);
+      expect(stateWhileUploading.uploadProgress, 0.75);
+      expect(stateWhileUploading.pending, isNull);
 
-    api.uploadGate!.complete();
-    await future;
-  });
+      api.uploadGate!.complete();
+      await future;
+    },
+  );
 
-  test('a photo upload failure keeps the draft and maps a retryable error', () async {
-    final api = _FakeCatDetailApi()
-      ..uploadError = const UpdateMediaTooLargeException();
-    final container = _containerWith(api);
-    addTearDown(container.dispose);
-    await container.read(catDetailProvider(_catId).notifier).load();
-    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
-    fakePlatform.nextFile = XFile.fromData(
-      Uint8List.fromList([1, 2, 3]),
-      name: 'photo.jpg',
-      path: 'photo.jpg',
-    );
-    await notifier.pickPhoto(ImageSource.gallery);
-    notifier.toggleStatus('seen');
+  test(
+    'a photo upload failure keeps the draft and maps a retryable error',
+    () async {
+      final api = _FakeCatDetailApi()
+        ..uploadError = const UpdateMediaTooLargeException();
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      await notifier.pickPhoto(ImageSource.gallery);
+      notifier.toggleStatus('seen');
 
-    final ok = await notifier.submit();
+      final ok = await notifier.submit();
 
-    expect(ok, isFalse);
-    final state = container.read(catUpdateComposerProvider(_catId));
-    expect(state.error, UpdateSubmitError.mediaTooLarge);
-    expect(state.photoBytes, isNotNull);
-    expect(state.selectedStatuses, {'seen'});
-  });
+      expect(ok, isFalse);
+      final state = container.read(catUpdateComposerProvider(_catId));
+      expect(state.error, UpdateSubmitError.mediaTooLarge);
+      expect(state.photoBytes, isNotNull);
+      expect(state.selectedStatuses, {'seen'});
+    },
+  );
 
-  test('media not found clears the picked photo and requires a fresh pick', () async {
-    final api = _FakeCatDetailApi()
-      ..uploadError = null
-      ..nextError = const UpdateMediaNotFoundException();
-    final container = _containerWith(api);
-    addTearDown(container.dispose);
-    await container.read(catDetailProvider(_catId).notifier).load();
-    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
-    fakePlatform.nextFile = XFile.fromData(
-      Uint8List.fromList([1, 2, 3]),
-      name: 'photo.jpg',
-      path: 'photo.jpg',
-    );
-    await notifier.pickPhoto(ImageSource.gallery);
-    notifier.toggleStatus('seen');
+  test(
+    'media not found clears the picked photo and requires a fresh pick',
+    () async {
+      final api = _FakeCatDetailApi()
+        ..uploadError = null
+        ..nextError = const UpdateMediaNotFoundException();
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      await notifier.pickPhoto(ImageSource.gallery);
+      notifier.toggleStatus('seen');
 
-    final ok = await notifier.submit();
+      final ok = await notifier.submit();
 
-    expect(ok, isFalse);
-    final state = container.read(catUpdateComposerProvider(_catId));
-    expect(state.error, UpdateSubmitError.mediaNotFound);
-    expect(state.photoBytes, isNull);
-    expect(state.photoFilename, isNull);
-  });
+      expect(ok, isFalse);
+      final state = container.read(catUpdateComposerProvider(_catId));
+      expect(state.error, UpdateSubmitError.mediaNotFound);
+      expect(state.photoBytes, isNull);
+      expect(state.photoFilename, isNull);
+    },
+  );
 
   group('idempotency key (issue #80 product-owner review, finding 4)', () {
     test(

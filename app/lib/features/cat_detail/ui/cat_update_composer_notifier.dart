@@ -169,9 +169,7 @@ class CatUpdateComposerState {
       error: clearError ? null : (error ?? this.error),
       pending: clearPending ? null : (pending ?? this.pending),
       photoBytes: clearPhoto ? null : (photoBytes ?? this.photoBytes),
-      photoFilename: clearPhoto
-          ? null
-          : (photoFilename ?? this.photoFilename),
+      photoFilename: clearPhoto ? null : (photoFilename ?? this.photoFilename),
       uploadProgress: clearUploadProgress
           ? null
           : (uploadProgress ?? this.uploadProgress),

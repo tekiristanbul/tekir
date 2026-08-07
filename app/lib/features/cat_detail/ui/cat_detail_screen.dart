@@ -198,6 +198,7 @@ class _CatDetailBody extends ConsumerWidget {
               _HistoryMediaSection(
                 catId: detail.id,
                 mediaCount: detail.mediaCount,
+                isOwner: detail.isOwner,
                 updates: state.updates,
                 pending: pending,
                 hasNextPage: state.hasNextPage,
@@ -298,9 +299,9 @@ class _HeroPhoto extends StatelessWidget {
 
   /// The full-screen view (binding design, frame D): dark surface, the
   /// photo `contain`ed with no crop, a single close action. "ana fotoğraf
-  /// yap" belongs to the media archive's per-update items and its media
-  /// api — out of 0.2 scope — so the cover's own view carries no action
-  /// but closing.
+  /// yap" (issue #156) belongs to the media archive grid's own tiles,
+  /// which carry a media id this cover photo string alone doesn't — so
+  /// the cover's own view still carries no action but closing.
   void _openFullScreen(BuildContext context, String photo) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -398,13 +399,54 @@ class _IdentityBlock extends StatelessWidget {
   }
 }
 
-class _FullScreenPhoto extends StatelessWidget {
-  const _FullScreenPhoto({required this.photo});
+/// The uncropped full-screen photo view (binding design frame D). `catId`/
+/// `mediaId` are non-null only when opened from the media archive grid by
+/// the cat's own owner (issue #156) — that's the one case that renders the
+/// "ana fotoğraf yap" (make cover photo) action; the cover's own view and a
+/// timeline thumbnail's both open this with those null, carrying no action
+/// but closing, exactly as before.
+class _FullScreenPhoto extends ConsumerStatefulWidget {
+  const _FullScreenPhoto({
+    required this.photo,
+    this.catId,
+    this.mediaId,
+    this.isCover = false,
+  });
 
   final String photo;
+  final String? catId;
+  final String? mediaId;
+  final bool isCover;
+
+  @override
+  ConsumerState<_FullScreenPhoto> createState() => _FullScreenPhotoState();
+}
+
+class _FullScreenPhotoState extends ConsumerState<_FullScreenPhoto> {
+  bool _submitting = false;
+
+  Future<void> _setAsCover() async {
+    final catId = widget.catId;
+    final mediaId = widget.mediaId;
+    if (catId == null || mediaId == null || widget.isCover || _submitting) {
+      return;
+    }
+    setState(() => _submitting = true);
+    try {
+      await ref.read(catDetailProvider(catId).notifier).setCoverPhoto(mediaId);
+      if (mounted) Navigator.of(context).pop();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kapak fotoğrafı değiştirilemedi')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final showCoverAction = widget.catId != null && widget.mediaId != null;
     return Scaffold(
       backgroundColor: const Color(0xFF141010),
       body: Stack(
@@ -412,7 +454,7 @@ class _FullScreenPhoto extends StatelessWidget {
         children: [
           Center(
             child: CachedNetworkImage(
-              imageUrl: photo,
+              imageUrl: widget.photo,
               fit: BoxFit.contain,
               placeholder: (context, _) => const InlineSpinner(
                 size: 28,
@@ -445,7 +487,88 @@ class _FullScreenPhoto extends StatelessWidget {
               ),
             ),
           ),
+          if (showCoverAction)
+            Positioned(
+              left: AppSpacing.s4,
+              right: AppSpacing.s4,
+              bottom: AppSpacing.s5,
+              child: SafeArea(
+                top: false,
+                child: _SetCoverButton(
+                  isCover: widget.isCover,
+                  isSubmitting: _submitting,
+                  onPressed: _setAsCover,
+                ),
+              ),
+            ),
         ],
+      ),
+    );
+  }
+}
+
+/// The full-screen view's "ana fotoğraf yap" button (design frame D):
+/// active until the shown photo is already the cover, at which point it
+/// reads "ana fotoğraf" and goes passive — mirrors the design's own note
+/// that an already-cover entry shows a disabled button, not a hidden one,
+/// so the owner can tell at a glance which photo is currently the cover.
+class _SetCoverButton extends StatelessWidget {
+  const _SetCoverButton({
+    required this.isCover,
+    required this.isSubmitting,
+    required this.onPressed,
+  });
+
+  final bool isCover;
+  final bool isSubmitting;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final disabled = isCover || isSubmitting;
+    return Material(
+      color: disabled
+          ? AppColors.primary.withValues(alpha: 0.5)
+          : AppColors.primary,
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        onTap: disabled ? null : onPressed,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: kTapMin),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s4,
+              vertical: AppSpacing.s3,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (isSubmitting)
+                  const InlineSpinner(
+                    size: 17,
+                    color: AppColors.primaryInk,
+                    trackColor: Color(0x33FFFFFF),
+                  )
+                else
+                  const Icon(
+                    Icons.photo_outlined,
+                    size: 17,
+                    color: AppColors.primaryInk,
+                  ),
+                const SizedBox(width: 9),
+                Text(
+                  isCover ? 'ana fotoğraf' : 'ana fotoğraf yap',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.primaryInk,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -706,6 +829,7 @@ class _HistoryMediaSection extends ConsumerStatefulWidget {
   const _HistoryMediaSection({
     required this.catId,
     required this.mediaCount,
+    required this.isOwner,
     required this.updates,
     required this.pending,
     required this.hasNextPage,
@@ -715,6 +839,9 @@ class _HistoryMediaSection extends ConsumerStatefulWidget {
 
   final String catId;
   final int mediaCount;
+  // isOwner (issue #156) gates the media grid's "ana fotoğraf yap" (make
+  // cover photo) affordance — only the cat's own owner ever sees it.
+  final bool isOwner;
   final List<CatUpdateEntry> updates;
   final PendingUpdate? pending;
   final bool hasNextPage;
@@ -808,7 +935,11 @@ class _HistoryMediaSectionState extends ConsumerState<_HistoryMediaSection> {
                 crossAxisSpacing: AppSpacing.s2,
                 childAspectRatio: 1,
               ),
-              itemBuilder: (context, i) => _MediaTile(item: items[i]),
+              itemBuilder: (context, i) => _MediaTile(
+                catId: widget.catId,
+                item: items[i],
+                isOwner: widget.isOwner,
+              ),
             ),
             const SizedBox(height: AppSpacing.s3),
             const SizedBox(
@@ -947,11 +1078,24 @@ class _ProfileSegment extends StatelessWidget {
 /// One entry of the "medya" archive grid (binding design's `.med.sm` tile):
 /// square, rounded, tap opens the same uncropped full-screen view the cover
 /// photo uses. [CatMediaItem.isCover] marks the cat's current cover photo
-/// with the design's "ana" badge — never any other entry.
+/// with the design's "ana" badge — never any other entry. The uploader
+/// (issue #154's media-attribution parity gap) renders with the same
+/// [_TimelineAvatar] the update timeline already uses, so a media entry's
+/// attribution reads identically to a text update's — never a second
+/// visual language just because the entry happens to carry a photo. Only
+/// this grid's own full-screen view carries the "ana fotoğraf yap" (make
+/// cover photo) action (issue #156, design frame D) — never the cover's
+/// own view or a timeline thumbnail's, and only when [isOwner].
 class _MediaTile extends StatelessWidget {
-  const _MediaTile({required this.item});
+  const _MediaTile({
+    required this.catId,
+    required this.item,
+    required this.isOwner,
+  });
 
+  final String catId;
   final CatMediaItem item;
+  final bool isOwner;
 
   @override
   Widget build(BuildContext context) {
@@ -959,7 +1103,12 @@ class _MediaTile extends StatelessWidget {
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute<void>(
           fullscreenDialog: true,
-          builder: (_) => _FullScreenPhoto(photo: item.url),
+          builder: (_) => _FullScreenPhoto(
+            photo: item.url,
+            catId: isOwner ? catId : null,
+            mediaId: isOwner ? item.id : null,
+            isCover: item.isCover,
+          ),
         ),
       ),
       child: ClipRRect(
@@ -997,6 +1146,18 @@ class _MediaTile extends StatelessWidget {
                   ),
                 ),
               ),
+            Positioned(
+              right: 6,
+              bottom: 6,
+              child: Tooltip(
+                message: item.uploaderDisplayName ?? '',
+                child: Transform.scale(
+                  scale: 0.7,
+                  alignment: Alignment.bottomRight,
+                  child: _TimelineAvatar(name: item.uploaderDisplayName),
+                ),
+              ),
+            ),
           ],
         ),
       ),

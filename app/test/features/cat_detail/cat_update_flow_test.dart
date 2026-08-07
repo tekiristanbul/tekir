@@ -161,6 +161,10 @@ class _FakeCatDetailApi implements CatDetailApi {
 
   @override
   Future<List<CatMediaItem>> fetchMedia(String catId) async => const [];
+
+  @override
+  Future<CatDetail> setCoverPhoto(String catId, String mediaId) =>
+      throw UnimplementedError();
 }
 
 // Same technique as cat_detail_screen_test.dart's fixed notifier: a build()
@@ -409,7 +413,11 @@ void main() {
   testWidgets('a picked photo previews in the sheet and can be removed', (
     tester,
   ) async {
-    fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png', path: 'photo.png');
+    fakePlatform.nextFile = XFile.fromData(
+      _validPngBytes,
+      name: 'photo.png',
+      path: 'photo.png',
+    );
     await _pump(tester, api: _FakeCatDetailApi());
     await _openComposer(tester);
 
@@ -575,7 +583,11 @@ void main() {
   testWidgets(
     'a photo-carrying submission stays in the sheet for upload progress, then closes on success',
     (tester) async {
-      fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png', path: 'photo.png');
+      fakePlatform.nextFile = XFile.fromData(
+        _validPngBytes,
+        name: 'photo.png',
+        path: 'photo.png',
+      );
       final api = _FakeCatDetailApi()
         ..nextResult = _entry('upd-1')
         ..uploadGate = Completer<void>()
@@ -606,7 +618,11 @@ void main() {
   testWidgets(
     'a photo upload failure stays in the sheet with a clear retryable error',
     (tester) async {
-      fakePlatform.nextFile = XFile.fromData(_validPngBytes, name: 'photo.png', path: 'photo.png');
+      fakePlatform.nextFile = XFile.fromData(
+        _validPngBytes,
+        name: 'photo.png',
+        path: 'photo.png',
+      );
       final api = _FakeCatDetailApi()
         ..uploadError = const UpdateMediaTooLargeException();
       await _pump(tester, api: api);

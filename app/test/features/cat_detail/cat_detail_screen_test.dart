@@ -89,9 +89,16 @@ class _GuestSessionIdentityService implements SessionIdentityService {
 // correct an update — so every other method stays an UnimplementedError
 // tripwire rather than a real fake.
 class _FakeCatMediaApi implements CatDetailApi {
-  _FakeCatMediaApi([this.media = const []]);
+  _FakeCatMediaApi([this.media = const [], this.setCoverResult]);
 
   final List<CatMediaItem> media;
+
+  // setCoverPhoto (issue #156) — configurable response plus captured
+  // arguments, mirroring the class's own "tripwire unless a test needs it"
+  // convention above.
+  CatDetail? setCoverResult;
+  String? capturedSetCoverCatId;
+  String? capturedSetCoverMediaId;
 
   @override
   Future<CatDetail> fetchDetail(String catId) => throw UnimplementedError();
@@ -133,12 +140,20 @@ class _FakeCatMediaApi implements CatDetailApi {
 
   @override
   Future<List<CatMediaItem>> fetchMedia(String catId) async => media;
+
+  @override
+  Future<CatDetail> setCoverPhoto(String catId, String mediaId) async {
+    capturedSetCoverCatId = catId;
+    capturedSetCoverMediaId = mediaId;
+    return setCoverResult!;
+  }
 }
 
 Future<void> _pump(
   WidgetTester tester,
   CatDetailState state, {
   List<CatMediaItem> media = const [],
+  _FakeCatMediaApi? api,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -149,7 +164,7 @@ Future<void> _pump(
         sessionIdentityServiceProvider.overrideWithValue(
           _GuestSessionIdentityService(),
         ),
-        catDetailApiProvider.overrideWithValue(_FakeCatMediaApi(media)),
+        catDetailApiProvider.overrideWithValue(api ?? _FakeCatMediaApi(media)),
       ],
       child: const MaterialApp(home: CatDetailScreen(catId: _catId)),
     ),
@@ -741,6 +756,7 @@ void main() {
             url: 'https://example.com/cover.jpg',
             isCover: true,
             createdAt: DateTime.utc(2026, 1, 2),
+            uploaderDisplayName: 'asli',
           ),
           CatMediaItem(
             id: 'm2',
@@ -761,6 +777,9 @@ void main() {
 
       expect(find.text('ana'), findsOneWidget);
       expect(find.byType(CachedNetworkImage), findsNWidgets(2));
+      // issue #154: the uploader's name surfaces via the same tile the
+      // "ana" badge sits on, consistent with the timeline's own avatar.
+      expect(find.byTooltip('asli'), findsOneWidget);
     });
 
     testWidgets('medya tab: an empty archive shows the empty-state message', (
@@ -781,5 +800,140 @@ void main() {
 
       expect(find.text('Henüz medya yok'), findsOneWidget);
     });
+
+    // ── cover photo change (issue #156) ─────
+
+    final ownerMedia = [
+      CatMediaItem(
+        id: 'm1',
+        url: 'https://example.com/cover.jpg',
+        isCover: true,
+        createdAt: DateTime.utc(2026, 1, 2),
+      ),
+      CatMediaItem(
+        id: 'm2',
+        url: 'https://example.com/other.jpg',
+        isCover: false,
+        createdAt: DateTime.utc(2026, 1, 1),
+      ),
+    ];
+
+    CatDetailState ownerState({required bool isOwner}) => CatDetailState(
+      detail: CatDetail(
+        id: _catId,
+        name: 'tekir',
+        lat: 41.0256,
+        lng: 28.9744,
+        areaLabel: null,
+        primaryPhoto: null,
+        createdAt: DateTime.utc(2026, 1, 1),
+        lastUpdateAt: null,
+        mediaCount: 2,
+        isOwner: isOwner,
+      ),
+      updates: const [],
+      hasLoadedOnce: true,
+    );
+
+    Future<void> openFullScreenFor(WidgetTester tester, String url) async {
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pump();
+      await tester.tap(find.text('medya'));
+      await tester.pump();
+      await tester.pump();
+      final tile = find.byWidgetPredicate(
+        (w) => w is CachedNetworkImage && w.imageUrl == url,
+      );
+      // the fixed "+ update" bar overlaps the bottom of the grid at this
+      // viewport size — ensureVisible scrolls the tile clear of it before
+      // tapping, rather than guessing a drag distance that happens to work.
+      await tester.ensureVisible(tile);
+      await tester.pump();
+      await tester.tap(tile);
+      // not pumpAndSettle: the fixture urls are fake network addresses, so
+      // CachedNetworkImage's own retry/error handling never truly settles —
+      // the same reason every other network-image assertion in this file
+      // uses a fixed pump count instead (see the medya-tab test above).
+      await tester.pump();
+      await tester.pump();
+    }
+
+    testWidgets(
+      'owner: a non-cover tile opens with "ana fotoğraf yap" enabled',
+      (tester) async {
+        await _pump(
+          tester,
+          ownerState(isOwner: true),
+          api: _FakeCatMediaApi(ownerMedia),
+        );
+
+        await openFullScreenFor(tester, 'https://example.com/other.jpg');
+
+        expect(find.text('ana fotoğraf yap'), findsOneWidget);
+      },
+    );
+
+    testWidgets('owner: the current cover tile shows the passive label', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        ownerState(isOwner: true),
+        api: _FakeCatMediaApi(ownerMedia),
+      );
+
+      await openFullScreenFor(tester, 'https://example.com/cover.jpg');
+
+      expect(find.text('ana fotoğraf'), findsOneWidget);
+      expect(find.text('ana fotoğraf yap'), findsNothing);
+    });
+
+    testWidgets('non-owner: the full-screen view carries no cover action', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        ownerState(isOwner: false),
+        api: _FakeCatMediaApi(ownerMedia),
+      );
+
+      await openFullScreenFor(tester, 'https://example.com/other.jpg');
+
+      expect(find.text('ana fotoğraf yap'), findsNothing);
+      expect(find.text('ana fotoğraf'), findsNothing);
+    });
+
+    testWidgets(
+      'owner: tapping "ana fotoğraf yap" submits and closes the view',
+      (tester) async {
+        final api = _FakeCatMediaApi(
+          ownerMedia,
+          CatDetail(
+            id: _catId,
+            name: 'tekir',
+            lat: 41.0256,
+            lng: 28.9744,
+            areaLabel: null,
+            primaryPhoto: 'https://example.com/other.jpg',
+            createdAt: DateTime.utc(2026, 1, 1),
+            lastUpdateAt: null,
+            mediaCount: 2,
+            isOwner: true,
+          ),
+        );
+        await _pump(tester, ownerState(isOwner: true), api: api);
+
+        await openFullScreenFor(tester, 'https://example.com/other.jpg');
+        await tester.tap(find.text('ana fotoğraf yap'));
+        await tester.pump();
+        await tester.pump();
+        await tester.pump();
+
+        expect(api.capturedSetCoverCatId, _catId);
+        expect(api.capturedSetCoverMediaId, 'm2');
+        // the full-screen view pops back to the medya grid on success.
+        expect(find.text('ana fotoğraf yap'), findsNothing);
+      },
+    );
   });
 }

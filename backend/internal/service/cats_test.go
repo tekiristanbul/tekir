@@ -88,6 +88,13 @@ type fakeCatsLister struct {
 
 	getMediaRow repository.Medium
 	getMediaErr error
+
+	catMediaRow repository.CatMedium
+	catMediaErr error
+
+	setCoverErr error
+	// capturedSetCover mirrors captured above, for SetCatCoverPhoto.
+	capturedSetCover *repository.SetCatCoverPhotoParams
 }
 
 func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error) {
@@ -96,6 +103,17 @@ func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (reposi
 
 func (f fakeCatsLister) GetMediaByID(ctx context.Context, id pgtype.UUID) (repository.Medium, error) {
 	return f.getMediaRow, f.getMediaErr
+}
+
+func (f fakeCatsLister) GetCatMediaByCatAndMedia(ctx context.Context, arg repository.GetCatMediaByCatAndMediaParams) (repository.CatMedium, error) {
+	return f.catMediaRow, f.catMediaErr
+}
+
+func (f fakeCatsLister) SetCatCoverPhoto(ctx context.Context, arg repository.SetCatCoverPhotoParams) error {
+	if f.capturedSetCover != nil {
+		*f.capturedSetCover = arg
+	}
+	return f.setCoverErr
 }
 
 func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {
@@ -277,7 +295,7 @@ func TestCatsService_GetCatDetail(t *testing.T) {
 		},
 	})
 
-	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	detail, err := svc.GetCatDetail(context.Background(), id.String(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -314,7 +332,7 @@ func TestCatsService_GetCatDetail_MediaCount(t *testing.T) {
 		mediaCount: 3,
 	})
 
-	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	detail, err := svc.GetCatDetail(context.Background(), id.String(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -342,7 +360,7 @@ func TestCatsService_GetCatDetail_ThreeStatTimestamps(t *testing.T) {
 		},
 	})
 
-	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	detail, err := svc.GetCatDetail(context.Background(), id.String(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -369,7 +387,7 @@ func TestCatsService_GetCatDetail_NoStatusUpdatesYet(t *testing.T) {
 		},
 	})
 
-	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	detail, err := svc.GetCatDetail(context.Background(), id.String(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -381,7 +399,7 @@ func TestCatsService_GetCatDetail_NoStatusUpdatesYet(t *testing.T) {
 func TestCatsService_GetCatDetail_NotFound(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{catErr: pgx.ErrNoRows})
 
-	_, err := svc.GetCatDetail(context.Background(), uuid.New().String())
+	_, err := svc.GetCatDetail(context.Background(), uuid.New().String(), "")
 	if !errors.Is(err, ErrCatNotFound) {
 		t.Fatalf("expected ErrCatNotFound, got %v", err)
 	}
@@ -390,10 +408,192 @@ func TestCatsService_GetCatDetail_NotFound(t *testing.T) {
 func TestCatsService_GetCatDetail_InvalidID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	_, err := svc.GetCatDetail(context.Background(), "not-a-uuid")
+	_, err := svc.GetCatDetail(context.Background(), "not-a-uuid", "")
 	if !errors.Is(err, ErrInvalidCatID) {
 		t.Fatalf("expected ErrInvalidCatID, got %v", err)
 	}
+}
+
+// TestCatsService_GetCatDetail_IsOwner covers issue #156: is_owner is true
+// only when the caller's own account id matches the cat's
+// created_by_user_id.
+func TestCatsService_GetCatDetail_IsOwner(t *testing.T) {
+	id := uuid.New()
+	ownerID := uuid.New()
+	otherID := uuid.New()
+
+	cases := []struct {
+		name         string
+		callerUserID string
+		catRow       repository.GetCatByIDRow
+		wantIsOwner  bool
+	}{
+		{
+			name:         "caller is the owner",
+			callerUserID: ownerID.String(),
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+			wantIsOwner: true,
+		},
+		{
+			name:         "caller is a different account",
+			callerUserID: otherID.String(),
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+			wantIsOwner: false,
+		},
+		{
+			name:         "guest read (no caller id)",
+			callerUserID: "",
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+			wantIsOwner: false,
+		},
+		{
+			name:         "pre-#70 seed cat with no owner at all",
+			callerUserID: ownerID.String(),
+			catRow: repository.GetCatByIDRow{
+				ID: pgtype.UUID{Bytes: id, Valid: true},
+			},
+			wantIsOwner: false,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc := NewCatsService(fakeCatsLister{catRow: c.catRow})
+			detail, err := svc.GetCatDetail(context.Background(), id.String(), c.callerUserID)
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if detail.IsOwner != c.wantIsOwner {
+				t.Errorf("expected is_owner %v, got %v", c.wantIsOwner, detail.IsOwner)
+			}
+		})
+	}
+}
+
+// TestCatsService_SetCoverPhoto covers issue #156's cover-photo change:
+// only the cat's owner may promote an existing gallery entry to cover.
+func TestCatsService_SetCoverPhoto(t *testing.T) {
+	id := uuid.New()
+	ownerID := uuid.New()
+	otherID := uuid.New()
+	mediaID := uuid.New()
+
+	t.Run("owner promotes a gallery photo", func(t *testing.T) {
+		var captured repository.SetCatCoverPhotoParams
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				Name:            pgtype.Text{String: "tekir", Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+			catMediaRow:      repository.CatMedium{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}},
+			capturedSetCover: &captured,
+		})
+
+		detail, err := svc.SetCoverPhoto(context.Background(), id.String(), ownerID.String(), mediaID.String())
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if !detail.IsOwner {
+			t.Errorf("expected is_owner true in the refreshed detail")
+		}
+		if uuid.UUID(captured.ID.Bytes) != id {
+			t.Errorf("expected SetCatCoverPhoto to target cat %s, got %s", id, uuid.UUID(captured.ID.Bytes))
+		}
+		if uuid.UUID(captured.PrimaryPhotoID.Bytes) != mediaID {
+			t.Errorf("expected SetCatCoverPhoto to set media %s, got %s", mediaID, uuid.UUID(captured.PrimaryPhotoID.Bytes))
+		}
+	})
+
+	t.Run("non-owner is rejected", func(t *testing.T) {
+		var captured repository.SetCatCoverPhotoParams
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+			catMediaRow:      repository.CatMedium{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}},
+			capturedSetCover: &captured,
+		})
+
+		_, err := svc.SetCoverPhoto(context.Background(), id.String(), otherID.String(), mediaID.String())
+		if !errors.Is(err, ErrNotCatOwner) {
+			t.Fatalf("expected ErrNotCatOwner, got %v", err)
+		}
+		if captured.ID.Valid {
+			t.Errorf("expected SetCatCoverPhoto never called for a non-owner")
+		}
+	})
+
+	t.Run("guest is rejected", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+		})
+
+		_, err := svc.SetCoverPhoto(context.Background(), id.String(), "", mediaID.String())
+		if !errors.Is(err, ErrNotCatOwner) {
+			t.Fatalf("expected ErrNotCatOwner, got %v", err)
+		}
+	})
+
+	t.Run("media not in this cat's gallery", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+			catMediaErr: pgx.ErrNoRows,
+		})
+
+		_, err := svc.SetCoverPhoto(context.Background(), id.String(), ownerID.String(), mediaID.String())
+		if !errors.Is(err, ErrMediaNotInGallery) {
+			t.Fatalf("expected ErrMediaNotInGallery, got %v", err)
+		}
+	})
+
+	t.Run("malformed media id", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+		})
+
+		_, err := svc.SetCoverPhoto(context.Background(), id.String(), ownerID.String(), "not-a-uuid")
+		if !errors.Is(err, ErrInvalidMediaID) {
+			t.Fatalf("expected ErrInvalidMediaID, got %v", err)
+		}
+	})
+
+	t.Run("unknown cat", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{catErr: pgx.ErrNoRows})
+
+		_, err := svc.SetCoverPhoto(context.Background(), id.String(), ownerID.String(), mediaID.String())
+		if !errors.Is(err, ErrCatNotFound) {
+			t.Fatalf("expected ErrCatNotFound, got %v", err)
+		}
+	})
+
+	t.Run("malformed cat id", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{})
+
+		_, err := svc.SetCoverPhoto(context.Background(), "not-a-uuid", ownerID.String(), mediaID.String())
+		if !errors.Is(err, ErrInvalidCatID) {
+			t.Fatalf("expected ErrInvalidCatID, got %v", err)
+		}
+	})
 }
 
 func TestCatsService_ListCatUpdates_UnknownCat(t *testing.T) {
@@ -658,7 +858,7 @@ func TestCatsService_GetCatDetail_ActiveAlert(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return fixedNow }))
 
-	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	detail, err := svc.GetCatDetail(context.Background(), id.String(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -679,7 +879,7 @@ func TestCatsService_GetCatDetail_NoActiveAlert(t *testing.T) {
 		catRow: repository.GetCatByIDRow{ID: pgtype.UUID{Bytes: id, Valid: true}},
 	})
 
-	detail, err := svc.GetCatDetail(context.Background(), id.String())
+	detail, err := svc.GetCatDetail(context.Background(), id.String(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -1936,6 +2136,37 @@ func TestCatsService_ListCatMedia(t *testing.T) {
 	}
 	if items[0].IsCover {
 		t.Errorf("expected the first item not to be flagged as cover, got %+v", items[0])
+	}
+}
+
+// TestCatsService_ListCatMedia_UploaderDisplayName covers issue #154's
+// media-attribution parity gap: a media row whose uploader set a display
+// name surfaces it, while a row whose uploader never set one stays nil
+// rather than the service inventing one.
+func TestCatsService_ListCatMedia_UploaderDisplayName(t *testing.T) {
+	withName := uuid.New()
+	withoutName := uuid.New()
+
+	svc := NewCatsService(fakeCatsLister{
+		exists: true,
+		mediaRows: []repository.ListCatMediaRow{
+			{ID: pgtype.UUID{Bytes: withName, Valid: true}, Url: "https://placecats.com/a/300/200", UploaderDisplayName: pgtype.Text{String: "asli", Valid: true}},
+			{ID: pgtype.UUID{Bytes: withoutName, Valid: true}, Url: "https://placecats.com/b/300/200"},
+		},
+	})
+
+	items, err := svc.ListCatMedia(context.Background(), uuid.New().String())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if items[0].UploaderDisplayName == nil || *items[0].UploaderDisplayName != "asli" {
+		t.Errorf("expected uploader_display_name %q, got %v", "asli", items[0].UploaderDisplayName)
+	}
+	if items[1].UploaderDisplayName != nil {
+		t.Errorf("expected nil uploader_display_name for nameless uploader, got %v", *items[1].UploaderDisplayName)
 	}
 }
 

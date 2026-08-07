@@ -45,6 +45,13 @@ class _FakeCatDetailApi implements CatDetailApi {
   final List<UpdatesPage> updatesPages;
   int _updatesCalls = 0;
 
+  // Captures the setCoverPhoto tests' own arguments/response — mirrors the
+  // detail/detailError pair above, scoped to this one method (issue #156).
+  CatDetail? setCoverResult;
+  Object? setCoverError;
+  String? capturedSetCoverCatId;
+  String? capturedSetCoverMediaId;
+
   @override
   Future<CatDetail> fetchDetail(String catId) async {
     if (detailError != null) throw detailError!;
@@ -91,6 +98,14 @@ class _FakeCatDetailApi implements CatDetailApi {
 
   @override
   Future<List<CatMediaItem>> fetchMedia(String catId) async => const [];
+
+  @override
+  Future<CatDetail> setCoverPhoto(String catId, String mediaId) async {
+    capturedSetCoverCatId = catId;
+    capturedSetCoverMediaId = mediaId;
+    if (setCoverError != null) throw setCoverError!;
+    return setCoverResult!;
+  }
 }
 
 ProviderContainer _containerWith(_FakeCatDetailApi api) {
@@ -339,6 +354,63 @@ void main() {
     final state = container.read(catDetailProvider(_catId));
     expect(state.updates.map((u) => u.id), ['u1']);
   });
+
+  group('setCoverPhoto (issue #156)', () {
+    test('replaces detail with the server-refreshed cover', () async {
+      final api = _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+      );
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      final refreshed = CatDetail(
+        id: _catId,
+        name: 'tekir',
+        lat: 41.0256,
+        lng: 28.9744,
+        areaLabel: _detail.areaLabel,
+        primaryPhoto: 'https://example.com/new-cover.jpg',
+        createdAt: _detail.createdAt,
+        lastUpdateAt: _detail.lastUpdateAt,
+        isOwner: true,
+      );
+      api.setCoverResult = refreshed;
+
+      await notifier.setCoverPhoto('media-2');
+
+      expect(api.capturedSetCoverCatId, _catId);
+      expect(api.capturedSetCoverMediaId, 'media-2');
+      final state = container.read(catDetailProvider(_catId));
+      expect(state.detail?.primaryPhoto, 'https://example.com/new-cover.jpg');
+      expect(state.detail?.isOwner, isTrue);
+    });
+
+    test('a failure propagates to the caller, state left untouched', () async {
+      final api = _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+      );
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      api.setCoverError = Exception('not the owner');
+
+      await expectLater(
+        () => notifier.setCoverPhoto('media-2'),
+        throwsA(isA<Exception>()),
+      );
+      final state = container.read(catDetailProvider(_catId));
+      expect(state.detail?.primaryPhoto, _detail.primaryPhoto);
+    });
+  });
+
   group('help mark side effects (issue #101/#102)', () {
     CatUpdateEntry helpEntry(String id, {String? comment}) => CatUpdateEntry(
       id: id,

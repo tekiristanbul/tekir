@@ -96,6 +96,25 @@ var ErrUpdateNotFound = errors.New("update not found")
 // already see on the public timeline.
 var ErrNotUpdateAuthor = errors.New("not the update author")
 
+// ErrNotCatOwner means the caller isn't the cat's owning account (issue
+// #156: only the account that created a cat may change its cover photo).
+// Not collapsed into ErrCatNotFound: a cat's ownership isn't private —
+// GetCatDetail's own is_owner field already tells any reader, including a
+// guest, whether they own it, so confirming "this exists, but isn't yours"
+// leaks nothing a caller couldn't already see on the public detail read.
+var ErrNotCatOwner = errors.New("not the cat owner")
+
+// ErrInvalidMediaID means the media_id submitted to PATCH
+// /v1/cats/{cat_id}/cover isn't a well-formed uuid.
+var ErrInvalidMediaID = errors.New("invalid media id")
+
+// ErrMediaNotInGallery means the submitted media_id isn't part of the cat's
+// own cat_media archive (issue #156: the owner may only promote an existing
+// gallery photo — one already attached to this cat via cat creation or an
+// update — to cover, never point the cover at a stray media row uploaded
+// for something else or belonging to a different cat).
+var ErrMediaNotInGallery = errors.New("media not in cat gallery")
+
 // ErrCorrectionWindowExpired means the caller is the update's author but
 // the fixed 10-minute correction window (docs/product/updates.md) has
 // closed — mirrors the otp/verify 410 convention (docs/architecture/api.md).
@@ -431,6 +450,13 @@ type CatDetail struct {
 	// only photo_url set has zero, matching that it has no media row to
 	// archive.
 	MediaCount int
+	// IsOwner (issue #156) is true only when GetCatDetail was called with
+	// the caller's own authenticated user id and it matches this cat's
+	// created_by_user_id — always false for a guest read (no caller id at
+	// all) or a pre-#70 seed cat (no owner at all). Server-derived so the
+	// client never decides for itself whether to show the cover-change
+	// affordance.
+	IsOwner bool
 }
 
 // CatUpdate is one entry in a cat's newest-first history: either an
@@ -522,6 +548,8 @@ type CatsStore interface {
 	ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatMediaRow, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error)
 	GetMediaByID(ctx context.Context, id pgtype.UUID) (repository.Medium, error)
+	GetCatMediaByCatAndMedia(ctx context.Context, arg repository.GetCatMediaByCatAndMediaParams) (repository.CatMedium, error)
+	SetCatCoverPhoto(ctx context.Context, arg repository.SetCatCoverPhotoParams) error
 }
 
 type CatsService struct {
@@ -840,8 +868,12 @@ func optionalUUID(id string) (pgtype.UUID, error) {
 }
 
 // GetCatDetail returns the cat-detail representation for id, or ErrCatNotFound
-// if no cat exists with that id.
-func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, error) {
+// if no cat exists with that id. callerUserID (issue #156) is the optional
+// bearer caller's own account id — "" for a guest read or an absent/invalid
+// bearer (GET /v1/cats/{cat_id} uses OptionalBearer, never RequireBearer, so
+// this endpoint stays guest-readable) — used only to derive IsOwner, never
+// to gate the read itself.
+func (s *CatsService) GetCatDetail(ctx context.Context, id, callerUserID string) (CatDetail, error) {
 	catID, err := parseCatID(id)
 	if err != nil {
 		return CatDetail{}, err
@@ -874,18 +906,40 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		LastWaterAt:  timestamptzPtr(row.LastWaterAt),
 		ActiveAlert:  deriveActiveAlert(s.clock, row.NeedsHelpCategory, row.NeedsHelpComment, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),
 		MediaCount:   int(mediaCount),
+		IsOwner:      isCatOwner(row.CreatedByUserID, callerUserID),
 	}, nil
+}
+
+// isCatOwner reports whether callerUserID (a possibly-empty, possibly
+// malformed caller-supplied id) matches ownerID (the cat's own
+// created_by_user_id, possibly sql-null for a pre-#70 seed cat). A
+// malformed callerUserID (shouldn't happen — OptionalBearer/RequireBearer
+// only ever place a well-formed uuid or nothing at all in context) simply
+// never matches, mirroring ListCatUpdates' own AuthorIsMe derivation.
+func isCatOwner(ownerID pgtype.UUID, callerUserID string) bool {
+	if !ownerID.Valid || callerUserID == "" {
+		return false
+	}
+	parsed, err := uuid.Parse(callerUserID)
+	if err != nil {
+		return false
+	}
+	return uuid.UUID(ownerID.Bytes) == parsed
 }
 
 // CatMediaItem is one entry of the cat-profile "medya" archive tab (issue
 // #121's media-archive parity gap): a photo linked to the cat via
 // cat_media, newest-first. IsCover mirrors cats.primary_photo_id, letting
 // the client render the design's "ana" badge without a second lookup.
+// UploaderDisplayName (issue #154's media-attribution parity gap) mirrors
+// CatUpdate's own AuthorDisplayName: nil only when the uploader never set
+// a display name, never when the uploader is unknown.
 type CatMediaItem struct {
-	ID        string
-	URL       string
-	IsCover   bool
-	CreatedAt time.Time
+	ID                  string
+	URL                 string
+	IsCover             bool
+	CreatedAt           time.Time
+	UploaderDisplayName *string
 }
 
 // ListCatMedia returns id's photo archive, newest-first, or ErrCatNotFound
@@ -912,13 +966,71 @@ func (s *CatsService) ListCatMedia(ctx context.Context, id string) ([]CatMediaIt
 	items := make([]CatMediaItem, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, CatMediaItem{
-			ID:        uuid.UUID(r.ID.Bytes).String(),
-			URL:       r.Url,
-			IsCover:   r.IsCover,
-			CreatedAt: r.CreatedAt.Time,
+			ID:                  uuid.UUID(r.ID.Bytes).String(),
+			URL:                 r.Url,
+			IsCover:             r.IsCover,
+			CreatedAt:           r.CreatedAt.Time,
+			UploaderDisplayName: textPtr(r.UploaderDisplayName),
 		})
 	}
 	return items, nil
+}
+
+// SetCoverPhoto changes cat id's cover to mediaID, the promoted entry's own
+// id from GET /v1/cats/{cat_id}/media (issue #156). Only the cat's owning
+// account (created_by_user_id) may do this — ErrNotCatOwner for anyone
+// else, including another authenticated account, never a silent no-op —
+// and mediaID must already be part of that cat's own cat_media archive
+// (ErrMediaNotInGallery otherwise): the owner picks an existing gallery
+// photo, never an arbitrary media row from elsewhere. Neither check leaks
+// which failed to a non-owner caller versus a bad media id beyond their own
+// distinct error codes — both are legitimate client-facing outcomes, not a
+// security boundary to obscure. The update never touches the update or
+// media row the photo came from — only cats.primary_photo_id moves; the
+// original contribution stays exactly as its author left it. Returns the
+// refreshed CatDetail, same shape GetCatDetail already gives the caller who
+// just made this change.
+func (s *CatsService) SetCoverPhoto(ctx context.Context, id, callerUserID, mediaID string) (CatDetail, error) {
+	catID, err := parseCatID(id)
+	if err != nil {
+		return CatDetail{}, err
+	}
+
+	row, err := s.db.GetCatByID(ctx, catID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CatDetail{}, ErrCatNotFound
+		}
+		return CatDetail{}, err
+	}
+	if !isCatOwner(row.CreatedByUserID, callerUserID) {
+		return CatDetail{}, ErrNotCatOwner
+	}
+
+	parsedMediaID, err := uuid.Parse(mediaID)
+	if err != nil {
+		return CatDetail{}, ErrInvalidMediaID
+	}
+	mediaUUID := pgtype.UUID{Bytes: parsedMediaID, Valid: true}
+
+	if _, err := s.db.GetCatMediaByCatAndMedia(ctx, repository.GetCatMediaByCatAndMediaParams{
+		CatID:   catID,
+		MediaID: mediaUUID,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CatDetail{}, ErrMediaNotInGallery
+		}
+		return CatDetail{}, err
+	}
+
+	if err := s.db.SetCatCoverPhoto(ctx, repository.SetCatCoverPhotoParams{
+		ID:             catID,
+		PrimaryPhotoID: mediaUUID,
+	}); err != nil {
+		return CatDetail{}, err
+	}
+
+	return s.GetCatDetail(ctx, id, callerUserID)
 }
 
 // ListCatUpdates returns one newest-first page of id's update history.
@@ -1667,7 +1779,7 @@ func (s *CatsService) Create(ctx context.Context, userID, deviceID string, idemp
 			IdempotencyKey:  idemKey,
 		})
 		if err == nil {
-			return s.GetCatDetail(ctx, uuid.UUID(existing.ID.Bytes).String())
+			return s.GetCatDetail(ctx, uuid.UUID(existing.ID.Bytes).String(), userID)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return CatDetail{}, err
@@ -1756,7 +1868,7 @@ func (s *CatsService) recoverFromCreateCatFailure(ctx context.Context, createErr
 		if getErr != nil {
 			err = getErr
 		} else {
-			result, err = s.GetCatDetail(ctx, uuid.UUID(existing.ID.Bytes).String())
+			result, err = s.GetCatDetail(ctx, uuid.UUID(existing.ID.Bytes).String(), uuid.UUID(ownerUUID.Bytes).String())
 		}
 	} else {
 		err = createErr

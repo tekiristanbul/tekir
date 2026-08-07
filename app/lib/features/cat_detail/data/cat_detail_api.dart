@@ -93,6 +93,22 @@ class UpdateCorrectionExpiredException implements Exception {
   const UpdateCorrectionExpiredException();
 }
 
+/// Thrown when `PATCH .../cover` answers 403 — the caller isn't the cat's
+/// own owner (issue #156). Not collapsed into [CatNotFoundException]: the
+/// cat's detail read already tells any caller, including a guest, whether
+/// they own it via `is_owner`, so confirming "this exists, but isn't
+/// yours" leaks nothing the caller couldn't already see.
+class SetCoverForbiddenException implements Exception {
+  const SetCoverForbiddenException();
+}
+
+/// Thrown when `PATCH .../cover` answers 400 — media_id isn't a
+/// well-formed id, or isn't part of this cat's own media archive (issue
+/// #156: only an existing gallery entry may be promoted to cover).
+class SetCoverValidationException implements Exception {
+  const SetCoverValidationException();
+}
+
 class CatDetailApi {
   CatDetailApi(this._apiClient);
 
@@ -138,6 +154,40 @@ class CatDetailApi {
       }
       rethrow;
     }
+  }
+
+  /// Promotes an existing media-archive entry (`mediaId`, from
+  /// `fetchMedia`'s own [CatMediaItem.id]) to catId's cover photo (issue
+  /// #156). Only the cat's own owner may do this — the caller is
+  /// responsible for making sure a session exists first (see [AuthGate]);
+  /// the server re-checks ownership regardless of what the client's own
+  /// `is_owner` believes. Returns the refreshed [CatDetail].
+  Future<CatDetail> setCoverPhoto(String catId, String mediaId) async {
+    try {
+      final response = await _apiClient.dio.patch<Map<String, dynamic>>(
+        '/v1/cats/$catId/cover',
+        data: {'media_id': mediaId},
+      );
+      return CatDetail.fromJson(response.data!);
+    } on DioException catch (e) {
+      throw _mapSetCoverError(e);
+    }
+  }
+
+  Exception _mapSetCoverError(DioException e) {
+    final status = e.response?.statusCode;
+    switch (status) {
+      case 400:
+        return const SetCoverValidationException();
+      case 401:
+        return const UpdateUnauthorizedException();
+      case 403:
+        return const SetCoverForbiddenException();
+      case 404:
+        return const CatNotFoundException();
+    }
+    if (status != null) return const UpdateServerException();
+    return const UpdateNetworkException();
   }
 
   /// Submits an update (issue #43, moved onto authenticated accounts by
@@ -198,7 +248,8 @@ class CatDetailApi {
         return const UpdateUnauthorizedException();
       case 404:
         final body = e.response?.data;
-        if (body is Map<String, dynamic> && body['error'] == 'media not found') {
+        if (body is Map<String, dynamic> &&
+            body['error'] == 'media not found') {
           return const UpdateMediaNotFoundException();
         }
         return const CatNotFoundException();

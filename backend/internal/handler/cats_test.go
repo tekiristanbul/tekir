@@ -110,6 +110,11 @@ type fakeCatsLister struct {
 
 	getMediaRow repository.Medium
 	getMediaErr error
+
+	catMediaRow repository.CatMedium
+	catMediaErr error
+
+	setCoverErr error
 }
 
 func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error) {
@@ -118,6 +123,14 @@ func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (reposi
 
 func (f fakeCatsLister) GetMediaByID(ctx context.Context, id pgtype.UUID) (repository.Medium, error) {
 	return f.getMediaRow, f.getMediaErr
+}
+
+func (f fakeCatsLister) GetCatMediaByCatAndMedia(ctx context.Context, arg repository.GetCatMediaByCatAndMediaParams) (repository.CatMedium, error) {
+	return f.catMediaRow, f.catMediaErr
+}
+
+func (f fakeCatsLister) SetCatCoverPhoto(ctx context.Context, arg repository.SetCatCoverPhotoParams) error {
+	return f.setCoverErr
 }
 
 func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {
@@ -245,8 +258,9 @@ func routerFor(h *CatsHandler) http.Handler {
 
 func routerForWithResolver(h *CatsHandler, resolver DeviceTokenResolver, validator AccessTokenValidator) http.Handler {
 	r := chi.NewRouter()
-	r.Get("/v1/cats/{cat_id}", h.Detail)
+	r.With(OptionalBearer(validator)).Get("/v1/cats/{cat_id}", h.Detail)
 	r.Get("/v1/cats/{cat_id}/media", h.Media)
+	r.With(RequireBearer(validator)).Patch("/v1/cats/{cat_id}/cover", h.SetCover)
 	r.With(OptionalBearer(validator)).Get("/v1/cats/{cat_id}/updates", h.UpdateHistory)
 	r.With(RequireBearer(validator), OptionalDeviceToken(resolver)).Post("/v1/cats/{cat_id}/updates", h.CreateUpdate)
 	r.With(RequireBearer(validator), OptionalDeviceToken(resolver)).Post("/v1/cats/{cat_id}/needs-help", h.CreateNeedsHelp)
@@ -399,6 +413,50 @@ func TestCatsHandler_Detail(t *testing.T) {
 	}
 }
 
+// TestCatsHandler_Detail_IsOwner proves GET /v1/cats/{cat_id} surfaces
+// is_owner for the cat's own owner's authenticated read, and never for a
+// guest read (issue #156) — OptionalBearer resolves the caller without
+// requiring one.
+func TestCatsHandler_Detail_IsOwner(t *testing.T) {
+	id := uuid.New()
+	ownerID := uuid.MustParse(defaultTestUserID)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:              pgtype.UUID{Bytes: id, Valid: true},
+			Name:            pgtype.Text{String: "tekir", Valid: true},
+			CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+		},
+	}), testMaxUploadBytes)
+
+	t.Run("owner's own authenticated read", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := withBearerToken(httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String(), nil))
+		routerFor(h).ServeHTTP(rec, req)
+
+		var body catDetailResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if !body.IsOwner {
+			t.Error("expected is_owner true for the cat's own owner")
+		}
+	})
+
+	t.Run("guest read", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String(), nil)
+		routerFor(h).ServeHTTP(rec, req)
+
+		var body catDetailResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if body.IsOwner {
+			t.Error("expected is_owner false for a guest read")
+		}
+	})
+}
+
 // TestCatsHandler_Detail_NoTraitsField proves the cat-detail response never
 // carries a "traits" key (issue #42: permanent cat traits are dormant
 // legacy storage, no longer part of the mvp surface).
@@ -493,7 +551,7 @@ func TestCatsHandler_Media(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
 		exists: true,
 		mediaRows: []repository.ListCatMediaRow{
-			{ID: pgtype.UUID{Bytes: coverID, Valid: true}, Url: "https://placecats.com/millie/300/200", CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, IsCover: true},
+			{ID: pgtype.UUID{Bytes: coverID, Valid: true}, Url: "https://placecats.com/millie/300/200", CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, IsCover: true, UploaderDisplayName: pgtype.Text{String: "asli", Valid: true}},
 		},
 	}), testMaxUploadBytes)
 
@@ -520,6 +578,38 @@ func TestCatsHandler_Media(t *testing.T) {
 	}
 	if !body[0].IsCover {
 		t.Error("expected is_cover true")
+	}
+	if body[0].UploaderDisplayName == nil || *body[0].UploaderDisplayName != "asli" {
+		t.Errorf("expected uploader_display_name %q, got %v", "asli", body[0].UploaderDisplayName)
+	}
+}
+
+// TestCatsHandler_Media_UploaderDisplayName_Null covers issue #154's
+// media-attribution parity gap on the wire: a media entry whose uploader
+// never set a display name serializes it as null rather than an invented
+// name.
+func TestCatsHandler_Media_UploaderDisplayName_Null(t *testing.T) {
+	id := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists: true,
+		mediaRows: []repository.ListCatMediaRow{
+			{ID: pgtype.UUID{Bytes: id, Valid: true}, Url: "https://placecats.com/millie/300/200"},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String()+"/media", nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	var body []catMediaResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(body))
+	}
+	if body[0].UploaderDisplayName != nil {
+		t.Errorf("expected null uploader_display_name, got %v", *body[0].UploaderDisplayName)
 	}
 }
 
@@ -1659,6 +1749,114 @@ func TestCatsHandler_DeleteUpdate_RequiresBearer(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ── SetCover (PATCH /v1/cats/{cat_id}/cover, issue #156) ─────
+
+func newSetCoverRequest(catID, body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPatch, "/v1/cats/"+catID+"/cover", strings.NewReader(body))
+	return withBearerToken(req)
+}
+
+func TestCatsHandler_SetCover_Success(t *testing.T) {
+	catID := uuid.New()
+	ownerID := uuid.MustParse(defaultTestUserID)
+	mediaID := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:              pgtype.UUID{Bytes: catID, Valid: true},
+			Name:            pgtype.Text{String: "tekir", Valid: true},
+			CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+		},
+		catMediaRow: repository.CatMedium{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newSetCoverRequest(catID.String(), `{"media_id":"`+mediaID.String()+`"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body catDetailResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !body.IsOwner {
+		t.Error("expected is_owner true for the cat's own owner")
+	}
+}
+
+func TestCatsHandler_SetCover_NotOwner_Returns403(t *testing.T) {
+	catID := uuid.New()
+	realOwner := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:              pgtype.UUID{Bytes: catID, Valid: true},
+			CreatedByUserID: pgtype.UUID{Bytes: realOwner, Valid: true},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newSetCoverRequest(catID.String(), `{"media_id":"`+uuid.New().String()+`"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_SetCover_MediaNotInGallery_Returns400(t *testing.T) {
+	catID := uuid.New()
+	ownerID := uuid.MustParse(defaultTestUserID)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:              pgtype.UUID{Bytes: catID, Valid: true},
+			CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+		},
+		catMediaErr: pgx.ErrNoRows,
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newSetCoverRequest(catID.String(), `{"media_id":"`+uuid.New().String()+`"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_SetCover_RequiresBearer(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/cats/"+uuid.New().String()+"/cover", strings.NewReader(`{"media_id":"`+uuid.New().String()+`"}`))
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_SetCover_MalformedJSON(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newSetCoverRequest(uuid.New().String(), `{"media_id":`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_SetCover_UnknownFields_Returns400(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newSetCoverRequest(uuid.New().String(), `{"media_id":"`+uuid.New().String()+`","kind":"cover"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

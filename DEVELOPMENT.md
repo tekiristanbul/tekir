@@ -251,6 +251,17 @@ keep real values only in a repo-root `.env.local` (gitignored — copy [`.env.ex
 6. unset one required value (e.g. `S3_SECRET_ACCESS_KEY=""`) and confirm startup fails instead of falling back to local disk.
 7. drop `OBJECT_STORAGE_PROVIDER=s3` and confirm the local fake flow still works for normal development.
 
+## mobile runtime configuration validation (issue #131)
+
+required mobile config fails in one of two deliberately different ways:
+
+- **fails startup**: `API_BASE_URL` in release builds ([api base url](#api-base-url)) and the google maps ios sdk key (`app/ios/Runner/AppDelegate.swift`, see [google maps sdk (ios)](#google-maps-sdk-ios)) — both stop the app with a diagnostic naming the fix, instead of a native crash or a map that renders with no backend data.
+- **degrades instead of blocking**: `ANALYTICS_PROVIDER`/`NOTIFICATION_PROVIDER` and firebase itself ([firebase](#firebase-push--analytics-issue-84)) — analytics/push must never block the product (issue #84). a missing/unrecognized value or a failed firebase init falls back to `none`/`fake` and logs a diagnostic instead of stopping startup: `Env.unrecognizedProviderWarnings()` (`app/lib/core/config/env.dart`) catches a typo'd provider value that would otherwise degrade silently, and `bootstrapFirebase()` (`app/lib/core/firebase/firebase_bootstrap.dart`) logs unconditionally — not only in debug builds — when firebase itself fails to come up.
+
+`runStartupConfigDiagnostics()` (`app/lib/core/config/startup_validation.dart`) runs the non-fatal checks once, from `main()`, before any feature that reads them initializes.
+
+android's google maps sdk key is not wired up yet (no api key setup exists in `app/android` at all) — out of scope here, tracked separately.
+
 ## flutter development
 
 install flutter dependencies:
