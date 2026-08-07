@@ -193,10 +193,8 @@ class _CatDetailBody extends ConsumerWidget {
                 _ActiveAlertBanner(alert: detail.activeAlert!),
                 const SizedBox(height: AppSpacing.s4),
               ],
-              if (detail.lastUpdateAt != null) ...[
-                _LastUpdateRow(time: detail.lastUpdateAt!),
-                const SizedBox(height: AppSpacing.s4),
-              ],
+              _ThreeStatHeader(detail: detail),
+              const SizedBox(height: AppSpacing.s4),
               Text(
                 'Son güncellemeler',
                 style: Theme.of(context).textTheme.titleMedium,
@@ -560,38 +558,104 @@ class _ActiveAlertBanner extends StatelessWidget {
   }
 }
 
-class _LastUpdateRow extends StatelessWidget {
-  const _LastUpdateRow({required this.time});
+/// The "üç soru şeridi" (three-stat header, binding design
+/// docs/design/screens/cat-profile.html): one tile per structured status —
+/// görüldü/mama/su — each showing that status's own most recent update
+/// time, independent of the others. Replaces the old single generic
+/// last-update pill, which conflated all three questions into one figure
+/// (issue #121's "counters" parity gap). The design's water tile flips to
+/// the help tint once "stale", but the product docs record no confirmed
+/// staleness threshold yet (docs/product/review-2026-07.md) — so every
+/// tile stays neutral here rather than guessing one.
+class _ThreeStatHeader extends StatelessWidget {
+  const _ThreeStatHeader({required this.detail});
 
-  final DateTime time;
+  final CatDetail detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _StatTile(
+            icon: Icons.visibility_outlined,
+            label: 'görüldü',
+            time: detail.lastSeenAt,
+            color: AppColors.seenFg,
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s2),
+        Expanded(
+          child: _StatTile(
+            icon: Icons.set_meal_outlined,
+            label: 'mama',
+            time: detail.lastFedAt,
+            color: AppColors.fedFg,
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s2),
+        Expanded(
+          child: _StatTile(
+            icon: Icons.water_drop_outlined,
+            label: 'su',
+            time: detail.lastWaterAt,
+            color: AppColors.waterFg,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  const _StatTile({
+    required this.icon,
+    required this.label,
+    required this.time,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final DateTime? time;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.s3,
+        horizontal: AppSpacing.s2,
         vertical: AppSpacing.s2,
       ),
       decoration: BoxDecoration(
         color: AppColors.surfaceAlt,
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.access_time,
-            size: 16,
-            color: AppColors.primaryStrong,
+          Row(
+            children: [
+              Icon(icon, size: 13, color: color),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: color,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: AppSpacing.s2),
-          // Wraps instead of overflowing when the label outgrows the pill
-          // (large text scale on a narrow phone — app-states global rules).
-          Flexible(
-            child: Text(
-              'Son güncelleme: ${relativeTimeTr(time)}',
-              style: const TextStyle(fontSize: 13, color: AppColors.muted),
-            ),
+          const SizedBox(height: 3),
+          Text(
+            time != null ? relativeTimeTr(time!) : 'henüz yok',
+            style: const TextStyle(fontSize: 13, color: AppColors.ink),
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
@@ -772,6 +836,56 @@ class _NeedsHelpTag extends StatelessWidget {
   }
 }
 
+/// The timeline rail's per-entry author avatar (binding design's `.rail
+/// .av`): a 34px colored circle carrying the author's own first letter,
+/// lowercase — matching the design's own lowercase initials. [name] is
+/// null for a pre-#65/seed row or an account that never set a display
+/// name; that case falls back to a plain person glyph rather than
+/// inventing an initial. The per-name color is a deterministic pick from
+/// the app's own status palette, purely so adjacent authors read as
+/// visually distinct — not a new design token. The design's own
+/// "bakıcı işareti" (care) badge is a separate, still-open product item
+/// (docs/design/screens/cat-profile.html's own recorded open question)
+/// and is deliberately not rendered here.
+class _TimelineAvatar extends StatelessWidget {
+  const _TimelineAvatar({required this.name});
+
+  final String? name;
+
+  static const _palette = [
+    AppColors.seenFg,
+    AppColors.fedFg,
+    AppColors.waterFg,
+    AppColors.primaryStrong,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmed = name?.trim();
+    final hasName = trimmed != null && trimmed.isNotEmpty;
+    final color = hasName
+        ? _palette[trimmed.codeUnitAt(0) % _palette.length]
+        : AppColors.faint;
+    return Container(
+      margin: const EdgeInsets.only(top: 2),
+      width: 34,
+      height: 34,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      child: hasName
+          ? Text(
+              trimmed.substring(0, 1).toLowerCase(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+              ),
+            )
+          : const Icon(Icons.person_outline, size: 16, color: Colors.white),
+    );
+  }
+}
+
 /// One update's structured statuses and free-text comment render as two
 /// visually distinct elements — status tags (bold pills) vs. plain (never
 /// italic) muted body text — per issue #21's requirement that the two
@@ -794,23 +908,15 @@ class _TimelineItem extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            width: 20,
+            width: 34,
             child: Column(
               children: [
-                Container(
-                  margin: const EdgeInsets.only(top: 6),
-                  width: 9,
-                  height: 9,
-                  decoration: const BoxDecoration(
-                    color: AppColors.primary,
-                    shape: BoxShape.circle,
-                  ),
-                ),
+                _TimelineAvatar(name: update.authorDisplayName),
                 if (!isLast)
                   Expanded(
                     child: Container(
                       width: 1.5,
-                      margin: const EdgeInsets.only(top: 4),
+                      margin: const EdgeInsets.only(top: 6),
                       color: AppColors.line,
                     ),
                   ),

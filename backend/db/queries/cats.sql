@@ -64,7 +64,13 @@ order by c.created_at desc;
 -- display_name without hand-rolling composite-type aggregation in sql. the
 -- lateral join is the same latest-needs-help-update lookup as
 -- ListCatsInBounds, unfiltered by expiry for the same reason. photo_url
--- coalesce mirrors ListCatsInBounds — see its comment.
+-- coalesce mirrors ListCatsInBounds — see its comment. last_seen_at/
+-- last_fed_at/last_water_at (issue #121's three-stat header parity gap)
+-- are each the created_at of the cat's most recent update carrying that
+-- structured status — one lateral per status, same shape as the nh lateral
+-- above, rather than a single group-by (each status's own latest update
+-- may not be the same row). soft-deleted updates are excluded, matching
+-- every other read path.
 select
   c.id,
   c.name,
@@ -77,7 +83,10 @@ select
   nh.needs_help_category,
   nh.comment as needs_help_comment,
   nh.created_at as needs_help_created_at,
-  nh.needs_help_expires_at
+  nh.needs_help_expires_at,
+  seen.last_seen_at,
+  fed.last_fed_at,
+  water.last_water_at
 from cats c
 left join media m on m.id = c.primary_photo_id
 left join lateral (
@@ -87,6 +96,30 @@ left join lateral (
   order by u.created_at desc, u.seq desc
   limit 1
 ) nh on true
+left join lateral (
+  select u.created_at as last_seen_at
+  from updates u
+  join update_statuses s on s.update_id = u.id and s.status = 'seen'
+  where u.cat_id = c.id and u.deleted_at is null
+  order by u.created_at desc, u.seq desc
+  limit 1
+) seen on true
+left join lateral (
+  select u.created_at as last_fed_at
+  from updates u
+  join update_statuses s on s.update_id = u.id and s.status = 'fed'
+  where u.cat_id = c.id and u.deleted_at is null
+  order by u.created_at desc, u.seq desc
+  limit 1
+) fed on true
+left join lateral (
+  select u.created_at as last_water_at
+  from updates u
+  join update_statuses s on s.update_id = u.id and s.status = 'water_provided'
+  where u.cat_id = c.id and u.deleted_at is null
+  order by u.created_at desc, u.seq desc
+  limit 1
+) water on true
 where c.id = sqlc.arg(id);
 
 -- name: CatExists :one

@@ -398,6 +398,11 @@ func (e *DuplicateCandidatesError) Error() string {
 // CatDetail is the representation shown on the cat-detail view: identity,
 // location, and the cat-profile fields that don't depend on issue #4
 // (needs-help) or account/follow features that don't exist yet.
+// LastSeenAt/LastFedAt/LastWaterAt (issue #121's three-stat header parity
+// gap) are each the cat's most recent update carrying that structured
+// status — independent from LastUpdateAt (the cat's most recent update of
+// any kind) and from each other, since a cat's last "seen" update need not
+// be its last "fed" one.
 type CatDetail struct {
 	ID           string
 	Name         string
@@ -407,6 +412,9 @@ type CatDetail struct {
 	PrimaryPhoto *string
 	CreatedAt    time.Time
 	LastUpdateAt *time.Time
+	LastSeenAt   *time.Time
+	LastFedAt    *time.Time
+	LastWaterAt  *time.Time
 	ActiveAlert  *ActiveAlert
 }
 
@@ -424,6 +432,12 @@ type CatUpdate struct {
 	Comment   *string
 	CreatedAt time.Time
 	UpdatedAt *time.Time
+
+	// AuthorDisplayName (issue #121's timeline-avatar parity gap) is the
+	// author's users.display_name at read time — nil for a guest-authored
+	// (pre-#65) row or an account that never set one; the handler falls
+	// back to a generic avatar rather than inventing a name or initial.
+	AuthorDisplayName *string
 
 	// NeedsHelp (issue #101) is the flag itself — the field 0.2 clients
 	// read. The four fields below are populated exactly when it is true:
@@ -811,6 +825,9 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id string) (CatDetail, e
 		PrimaryPhoto: nonEmptyStringPtr(row.PhotoUrl),
 		CreatedAt:    row.CreatedAt.Time,
 		LastUpdateAt: timestamptzPtr(row.LastUpdateAt),
+		LastSeenAt:   timestamptzPtr(row.LastSeenAt),
+		LastFedAt:    timestamptzPtr(row.LastFedAt),
+		LastWaterAt:  timestamptzPtr(row.LastWaterAt),
 		ActiveAlert:  deriveActiveAlert(s.clock, row.NeedsHelpCategory, row.NeedsHelpComment, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),
 	}, nil
 }
@@ -896,11 +913,12 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 			// update — while a 0.2 client reads NeedsHelp/Statuses
 			// directly. The stored kind only still distinguishes a legacy
 			// pre-#101 subtype row below.
-			Kind:      wireUpdateKind(r.NeedsHelp),
-			Statuses:  r.Statuses,
-			Comment:   textPtr(r.Comment),
-			CreatedAt: r.CreatedAt.Time,
-			NeedsHelp: r.NeedsHelp,
+			Kind:              wireUpdateKind(r.NeedsHelp),
+			Statuses:          r.Statuses,
+			Comment:           textPtr(r.Comment),
+			CreatedAt:         r.CreatedAt.Time,
+			NeedsHelp:         r.NeedsHelp,
+			AuthorDisplayName: textPtr(r.AuthorDisplayName),
 		}
 		if r.NeedsHelp {
 			category := needsHelpCompatCategory

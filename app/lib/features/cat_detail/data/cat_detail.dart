@@ -16,6 +16,9 @@ class CatDetail {
     required this.primaryPhoto,
     required this.createdAt,
     required this.lastUpdateAt,
+    this.lastSeenAt,
+    this.lastFedAt,
+    this.lastWaterAt,
     this.activeAlert,
   });
 
@@ -32,11 +35,21 @@ class CatDetail {
   final String? primaryPhoto;
   final DateTime createdAt;
   final DateTime? lastUpdateAt;
+
+  /// Each null when the cat has never had an update carrying that
+  /// structured status — independent from [lastUpdateAt] and from each
+  /// other (issue #121's three-stat header parity gap).
+  final DateTime? lastSeenAt;
+  final DateTime? lastFedAt;
+  final DateTime? lastWaterAt;
   final ActiveAlert? activeAlert;
 
   factory CatDetail.fromJson(Map<String, dynamic> json) {
     final area = json['area'] as Map<String, dynamic>;
     final rawLastUpdate = json['last_update_at'] as String?;
+    final rawLastSeen = json['last_seen_at'] as String?;
+    final rawLastFed = json['last_fed_at'] as String?;
+    final rawLastWater = json['last_water_at'] as String?;
     final rawActiveAlert = json['active_alert'] as Map<String, dynamic>?;
     return CatDetail(
       id: json['id'] as String,
@@ -49,6 +62,9 @@ class CatDetail {
       lastUpdateAt: rawLastUpdate != null
           ? DateTime.parse(rawLastUpdate)
           : null,
+      lastSeenAt: rawLastSeen != null ? DateTime.parse(rawLastSeen) : null,
+      lastFedAt: rawLastFed != null ? DateTime.parse(rawLastFed) : null,
+      lastWaterAt: rawLastWater != null ? DateTime.parse(rawLastWater) : null,
       activeAlert: rawActiveAlert != null
           ? ActiveAlert.fromJson(rawActiveAlert)
           : null,
@@ -83,6 +99,7 @@ class CatUpdateEntry {
     this.needsHelpActive,
     this.authorIsMe = false,
     this.correctionExpiresAt,
+    this.authorDisplayName,
   });
 
   final String id;
@@ -93,6 +110,11 @@ class CatUpdateEntry {
 
   final DateTime? needsHelpExpiresAt;
   final bool? needsHelpActive;
+
+  /// The author's display name, null when the row has no author or the
+  /// author never set one — the timeline renders a generic avatar in that
+  /// case rather than inventing a name or initial (issue #121).
+  final String? authorDisplayName;
 
   /// Server-derived (issue #80): true only when this entry was returned to
   /// its own author's authenticated read of `GET .../updates` — always
@@ -142,6 +164,7 @@ class CatUpdateEntry {
       correctionExpiresAt: rawCorrectionExpiresAt != null
           ? DateTime.parse(rawCorrectionExpiresAt)
           : null,
+      authorDisplayName: json['author_display_name'] as String?,
     );
   }
 }

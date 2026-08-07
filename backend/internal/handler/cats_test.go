@@ -399,6 +399,42 @@ func TestCatsHandler_Detail_NoTraitsField(t *testing.T) {
 	}
 }
 
+// TestCatsHandler_Detail_ThreeStatTimestamps covers issue #121's three-stat
+// header fields on the wire: last_seen_at/last_fed_at present independently,
+// last_water_at absent (null) rather than falling back to another status.
+func TestCatsHandler_Detail_ThreeStatTimestamps(t *testing.T) {
+	id := uuid.New()
+	seenAt := time.Date(2026, 1, 3, 8, 0, 0, 0, time.UTC)
+	fedAt := time.Date(2026, 1, 2, 9, 0, 0, 0, time.UTC)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:          pgtype.UUID{Bytes: id, Valid: true},
+			Name:        pgtype.Text{String: "tekir", Valid: true},
+			LastSeenAt:  pgtype.Timestamptz{Time: seenAt, Valid: true},
+			LastFedAt:   pgtype.Timestamptz{Time: fedAt, Valid: true},
+			LastWaterAt: pgtype.Timestamptz{},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+id.String(), nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	var body catDetailResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.LastSeenAt == nil || !body.LastSeenAt.Equal(seenAt) {
+		t.Errorf("expected last_seen_at %v, got %v", seenAt, body.LastSeenAt)
+	}
+	if body.LastFedAt == nil || !body.LastFedAt.Equal(fedAt) {
+		t.Errorf("expected last_fed_at %v, got %v", fedAt, body.LastFedAt)
+	}
+	if body.LastWaterAt != nil {
+		t.Errorf("expected null last_water_at, got %v", body.LastWaterAt)
+	}
+}
+
 func TestCatsHandler_Detail_NotFound(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{catErr: pgx.ErrNoRows}), testMaxUploadBytes)
 
@@ -473,6 +509,51 @@ func TestCatsHandler_UpdateHistory(t *testing.T) {
 	}
 	if body.Items[0].Comment != nil {
 		t.Errorf("expected nil comment, got %v", *body.Items[0].Comment)
+	}
+}
+
+// TestCatsHandler_UpdateHistory_AuthorDisplayName covers issue #121's
+// timeline-avatar parity gap on the wire: an entry with an author display
+// name surfaces it verbatim, an authorless entry serializes it as null
+// rather than an invented name.
+func TestCatsHandler_UpdateHistory_AuthorDisplayName(t *testing.T) {
+	created := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		exists: true,
+		updateRows: []repository.ListCatUpdatesRow{
+			{
+				ID:                pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CreatedAt:         pgtype.Timestamptz{Time: created, Valid: true},
+				Seq:               pgtype.Int8{Int64: 2, Valid: true},
+				Statuses:          []string{"seen"},
+				AuthorUserID:      pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				AuthorDisplayName: pgtype.Text{String: "asli", Valid: true},
+			},
+			{
+				ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CreatedAt: pgtype.Timestamptz{Time: created.Add(-time.Hour), Valid: true},
+				Seq:       pgtype.Int8{Int64: 1, Valid: true},
+				Statuses:  []string{"fed"},
+			},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String()+"/updates", nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	var body updateHistoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(body.Items))
+	}
+	if body.Items[0].AuthorDisplayName == nil || *body.Items[0].AuthorDisplayName != "asli" {
+		t.Errorf("expected author_display_name %q, got %v", "asli", body.Items[0].AuthorDisplayName)
+	}
+	if body.Items[1].AuthorDisplayName != nil {
+		t.Errorf("expected null author_display_name for authorless entry, got %v", *body.Items[1].AuthorDisplayName)
 	}
 }
 
