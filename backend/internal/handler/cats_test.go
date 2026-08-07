@@ -104,6 +104,13 @@ type fakeCatsLister struct {
 
 	mediaRows []repository.ListCatMediaRow
 	mediaErr  error
+
+	userRow repository.User
+	userErr error
+}
+
+func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error) {
+	return f.userRow, f.userErr
 }
 
 func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {

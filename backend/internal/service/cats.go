@@ -512,6 +512,7 @@ type CatsStore interface {
 	ListActiveNeedsHelpCatsByDistance(ctx context.Context, arg repository.ListActiveNeedsHelpCatsByDistanceParams) ([]repository.ListActiveNeedsHelpCatsByDistanceRow, error)
 	CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error)
 	ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]repository.ListCatMediaRow, error)
+	GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error)
 }
 
 type CatsService struct {
@@ -774,6 +775,19 @@ func textPtr(t pgtype.Text) *string {
 	}
 	s := t.String
 	return &s
+}
+
+// authorDisplayNameFor looks up authorUserID's current users.display_name,
+// mirroring what ListCatUpdates' join already returns — needed on the
+// create paths below because CreateOrdinaryUpdateParams' INSERT ... RETURNING
+// never joins the users table (issue #139: the just-created update's
+// response otherwise omits the author's name until the next full reload).
+func (s *CatsService) authorDisplayNameFor(ctx context.Context, authorUserID uuid.UUID) (*string, error) {
+	user, err := s.db.GetUserByID(ctx, pgtype.UUID{Bytes: authorUserID, Valid: true})
+	if err != nil {
+		return nil, err
+	}
+	return textPtr(user.DisplayName), nil
 }
 
 // nonEmptyStringPtr turns coalesce(cats.photo_url, media.url)'s plain
@@ -1130,6 +1144,11 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		return CatUpdate{}, err
 	}
 
+	authorDisplayName, err := s.authorDisplayNameFor(ctx, authorUserID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
 	expiresAt := createdAt.Add(updateCorrectionWindow)
 	result := CatUpdate{
 		ID:        uuid.UUID(row.ID.Bytes).String(),
@@ -1145,6 +1164,7 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		// the client immediately after posting until the next full reload.
 		AuthorIsMe:          true,
 		CorrectionExpiresAt: &expiresAt,
+		AuthorDisplayName:   authorDisplayName,
 	}
 	if needsHelp {
 		category := needsHelpCompatCategory
@@ -1174,6 +1194,11 @@ func (s *CatsService) fetchIdempotentOrdinaryUpdate(ctx context.Context, authorU
 	if err != nil {
 		return CatUpdate{}, err
 	}
+	authorDisplayName, err := s.authorDisplayNameFor(ctx, authorUserID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
 	createdAt := row.CreatedAt.Time
 	expiresAt := createdAt.Add(updateCorrectionWindow)
 	result := CatUpdate{
@@ -1185,6 +1210,7 @@ func (s *CatsService) fetchIdempotentOrdinaryUpdate(ctx context.Context, authorU
 		NeedsHelp:           row.NeedsHelp,
 		AuthorIsMe:          true,
 		CorrectionExpiresAt: &expiresAt,
+		AuthorDisplayName:   authorDisplayName,
 	}
 	if row.NeedsHelp {
 		category := needsHelpCompatCategory
@@ -1262,6 +1288,11 @@ func (s *CatsService) CreateNeedsHelpUpdate(ctx context.Context, id, userID, dev
 		return CatUpdate{}, err
 	}
 
+	authorDisplayName, err := s.authorDisplayNameFor(ctx, authorUserID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
 	label := needsHelpCategoryLabels[category]
 	active := true
 	return CatUpdate{
@@ -1280,6 +1311,7 @@ func (s *CatsService) CreateNeedsHelpUpdate(ctx context.Context, id, userID, dev
 		NeedsHelpCategoryLabel: &label,
 		NeedsHelpExpiresAt:     &expiresAt,
 		NeedsHelpActive:        &active,
+		AuthorDisplayName:      authorDisplayName,
 	}, nil
 }
 
