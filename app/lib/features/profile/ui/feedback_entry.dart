@@ -9,11 +9,11 @@ import '../../../core/theme/app_theme.dart';
 /// and store listing metadata; keep them in sync.
 const kFeedbackEmail = 'hello@tekir.istanbul';
 
-const _feedbackSubject = 'Tekir 0.1 geri bildirimi';
-
 /// Release identity shown to users, distinct from pubspec's `version:`
 /// (the build/tooling version). Bump alongside each release.
 const _appVersion = '0.2';
+
+const _feedbackSubject = 'Tekir $_appVersion geri bildirimi';
 
 /// Injectable so tests can capture the constructed [Uri] and simulate a
 /// device without a configured mail app; defaults to url_launcher.
