@@ -104,6 +104,13 @@ type fakeCatsLister struct {
 
 	mediaRows []repository.ListCatMediaRow
 	mediaErr  error
+
+	userRow repository.User
+	userErr error
+}
+
+func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error) {
+	return f.userRow, f.userErr
 }
 
 func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {
@@ -897,6 +904,7 @@ func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
 		exists:    true,
 		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
 		captured:  &captured,
+		userRow:   repository.User{DisplayName: pgtype.Text{String: "asli", Valid: true}},
 	}, service.WithClock(func() time.Time { return created })), testMaxUploadBytes)
 
 	r := routerForWithResolver(h,
@@ -929,6 +937,9 @@ func TestCatsHandler_CreateUpdate_Success(t *testing.T) {
 	}
 	if !body.CreatedAt.Equal(created) {
 		t.Errorf("unexpected created_at: %v", body.CreatedAt)
+	}
+	if body.AuthorDisplayName == nil || *body.AuthorDisplayName != "asli" {
+		t.Errorf("expected author_display_name %q, got %v", "asli", body.AuthorDisplayName)
 	}
 
 	if uuid.UUID(captured.CatID.Bytes).String() != catID.String() {
@@ -1251,6 +1262,7 @@ func TestCatsHandler_CreateNeedsHelp_Success(t *testing.T) {
 		exists:             true,
 		createNeedsHelpRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
 		capturedNeedsHelp:  &captured,
+		userRow:            repository.User{DisplayName: pgtype.Text{String: "asli", Valid: true}},
 	}, service.WithClock(func() time.Time { return created })), testMaxUploadBytes)
 
 	r := routerForWithResolver(h,
@@ -1283,6 +1295,9 @@ func TestCatsHandler_CreateNeedsHelp_Success(t *testing.T) {
 	}
 	if body.Comment == nil || *body.Comment != "sağ arka ayağını basamıyor" {
 		t.Errorf("unexpected comment: %v", body.Comment)
+	}
+	if body.AuthorDisplayName == nil || *body.AuthorDisplayName != "asli" {
+		t.Errorf("expected author_display_name %q, got %v", "asli", body.AuthorDisplayName)
 	}
 
 	if uuid.UUID(captured.CatID.Bytes).String() != catID.String() {
