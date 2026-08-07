@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
@@ -46,6 +47,158 @@ var ErrMediaDimensionsTooLarge = errors.New("media dimensions too large")
 // pixel buffer far larger than its compressed size suggests.
 const maxImagePixels = 40_000_000
 
+// ErrMediaDurationTooLong means a video's own moov/mvhd duration exceeds
+// maxVideoDurationSeconds — the product's short-form/gif-like cap (issue
+// #153 product approval), enforced server-side regardless of what the
+// client's own picker allowed.
+var ErrMediaDurationTooLong = errors.New("media duration too long")
+
+// maxVideoDurationSeconds is the fixed product cap on an update's attached
+// video (issue #153 approval comment: "maximum duration: 30 seconds",
+// "short-form / gif-like playback only; long-form video is out of scope").
+const maxVideoDurationSeconds = 30
+
+// videoContainer is a narrowly recognized ISO-base-media-file-format
+// container brand (issue #153 approval: "constrain supported video formats
+// to a narrow set for the first version"). Both mp4 and mov share the same
+// box structure this package parses (moov/mvhd) closely enough that no
+// separate parser is needed per format.
+type videoContainer struct {
+	contentType string
+	extension   string
+}
+
+// videoMajorBrands maps an ftyp box's major_brand to the narrow set of
+// containers this pipeline accepts pass-through, unvalidated beyond
+// structure/duration: "isom"/"mp42"/"mp41"/"M4V " cover the mp4 files
+// Android's camera/gallery and image_picker commonly produce; "qt  " is
+// QuickTime's own brand, what iOS's camera records by default.
+var videoMajorBrands = map[string]videoContainer{
+	"isom": {contentType: "video/mp4", extension: "mp4"},
+	"mp42": {contentType: "video/mp4", extension: "mp4"},
+	"mp41": {contentType: "video/mp4", extension: "mp4"},
+	"M4V ": {contentType: "video/mp4", extension: "mp4"},
+	"qt  ": {contentType: "video/quicktime", extension: "mov"},
+}
+
+// sniffVideoContainer reads raw's leading ftyp box (mandatory as the first
+// box in a conformant mp4/mov file) and reports whether its major_brand is
+// one of videoMajorBrands. It never reads past the box header itself, so it
+// stays cheap regardless of the file's actual size.
+func sniffVideoContainer(raw []byte) (videoContainer, bool) {
+	if len(raw) < 12 {
+		return videoContainer{}, false
+	}
+	if string(raw[4:8]) != "ftyp" {
+		return videoContainer{}, false
+	}
+	vc, ok := videoMajorBrands[string(raw[8:12])]
+	return vc, ok
+}
+
+// isobmffBox is one parsed box header: type plus the offset range of its
+// full contents (header included) within the buffer it was read from.
+type isobmffBox struct {
+	boxType string
+	start   int
+	end     int
+}
+
+// walkBoxes reads a flat sequence of ISO-base-media-file-format boxes
+// starting at offset 0 of buf, calling yield for each. It stops at the
+// first malformed header (a truncated 8-byte header, a size claiming more
+// bytes than buf actually has, or a size too small to contain its own
+// header) rather than erroring — callers treat "the box they wanted was
+// never found" as malformed, same as a structurally broken file.
+func walkBoxes(buf []byte, yield func(isobmffBox) bool) {
+	offset := 0
+	for offset+8 <= len(buf) {
+		size := uint64(binary.BigEndian.Uint32(buf[offset : offset+4]))
+		boxType := string(buf[offset+4 : offset+8])
+		headerSize := 8
+		switch size {
+		case 0:
+			// A box with size 0 extends to the end of the enclosing buffer
+			// (only valid for the last box in a file) — never valid inside
+			// a nested box walk, but harmless to resolve the same way.
+			size = uint64(len(buf) - offset)
+		case 1:
+			if offset+16 > len(buf) {
+				return
+			}
+			size = binary.BigEndian.Uint64(buf[offset+8 : offset+16])
+			headerSize = 16
+		}
+		if size < uint64(headerSize) || offset+int(size) > len(buf) || offset+int(size) <= offset {
+			return
+		}
+		if !yield(isobmffBox{boxType: boxType, start: offset, end: offset + int(size)}) {
+			return
+		}
+		offset += int(size)
+	}
+}
+
+// videoDurationSeconds locates moov > mvhd within raw and returns the
+// duration mvhd itself declares (timescale/duration, per ISO/IEC
+// 14496-12) — the authoritative source, never trusting a client-supplied
+// duration. Returns ErrMalformedMedia when no moov/mvhd box is found, mvhd
+// is truncated, or timescale is 0.
+func videoDurationSeconds(raw []byte) (float64, error) {
+	var moov *isobmffBox
+	walkBoxes(raw, func(b isobmffBox) bool {
+		if b.boxType == "moov" {
+			box := b
+			moov = &box
+			return false
+		}
+		return true
+	})
+	if moov == nil {
+		return 0, ErrMalformedMedia
+	}
+
+	var mvhd *isobmffBox
+	walkBoxes(raw[moov.start+8:moov.end], func(b isobmffBox) bool {
+		if b.boxType == "mvhd" {
+			box := b
+			mvhd = &box
+			return false
+		}
+		return true
+	})
+	if mvhd == nil {
+		return 0, ErrMalformedMedia
+	}
+	content := raw[moov.start+8+mvhd.start+8 : moov.start+8+mvhd.end]
+	if len(content) < 1 {
+		return 0, ErrMalformedMedia
+	}
+
+	version := content[0]
+	var timescale, duration uint64
+	switch version {
+	case 0:
+		if len(content) < 20 {
+			return 0, ErrMalformedMedia
+		}
+		timescale = uint64(binary.BigEndian.Uint32(content[12:16]))
+		duration = uint64(binary.BigEndian.Uint32(content[16:20]))
+	case 1:
+		if len(content) < 32 {
+			return 0, ErrMalformedMedia
+		}
+		timescale = uint64(binary.BigEndian.Uint32(content[20:24]))
+		duration = binary.BigEndian.Uint64(content[24:32])
+	default:
+		return 0, ErrMalformedMedia
+	}
+	if timescale == 0 {
+		return 0, ErrMalformedMedia
+	}
+	return float64(duration) / float64(timescale), nil
+}
+
 // processedMedia is a validated, re-encoded upload ready for an ObjectStore.
 // Re-encoding from decoded pixel data (rather than storing the original
 // bytes) is what strips any exif/metadata the original file carried —
@@ -66,18 +219,31 @@ type processedMedia struct {
 type mediaPipeline struct {
 	store    ObjectStore
 	maxBytes int
+	// maxVideoBytes gates whether this pipeline accepts video at all: 0
+	// (CatsService.Create's pipeline — a cat's own initial photo, issue
+	// #70, never a video) means process rejects video bytes exactly like
+	// any other unsupported type; MediaService's pipeline (issue #153) sets
+	// it so POST /v1/media can accept an update's optional video too.
+	maxVideoBytes int
 }
 
-func newMediaPipeline(store ObjectStore, maxBytes int) *mediaPipeline {
-	return &mediaPipeline{store: store, maxBytes: maxBytes}
+func newMediaPipeline(store ObjectStore, maxBytes, maxVideoBytes int) *mediaPipeline {
+	return &mediaPipeline{store: store, maxBytes: maxBytes, maxVideoBytes: maxVideoBytes}
 }
 
-// process rejects anything empty, oversized, or not a genuinely decodable
-// jpeg/png (regardless of claimed content-type), then re-encodes the
-// decoded pixels. It performs no i/o — see upload for the storage step.
+// process rejects anything empty or oversized, then either passes a
+// recognized video through a bounded validation path (issue #153: no
+// transcoding for the first version) or re-encodes a genuinely decodable
+// jpeg/png (regardless of claimed content-type). It performs no i/o — see
+// upload for the storage step.
 func (p *mediaPipeline) process(raw []byte) (processedMedia, error) {
 	if len(raw) == 0 {
 		return processedMedia{}, ErrMalformedMedia
+	}
+	if p.maxVideoBytes > 0 {
+		if vc, ok := sniffVideoContainer(raw); ok {
+			return p.processVideo(raw, vc)
+		}
 	}
 	if len(raw) > p.maxBytes {
 		return processedMedia{}, ErrMediaTooLarge
@@ -134,6 +300,29 @@ func (p *mediaPipeline) process(raw []byte) (processedMedia, error) {
 	return result, nil
 }
 
+// processVideo validates a video recognized by sniffVideoContainer and
+// passes it through unmodified (issue #153 architecture decision: "no
+// transcoding required for the first implementation") — raw is stored
+// as-is rather than re-encoded, since there's no decoded-pixel
+// intermediate for a video the way there is for an image. Duration comes
+// from the file's own moov/mvhd box, never a client-supplied value.
+func (p *mediaPipeline) processVideo(raw []byte, vc videoContainer) (processedMedia, error) {
+	if len(raw) > p.maxVideoBytes {
+		return processedMedia{}, ErrMediaTooLarge
+	}
+	duration, err := videoDurationSeconds(raw)
+	if err != nil {
+		return processedMedia{}, err
+	}
+	if duration <= 0 {
+		return processedMedia{}, ErrMalformedMedia
+	}
+	if duration > maxVideoDurationSeconds {
+		return processedMedia{}, ErrMediaDurationTooLong
+	}
+	return processedMedia{data: raw, contentType: vc.contentType, extension: vc.extension}, nil
+}
+
 // upload stores processed under a fresh, random key and returns the
 // resulting object key and url. Callers are responsible for compensating
 // (deleting the object) if a subsequent database write fails.
@@ -166,8 +355,8 @@ type MediaService struct {
 	pipeline *mediaPipeline
 }
 
-func NewMediaService(db MediaStore, store ObjectStore, maxBytes int) *MediaService {
-	return &MediaService{db: db, pipeline: newMediaPipeline(store, maxBytes)}
+func NewMediaService(db MediaStore, store ObjectStore, maxBytes, maxVideoBytes int) *MediaService {
+	return &MediaService{db: db, pipeline: newMediaPipeline(store, maxBytes, maxVideoBytes)}
 }
 
 // Upload validates and stores raw, attributing it to the authenticated

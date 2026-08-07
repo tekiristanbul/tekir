@@ -68,6 +68,7 @@ select
   u.needs_help,
   u.needs_help_expires_at,
   um.url as photo_url,
+  um.content_type as media_content_type,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
@@ -75,7 +76,7 @@ left join media um on um.id = u.media_id
 where u.author_user_id = sqlc.arg(author_user_id)
   and u.idempotency_key = sqlc.arg(idempotency_key)
   and u.kind = 'ordinary'
-group by u.id, um.url;
+group by u.id, um.url, um.content_type;
 
 -- name: BackfillUpdatesAuthorUserID :exec
 -- issue #65: called inside AuthService.linkDevice's transaction, once a
@@ -110,8 +111,12 @@ on conflict (update_id, status) do nothing;
 -- #121's timeline-thumbnail parity gap) resolves u.media_id to its media
 -- row's url, left-joined since it's null for any row created before issue
 -- #153's write path started setting it (or one that simply carries no
--- photo) — the client omits the thumbnail exactly like it already omits
--- the correction menu for a comment-less row.
+-- media) — the client omits the thumbnail exactly like it already omits
+-- the correction menu for a comment-less row. media_content_type (issue
+-- #153's video support) is the same row's media.content_type, null under
+-- the same conditions as photo_url — the client uses it to tell an
+-- attached video (a "video/*" content type) apart from a photo so it can
+-- render a video player instead of an image widget.
 select
   u.id,
   u.kind,
@@ -124,6 +129,7 @@ select
   u.needs_help_category,
   u.needs_help_expires_at,
   um.url as photo_url,
+  um.content_type as media_content_type,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
@@ -136,7 +142,7 @@ where u.cat_id = sqlc.arg(cat_id)
     or u.created_at < sqlc.narg(before_created_at)::timestamptz
     or (u.created_at = sqlc.narg(before_created_at)::timestamptz and u.seq < sqlc.narg(before_seq)::bigint)
   )
-group by u.id, au.display_name, um.url
+group by u.id, au.display_name, um.url, um.content_type
 order by u.created_at desc, u.seq desc
 limit sqlc.arg(row_limit)::int;
 

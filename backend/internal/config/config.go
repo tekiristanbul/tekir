@@ -102,6 +102,11 @@ type Config struct {
 	// so a request can't force the server to decompress an arbitrarily
 	// large image (issue #70's malformed/oversized-media rejection).
 	MediaMaxBytes int
+	// MediaVideoMaxBytes is the equivalent cap for a video upload (issue
+	// #153) — kept separate from MediaMaxBytes because a video isn't
+	// re-encoded down like an image is, so it needs materially more
+	// headroom for the same 30-second product cap to be reachable at all.
+	MediaVideoMaxBytes int
 
 	// S3Endpoint/S3Region/S3Bucket/S3AccessKeyID/S3SecretAccessKey/
 	// S3PublicBaseURL configure the s3-compatible object-store adapter and
@@ -178,6 +183,7 @@ func Load() (Config, error) {
 		ObjectStorageProvider: os.Getenv("OBJECT_STORAGE_PROVIDER"),
 		MediaLocalDir:         getEnv("MEDIA_LOCAL_DIR", "./data/media"),
 		MediaMaxBytes:         getEnvInt("MEDIA_MAX_BYTES", 8*1024*1024),
+		MediaVideoMaxBytes:    getEnvInt("MEDIA_VIDEO_MAX_BYTES", 40*1024*1024),
 
 		S3Endpoint:        os.Getenv("S3_ENDPOINT"),
 		S3Region:          os.Getenv("S3_REGION"),

@@ -755,11 +755,12 @@ func TestCatsHandler_UpdateHistory_PhotoURL(t *testing.T) {
 		exists: true,
 		updateRows: []repository.ListCatUpdatesRow{
 			{
-				ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
-				CreatedAt: pgtype.Timestamptz{Time: created, Valid: true},
-				Seq:       pgtype.Int8{Int64: 1, Valid: true},
-				Statuses:  []string{"seen"},
-				PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+				ID:               pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CreatedAt:        pgtype.Timestamptz{Time: created, Valid: true},
+				Seq:              pgtype.Int8{Int64: 1, Valid: true},
+				Statuses:         []string{"seen"},
+				PhotoUrl:         pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+				MediaContentType: pgtype.Text{String: "image/jpeg", Valid: true},
 			},
 		},
 	}), testMaxUploadBytes)
@@ -777,6 +778,9 @@ func TestCatsHandler_UpdateHistory_PhotoURL(t *testing.T) {
 	}
 	if body.Items[0].PhotoURL == nil || *body.Items[0].PhotoURL != "https://placecats.com/millie/300/200" {
 		t.Errorf("expected photo_url set, got %v", body.Items[0].PhotoURL)
+	}
+	if body.Items[0].MediaContentType == nil || *body.Items[0].MediaContentType != "image/jpeg" {
+		t.Errorf("expected media_content_type set, got %v", body.Items[0].MediaContentType)
 	}
 }
 

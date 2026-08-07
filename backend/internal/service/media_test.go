@@ -115,6 +115,135 @@ func writePNGChunk(buf *bytes.Buffer, typ string, data []byte) {
 	buf.Write(sum[:])
 }
 
+// mp4Bytes builds a minimal but structurally valid ISO-base-media-file
+// fixture: an ftyp box declaring majorBrand, followed by a moov box
+// containing just an mvhd box (version 0) with the given timescale/
+// duration — enough for sniffVideoContainer and videoDurationSeconds to
+// exercise their real box-walking logic without a real video file.
+func mp4Bytes(t *testing.T, majorBrand string, timescale, duration uint32) []byte {
+	t.Helper()
+	if len(majorBrand) != 4 {
+		t.Fatalf("majorBrand must be 4 bytes, got %q", majorBrand)
+	}
+
+	var ftyp bytes.Buffer
+	writeUint32(&ftyp, 20)
+	ftyp.WriteString("ftyp")
+	ftyp.WriteString(majorBrand)
+	writeUint32(&ftyp, 0)        // minor_version
+	ftyp.WriteString(majorBrand) // compatible_brands (one entry)
+
+	mvhdContent := make([]byte, 100) // version+flags+timestamps+timescale+duration, zero-padded
+	mvhdContent[0] = 0               // version 0
+	binary.BigEndian.PutUint32(mvhdContent[12:16], timescale)
+	binary.BigEndian.PutUint32(mvhdContent[16:20], duration)
+
+	var mvhd bytes.Buffer
+	writeUint32(&mvhd, uint32(8+len(mvhdContent)))
+	mvhd.WriteString("mvhd")
+	mvhd.Write(mvhdContent)
+
+	var moov bytes.Buffer
+	writeUint32(&moov, uint32(8+mvhd.Len()))
+	moov.WriteString("moov")
+	moov.Write(mvhd.Bytes())
+
+	var out bytes.Buffer
+	out.Write(ftyp.Bytes())
+	out.Write(moov.Bytes())
+	return out.Bytes()
+}
+
+func writeUint32(buf *bytes.Buffer, v uint32) {
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], v)
+	buf.Write(b[:])
+}
+
+func TestSniffVideoContainer_RecognizesSupportedBrands(t *testing.T) {
+	for brand, want := range videoMajorBrands {
+		raw := mp4Bytes(t, brand, 1000, 1000)
+		vc, ok := sniffVideoContainer(raw)
+		if !ok {
+			t.Errorf("brand %q: expected recognized container", brand)
+			continue
+		}
+		if vc != want {
+			t.Errorf("brand %q: got %+v, want %+v", brand, vc, want)
+		}
+	}
+}
+
+func TestSniffVideoContainer_RejectsUnknownBrandAndShortInput(t *testing.T) {
+	if _, ok := sniffVideoContainer(mp4Bytes(t, "avc1", 1000, 1000)); ok {
+		t.Error("expected unrecognized major_brand to be rejected")
+	}
+	if _, ok := sniffVideoContainer([]byte("short")); ok {
+		t.Error("expected too-short input to be rejected")
+	}
+}
+
+func TestVideoDurationSeconds_ParsesMvhd(t *testing.T) {
+	raw := mp4Bytes(t, "isom", 1000, 30000)
+	got, err := videoDurationSeconds(raw)
+	if err != nil {
+		t.Fatalf("videoDurationSeconds: %v", err)
+	}
+	if got != 30 {
+		t.Errorf("expected 30s duration, got %v", got)
+	}
+}
+
+func TestVideoDurationSeconds_RejectsMissingMoovOrZeroTimescale(t *testing.T) {
+	if _, err := videoDurationSeconds(mp4Bytes(t, "isom", 1000, 30000)[:20]); !errors.Is(err, ErrMalformedMedia) {
+		t.Errorf("expected ErrMalformedMedia for missing moov, got %v", err)
+	}
+	if _, err := videoDurationSeconds(mp4Bytes(t, "isom", 0, 30000)); !errors.Is(err, ErrMalformedMedia) {
+		t.Errorf("expected ErrMalformedMedia for zero timescale, got %v", err)
+	}
+}
+
+func TestMediaPipeline_ProcessVideo_AcceptsWithinLimits(t *testing.T) {
+	p := newMediaPipeline(&fakeObjectStore{}, 1<<20, 1<<20)
+	raw := mp4Bytes(t, "isom", 1000, 30000) // exactly the 30s cap
+	result, err := p.process(raw)
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if result.contentType != "video/mp4" || result.extension != "mp4" {
+		t.Errorf("unexpected result: %+v", result)
+	}
+	if !bytes.Equal(result.data, raw) {
+		t.Error("expected video bytes to be stored unmodified (no transcoding)")
+	}
+}
+
+func TestMediaPipeline_ProcessVideo_RejectsTooLong(t *testing.T) {
+	p := newMediaPipeline(&fakeObjectStore{}, 1<<20, 1<<20)
+	raw := mp4Bytes(t, "isom", 1000, 30001) // just over the 30s cap
+	if _, err := p.process(raw); !errors.Is(err, ErrMediaDurationTooLong) {
+		t.Errorf("expected ErrMediaDurationTooLong, got %v", err)
+	}
+}
+
+func TestMediaPipeline_ProcessVideo_RejectsOversized(t *testing.T) {
+	raw := mp4Bytes(t, "isom", 1000, 5000)
+	p := newMediaPipeline(&fakeObjectStore{}, 1<<20, len(raw)-1)
+	if _, err := p.process(raw); !errors.Is(err, ErrMediaTooLarge) {
+		t.Errorf("expected ErrMediaTooLarge, got %v", err)
+	}
+}
+
+func TestMediaPipeline_Process_RejectsVideoWhenVideoDisabled(t *testing.T) {
+	// maxVideoBytes == 0 (CatsService's pipeline, issue #153: a cat's own
+	// initial photo stays image-only) must never route into processVideo.
+	p := newMediaPipeline(&fakeObjectStore{}, 1<<20, 0)
+	raw := mp4Bytes(t, "isom", 1000, 5000)
+	if _, err := p.process(raw); !errors.Is(err, ErrMalformedMedia) {
+		t.Errorf("expected the video to fall through to image decoding and fail as ErrMalformedMedia, got %v", err)
+	}
+}
+
 // fakeObjectStore is a minimal in-memory ObjectStore for tests that don't
 // need FakeObjectStore's real disk i/o — just call-capturing.
 type fakeObjectStore struct {
@@ -161,21 +290,21 @@ func (f *fakeMediaStore) GetMediaByIdempotencyKey(_ context.Context, _ repositor
 }
 
 func TestMediaPipeline_Process_RejectsEmpty(t *testing.T) {
-	p := newMediaPipeline(&fakeObjectStore{}, 1024)
+	p := newMediaPipeline(&fakeObjectStore{}, 1024, 0)
 	if _, err := p.process(nil); !errors.Is(err, ErrMalformedMedia) {
 		t.Errorf("expected ErrMalformedMedia, got %v", err)
 	}
 }
 
 func TestMediaPipeline_Process_RejectsOversized(t *testing.T) {
-	p := newMediaPipeline(&fakeObjectStore{}, 4)
+	p := newMediaPipeline(&fakeObjectStore{}, 4, 0)
 	if _, err := p.process([]byte("way too big")); !errors.Is(err, ErrMediaTooLarge) {
 		t.Errorf("expected ErrMediaTooLarge, got %v", err)
 	}
 }
 
 func TestMediaPipeline_Process_RejectsMalformed(t *testing.T) {
-	p := newMediaPipeline(&fakeObjectStore{}, 1<<20)
+	p := newMediaPipeline(&fakeObjectStore{}, 1<<20, 0)
 	if _, err := p.process([]byte("not an image, just text pretending to be one")); !errors.Is(err, ErrMalformedMedia) {
 		t.Errorf("expected ErrMalformedMedia, got %v", err)
 	}
@@ -187,7 +316,7 @@ func TestMediaPipeline_Process_RejectsMalformed(t *testing.T) {
 // check must reject via image.DecodeConfig (header only) before ever
 // calling image.Decode.
 func TestMediaPipeline_Process_RejectsOversizedDimensions(t *testing.T) {
-	p := newMediaPipeline(&fakeObjectStore{}, 1<<20)
+	p := newMediaPipeline(&fakeObjectStore{}, 1<<20, 0)
 	if _, err := p.process(oversizedDimensionsPNGBytes(t)); !errors.Is(err, ErrMediaDimensionsTooLarge) {
 		t.Errorf("expected ErrMediaDimensionsTooLarge, got %v", err)
 	}
@@ -203,7 +332,7 @@ func TestMediaPipeline_Process_RejectsOversizedDimensions(t *testing.T) {
 func TestMediaPipeline_Process_RejectsWhenReencodedOutputExceedsMaxBytes(t *testing.T) {
 	raw := lowQualityJPEGBytesThatReencodeLarger(t)
 
-	unbounded := newMediaPipeline(&fakeObjectStore{}, 1<<20)
+	unbounded := newMediaPipeline(&fakeObjectStore{}, 1<<20, 0)
 	processed, err := unbounded.process(raw)
 	if err != nil {
 		t.Fatalf("process with no effective limit: %v", err)
@@ -215,14 +344,14 @@ func TestMediaPipeline_Process_RejectsWhenReencodedOutputExceedsMaxBytes(t *test
 	// A limit between the two sizes clears len(raw) but not the re-encoded
 	// output.
 	maxBytes := (len(raw) + len(processed.data)) / 2
-	bounded := newMediaPipeline(&fakeObjectStore{}, maxBytes)
+	bounded := newMediaPipeline(&fakeObjectStore{}, maxBytes, 0)
 	if _, err := bounded.process(raw); !errors.Is(err, ErrMediaTooLarge) {
 		t.Errorf("expected ErrMediaTooLarge for an oversized re-encoded output, got %v", err)
 	}
 }
 
 func TestMediaPipeline_Process_AcceptsJPEGAndPNG(t *testing.T) {
-	p := newMediaPipeline(&fakeObjectStore{}, 1<<20)
+	p := newMediaPipeline(&fakeObjectStore{}, 1<<20, 0)
 
 	jpegResult, err := p.process(validJPEGBytes(t))
 	if err != nil {
@@ -250,7 +379,7 @@ func TestMediaService_Upload_HappyPath(t *testing.T) {
 		},
 		idempotencyErr: pgx.ErrNoRows,
 	}
-	svc := NewMediaService(mediaStore, store, 1<<20)
+	svc := NewMediaService(mediaStore, store, 1<<20, 1<<20)
 
 	media, err := svc.Upload(context.Background(), userIDFor(t), "", nil, validJPEGBytes(t))
 	if err != nil {
@@ -274,7 +403,7 @@ func TestMediaService_Upload_IdempotentRetryReturnsExisting(t *testing.T) {
 		Url: "/v1/media/objects/existing.jpg",
 	}
 	mediaStore := &fakeMediaStore{idempotencyRow: existing}
-	svc := NewMediaService(mediaStore, store, 1<<20)
+	svc := NewMediaService(mediaStore, store, 1<<20, 1<<20)
 
 	key := "retry-key"
 	media, err := svc.Upload(context.Background(), userIDFor(t), "", &key, validJPEGBytes(t))
@@ -295,7 +424,7 @@ func TestMediaService_Upload_CompensatesOnDBFailure(t *testing.T) {
 		createErr:      errors.New("db exploded"),
 		idempotencyErr: pgx.ErrNoRows,
 	}
-	svc := NewMediaService(mediaStore, store, 1<<20)
+	svc := NewMediaService(mediaStore, store, 1<<20, 1<<20)
 
 	if _, err := svc.Upload(context.Background(), userIDFor(t), "", nil, validJPEGBytes(t)); err == nil {
 		t.Fatal("expected error")
@@ -340,7 +469,7 @@ func TestMediaService_Upload_RaceOnIdempotencyKeyRecoversExisting(t *testing.T) 
 			return existing, nil
 		},
 	}
-	svc := NewMediaService(wrapped, store, 1<<20)
+	svc := NewMediaService(wrapped, store, 1<<20, 1<<20)
 
 	media, err := svc.Upload(context.Background(), userIDFor(t), "", &key, validJPEGBytes(t))
 	if err != nil {

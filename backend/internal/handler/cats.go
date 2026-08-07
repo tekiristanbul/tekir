@@ -157,8 +157,13 @@ type updateResponse struct {
 	AuthorDisplayName *string `json:"author_display_name"`
 	// PhotoURL (issue #121's timeline-thumbnail parity gap, wired up by
 	// issue #153) is the url of the media this update carries, null when it
-	// carries none.
+	// carries none — despite the name, this is set for both a photo and a
+	// video attachment; MediaContentType is what tells them apart.
 	PhotoURL *string `json:"photo_url"`
+	// MediaContentType (issue #153's video support) is null under the same
+	// conditions as PhotoURL; the client checks whether it starts with
+	// "video/" to render a video player instead of an image widget.
+	MediaContentType *string `json:"media_content_type"`
 	// AuthorIsMe/CorrectionExpiresAt (issue #80): on GET
 	// /v1/cats/{cat_id}/updates (OptionalBearer), both stay their zero
 	// value (false/null) for a guest read. This same struct also backs
@@ -564,6 +569,7 @@ func toUpdateResponse(u service.CatUpdate) updateResponse {
 		NeedsHelpActive:        u.NeedsHelpActive,
 		AuthorDisplayName:      u.AuthorDisplayName,
 		PhotoURL:               u.PhotoURL,
+		MediaContentType:       u.MediaContentType,
 		AuthorIsMe:             u.AuthorIsMe,
 		CorrectionExpiresAt:    u.CorrectionExpiresAt,
 	}

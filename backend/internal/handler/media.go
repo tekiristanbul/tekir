@@ -17,9 +17,10 @@ type MediaUploader interface {
 }
 
 // MediaHandler handles standalone media uploads (POST /v1/media, issue
-// #70). A cat's own initial photo is uploaded as part of POST /v1/cats
-// instead (see CatsHandler.Create) — this endpoint is for media independent
-// of cat creation (e.g. a future update-attached photo, updates.media_id).
+// #70; extended to accept video by issue #153). A cat's own initial photo
+// is uploaded as part of POST /v1/cats instead (see CatsHandler.Create),
+// image-only — this endpoint is for media independent of cat creation, an
+// ordinary update's optional photo or video attachment (updates.media_id).
 type MediaHandler struct {
 	media          MediaUploader
 	maxUploadBytes int64
@@ -83,6 +84,8 @@ func writeMediaServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "file dimensions too large"})
 	case errors.Is(err, service.ErrUnsupportedMediaType):
 		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "unsupported file type"})
+	case errors.Is(err, service.ErrMediaDurationTooLong):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "video too long"})
 	case errors.Is(err, service.ErrMalformedMedia):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed file"})
 	default:

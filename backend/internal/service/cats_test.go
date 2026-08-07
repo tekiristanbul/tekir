@@ -722,17 +722,28 @@ func TestCatsService_ListCatUpdates_AuthorDisplayName(t *testing.T) {
 
 // TestCatsService_ListCatUpdates_PhotoURL covers issue #121's
 // timeline-thumbnail parity gap: a row whose media_id resolves to a media
-// url surfaces it, while a row with no media stays nil.
+// url surfaces it, while a row with no media stays nil. Issue #153 extends
+// this with MediaContentType, which the client uses to tell a video
+// attachment apart from a photo one.
 func TestCatsService_ListCatUpdates_PhotoURL(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{
 		exists: true,
 		updateRows: []repository.ListCatUpdatesRow{
 			{
-				ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
-				CreatedAt: pgtype.Timestamptz{Time: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Valid: true},
-				Seq:       pgtype.Int8{Int64: 2, Valid: true},
-				Statuses:  []string{"seen"},
-				PhotoUrl:  pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+				ID:               pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CreatedAt:        pgtype.Timestamptz{Time: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), Valid: true},
+				Seq:              pgtype.Int8{Int64: 3, Valid: true},
+				Statuses:         []string{"seen"},
+				PhotoUrl:         pgtype.Text{String: "https://media.example/millie.mp4", Valid: true},
+				MediaContentType: pgtype.Text{String: "video/mp4", Valid: true},
+			},
+			{
+				ID:               pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				CreatedAt:        pgtype.Timestamptz{Time: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Valid: true},
+				Seq:              pgtype.Int8{Int64: 2, Valid: true},
+				Statuses:         []string{"seen"},
+				PhotoUrl:         pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
+				MediaContentType: pgtype.Text{String: "image/jpeg", Valid: true},
 			},
 			{
 				ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
@@ -747,14 +758,26 @@ func TestCatsService_ListCatUpdates_PhotoURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if len(page.Items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(page.Items))
+	if len(page.Items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(page.Items))
 	}
-	if page.Items[0].PhotoURL == nil || *page.Items[0].PhotoURL != "https://placecats.com/millie/300/200" {
-		t.Errorf("expected photo_url set, got %v", page.Items[0].PhotoURL)
+	if page.Items[0].PhotoURL == nil || *page.Items[0].PhotoURL != "https://media.example/millie.mp4" {
+		t.Errorf("expected video url set, got %v", page.Items[0].PhotoURL)
 	}
-	if page.Items[1].PhotoURL != nil {
-		t.Errorf("expected nil photo_url for medialess row, got %v", *page.Items[1].PhotoURL)
+	if page.Items[0].MediaContentType == nil || *page.Items[0].MediaContentType != "video/mp4" {
+		t.Errorf("expected video media_content_type set, got %v", page.Items[0].MediaContentType)
+	}
+	if page.Items[1].PhotoURL == nil || *page.Items[1].PhotoURL != "https://placecats.com/millie/300/200" {
+		t.Errorf("expected photo_url set, got %v", page.Items[1].PhotoURL)
+	}
+	if page.Items[1].MediaContentType == nil || *page.Items[1].MediaContentType != "image/jpeg" {
+		t.Errorf("expected photo media_content_type set, got %v", page.Items[1].MediaContentType)
+	}
+	if page.Items[2].PhotoURL != nil {
+		t.Errorf("expected nil photo_url for medialess row, got %v", *page.Items[2].PhotoURL)
+	}
+	if page.Items[2].MediaContentType != nil {
+		t.Errorf("expected nil media_content_type for medialess row, got %v", *page.Items[2].MediaContentType)
 	}
 }
 
@@ -1143,6 +1166,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithOwnMediaAttachesPhoto(t *testing.T
 		getMediaRow: repository.Medium{
 			ID:               pgtype.UUID{Bytes: mediaID, Valid: true},
 			Url:              "https://media.example/cat.jpg",
+			ContentType:      "image/jpeg",
 			UploadedByUserID: pgtype.UUID{Bytes: authorID, Valid: true},
 		},
 	})
@@ -1155,8 +1179,43 @@ func TestCatsService_CreateOrdinaryUpdate_WithOwnMediaAttachesPhoto(t *testing.T
 	if update.PhotoURL == nil || *update.PhotoURL != "https://media.example/cat.jpg" {
 		t.Errorf("expected the response to carry the attached photo's url, got %v", update.PhotoURL)
 	}
+	if update.MediaContentType == nil || *update.MediaContentType != "image/jpeg" {
+		t.Errorf("expected the response to carry the attached media's content type, got %v", update.MediaContentType)
+	}
 	if uuid.UUID(captured.MediaID.Bytes).String() != mediaID.String() || !captured.MediaID.Valid {
 		t.Errorf("expected the repository write to carry the media id, got %v", captured.MediaID)
+	}
+}
+
+// TestCatsService_CreateOrdinaryUpdate_WithOwnVideoAttachesVideo covers
+// issue #153's video support end to end through CreateOrdinaryUpdate: a
+// video's content type flows through into the response exactly like a
+// photo's does, so the client can tell them apart.
+func TestCatsService_CreateOrdinaryUpdate_WithOwnVideoAttachesVideo(t *testing.T) {
+	authorID := uuid.New()
+	mediaID := uuid.New()
+	returnedID := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		exists:    true,
+		createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: returnedID, Valid: true}},
+		getMediaRow: repository.Medium{
+			ID:               pgtype.UUID{Bytes: mediaID, Valid: true},
+			Url:              "https://media.example/cat.mp4",
+			ContentType:      "video/mp4",
+			UploadedByUserID: pgtype.UUID{Bytes: authorID, Valid: true},
+		},
+	})
+
+	mediaIDStr := mediaID.String()
+	update, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), authorID.String(), "", nil, []string{"seen"}, false, nil, &mediaIDStr)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if update.PhotoURL == nil || *update.PhotoURL != "https://media.example/cat.mp4" {
+		t.Errorf("expected the response to carry the attached video's url, got %v", update.PhotoURL)
+	}
+	if update.MediaContentType == nil || *update.MediaContentType != "video/mp4" {
+		t.Errorf("expected the response to carry video/mp4, got %v", update.MediaContentType)
 	}
 }
 
