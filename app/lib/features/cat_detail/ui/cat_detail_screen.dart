@@ -266,12 +266,17 @@ class _HeroPhoto extends StatelessWidget {
               ),
             ),
             Positioned(
-              top: AppSpacing.s3,
+              // The cover sits at the very top of the scroll, with no app
+              // bar above it — without the safe-area offset these glass
+              // controls sit under the status bar/notch instead of below
+              // it (issue #137), unlike every other back action on this
+              // screen (_MessageScreen, _FullScreenPhoto).
+              top: MediaQuery.of(context).padding.top + AppSpacing.s3,
               left: AppSpacing.s4,
               child: _BackCircleButton(onGlass: true),
             ),
             Positioned(
-              top: AppSpacing.s3,
+              top: MediaQuery.of(context).padding.top + AppSpacing.s3,
               right: AppSpacing.s4,
               child: FollowButton(
                 catId: detail.id,

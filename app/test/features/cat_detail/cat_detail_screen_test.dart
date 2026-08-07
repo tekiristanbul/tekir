@@ -519,6 +519,30 @@ void main() {
   );
 
   testWidgets(
+    'issue #137: the cover\'s back/follow glass controls clear the top '
+    'safe-area inset instead of sitting under the status bar/notch',
+    (tester) async {
+      // FakeViewPadding is in physical pixels — pin the device pixel ratio
+      // so the 47px inset below maps to 47 logical pixels.
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.padding = const FakeViewPadding(top: 47);
+      addTearDown(tester.view.reset);
+
+      await _pump(
+        tester,
+        CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
+      );
+
+      final backTop = tester.getTopLeft(find.byIcon(Icons.chevron_left)).dy;
+      final followTop = tester
+          .getTopLeft(find.byIcon(Icons.favorite_border))
+          .dy;
+      expect(backTop, greaterThanOrEqualTo(47));
+      expect(followTop, greaterThanOrEqualTo(47));
+    },
+  );
+
+  testWidgets(
     'three-stat header: each tile shows its own status time, independently, '
     'falling back to "henüz yok" only for a status with no update yet',
     (tester) async {
