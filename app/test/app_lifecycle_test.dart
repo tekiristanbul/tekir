@@ -49,51 +49,44 @@ const _session = SessionIdentity(
 );
 
 void main() {
-  testWidgets(
-    'app resume (issue #155) refreshes the session via the lifecycle '
-    'observer',
-    (tester) async {
-      final session = _FakeSessionIdentityService(initial: _session);
+  testWidgets('app resume (issue #155) refreshes the session via the lifecycle '
+      'observer', (tester) async {
+    final session = _FakeSessionIdentityService(initial: _session);
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            sessionIdentityServiceProvider.overrideWithValue(session),
-            initialLocationProvider.overrideWith(
-              (ref) async => const ResolvedLocation(
-                center: istanbulFallback,
-                isFallback: true,
-              ),
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionIdentityServiceProvider.overrideWithValue(session),
+          initialLocationProvider.overrideWith(
+            (ref) async => const ResolvedLocation(
+              center: istanbulFallback,
+              isFallback: true,
             ),
-            catsMapProvider.overrideWith(
-              () => _FixedCatsMapNotifier(const CatsMapState()),
-            ),
-          ],
-          child: const CatsOfIstanbulApp(),
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
+          ),
+          catsMapProvider.overrideWith(
+            () => _FixedCatsMapNotifier(const CatsMapState()),
+          ),
+        ],
+        child: const CatsOfIstanbulApp(),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
-      expect(session.refreshCallCount, 0);
+    expect(session.refreshCallCount, 0);
 
-      tester.binding.handleAppLifecycleStateChanged(
-        AppLifecycleState.resumed,
-      );
-      await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
 
-      expect(session.refreshCallCount, 1);
+    expect(session.refreshCallCount, 1);
 
-      tester.binding.handleAppLifecycleStateChanged(
-        AppLifecycleState.inactive,
-      );
-      await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
 
-      expect(
-        session.refreshCallCount,
-        1,
-        reason: 'non-resumed transitions must not trigger a refresh',
-      );
-    },
-  );
+    expect(
+      session.refreshCallCount,
+      1,
+      reason: 'non-resumed transitions must not trigger a refresh',
+    );
+  });
 }
