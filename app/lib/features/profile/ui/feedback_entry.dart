@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/app_theme.dart';
@@ -9,16 +10,17 @@ import '../../../core/theme/app_theme.dart';
 /// and store listing metadata; keep them in sync.
 const kFeedbackEmail = 'hello@tekir.istanbul';
 
-/// Release identity shown to users, distinct from pubspec's `version:`
-/// (the build/tooling version). Bump alongside each release.
-const _appVersion = '0.2';
-
-const _feedbackSubject = 'Tekir $_appVersion geri bildirimi';
-
 /// Injectable so tests can capture the constructed [Uri] and simulate a
 /// device without a configured mail app; defaults to url_launcher.
 final feedbackMailLauncherProvider = Provider<Future<bool> Function(Uri)>(
   (ref) => launchUrl,
+);
+
+/// Read at runtime instead of a hand-bumped literal, which had already
+/// drifted from the shipped build once (issue #149). Injectable so tests
+/// don't need a real platform channel.
+final appVersionProvider = FutureProvider<String>(
+  (ref) async => (await PackageInfo.fromPlatform()).version,
 );
 
 /// Platform is filled only from non-sensitive build metadata (issue #91's
@@ -40,15 +42,19 @@ String _encodeQuery(Map<String, String> params) => params.entries
     .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
     .join('&');
 
-Uri buildFeedbackMailtoUri({TargetPlatform? platform, bool? isWeb}) {
+Uri buildFeedbackMailtoUri({
+  required String appVersion,
+  TargetPlatform? platform,
+  bool? isWeb,
+}) {
   final platformLabel = feedbackPlatformLabel(platform: platform, isWeb: isWeb);
   return Uri(
     scheme: 'mailto',
     path: kFeedbackEmail,
     query: _encodeQuery({
-      'subject': _feedbackSubject,
+      'subject': 'Tekir $appVersion geri bildirimi',
       'body':
-          'Uygulama sürümü: $_appVersion\n'
+          'Uygulama sürümü: $appVersion\n'
           'Platform: $platformLabel\n'
           '\n'
           'Geri bildirimin:\n',
@@ -67,7 +73,8 @@ class FeedbackEntry extends ConsumerWidget {
     final launch = ref.read(feedbackMailLauncherProvider);
     var opened = false;
     try {
-      opened = await launch(buildFeedbackMailtoUri());
+      final appVersion = await ref.read(appVersionProvider.future);
+      opened = await launch(buildFeedbackMailtoUri(appVersion: appVersion));
     } on Exception {
       opened = false;
     }

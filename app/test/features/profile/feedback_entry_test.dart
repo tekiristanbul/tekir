@@ -97,6 +97,7 @@ Future<void> _pump(
         ),
         profileApiProvider.overrideWithValue(_FakeProfileApi()),
         feedbackMailLauncherProvider.overrideWithValue(launcher.call),
+        appVersionProvider.overrideWith((ref) async => '0.2'),
       ],
       child: MaterialApp.router(theme: AppTheme.light, routerConfig: router),
     ),
@@ -108,6 +109,7 @@ void main() {
   group('mailto construction', () {
     test('addresses the 0.1 contact with the approved subject and body', () {
       final uri = buildFeedbackMailtoUri(
+        appVersion: '0.2',
         platform: TargetPlatform.android,
         isWeb: false,
       );
