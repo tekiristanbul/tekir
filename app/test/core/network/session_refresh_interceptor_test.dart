@@ -103,102 +103,104 @@ void main() {
   const apiBaseUrl = 'http://localhost:8080';
 
   group('SessionRefreshInterceptor', () {
-    test(
-      'refreshes an expired session and retries the original request once, '
-      'resolving with the retried response',
-      () async {
-        final refreshAdapter = _FixedRefreshAdapter(
-          accessToken: 'new-access',
-          refreshToken: 'new-refresh',
-        );
-        final svc = SessionIdentityService(
-          storage: _FakeStorage(),
-          dio: Dio(BaseOptions(baseUrl: apiBaseUrl))
-            ..httpClientAdapter = refreshAdapter,
-        );
-        await svc.save(
-          SessionIdentity(
-            accessToken: _jwt(expiresIn: const Duration(minutes: -1)),
-            refreshToken: 'old-refresh',
-            userId: 'u',
+    test('refreshes an expired session and retries the original request once, '
+        'resolving with the retried response', () async {
+      final refreshAdapter = _FixedRefreshAdapter(
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+      );
+      final svc = SessionIdentityService(
+        storage: _FakeStorage(),
+        dio: Dio(BaseOptions(baseUrl: apiBaseUrl))
+          ..httpClientAdapter = refreshAdapter,
+      );
+      await svc.save(
+        SessionIdentity(
+          accessToken: _jwt(expiresIn: const Duration(minutes: -1)),
+          refreshToken: 'old-refresh',
+          userId: 'u',
+        ),
+      );
+
+      final apiAdapter = _StatusSequenceAdapter([401, 200]);
+      final dio = Dio(BaseOptions(baseUrl: apiBaseUrl))
+        ..httpClientAdapter = apiAdapter;
+      dio.interceptors.add(
+        BearerInterceptor(service: svc, apiBaseUrl: apiBaseUrl),
+      );
+      dio.interceptors.add(
+        SessionRefreshInterceptor(
+          dio: dio,
+          service: svc,
+          apiBaseUrl: apiBaseUrl,
+        ),
+      );
+
+      final response = await dio.get<void>('/v1/cats/cat-1/updates');
+
+      expect(response.statusCode, 200);
+      expect(
+        apiAdapter.callCount,
+        2,
+        reason: 'the original attempt plus exactly one retry',
+      );
+      expect(
+        apiAdapter.capturedOptions[1].headers['Authorization'],
+        'Bearer new-access',
+        reason: 'the retry must carry the freshly rotated token',
+      );
+      expect(svc.cached?.accessToken, 'new-access');
+    });
+
+    test('surfaces the original error when a request still 401s after a '
+        'successful refresh, without a second retry', () async {
+      final refreshAdapter = _FixedRefreshAdapter(
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+      );
+      final svc = SessionIdentityService(
+        storage: _FakeStorage(),
+        dio: Dio(BaseOptions(baseUrl: apiBaseUrl))
+          ..httpClientAdapter = refreshAdapter,
+      );
+      await svc.save(
+        SessionIdentity(
+          accessToken: _jwt(expiresIn: const Duration(minutes: -1)),
+          refreshToken: 'old-refresh',
+          userId: 'u',
+        ),
+      );
+
+      final apiAdapter = _StatusSequenceAdapter([401, 401, 401]);
+      final dio = Dio(BaseOptions(baseUrl: apiBaseUrl))
+        ..httpClientAdapter = apiAdapter;
+      dio.interceptors.add(
+        BearerInterceptor(service: svc, apiBaseUrl: apiBaseUrl),
+      );
+      dio.interceptors.add(
+        SessionRefreshInterceptor(
+          dio: dio,
+          service: svc,
+          apiBaseUrl: apiBaseUrl,
+        ),
+      );
+
+      await expectLater(
+        dio.get<void>('/v1/cats/cat-1/updates'),
+        throwsA(
+          isA<DioException>().having(
+            (e) => e.response?.statusCode,
+            'statusCode',
+            401,
           ),
-        );
-
-        final apiAdapter = _StatusSequenceAdapter([401, 200]);
-        final dio = Dio(BaseOptions(baseUrl: apiBaseUrl))
-          ..httpClientAdapter = apiAdapter;
-        dio.interceptors.add(
-          BearerInterceptor(service: svc, apiBaseUrl: apiBaseUrl),
-        );
-        dio.interceptors.add(
-          SessionRefreshInterceptor(dio: dio, service: svc, apiBaseUrl: apiBaseUrl),
-        );
-
-        final response = await dio.get<void>('/v1/cats/cat-1/updates');
-
-        expect(response.statusCode, 200);
-        expect(
-          apiAdapter.callCount,
-          2,
-          reason: 'the original attempt plus exactly one retry',
-        );
-        expect(
-          apiAdapter.capturedOptions[1].headers['Authorization'],
-          'Bearer new-access',
-          reason: 'the retry must carry the freshly rotated token',
-        );
-        expect(svc.cached?.accessToken, 'new-access');
-      },
-    );
-
-    test(
-      'surfaces the original error when a request still 401s after a '
-      'successful refresh, without a second retry',
-      () async {
-        final refreshAdapter = _FixedRefreshAdapter(
-          accessToken: 'new-access',
-          refreshToken: 'new-refresh',
-        );
-        final svc = SessionIdentityService(
-          storage: _FakeStorage(),
-          dio: Dio(BaseOptions(baseUrl: apiBaseUrl))
-            ..httpClientAdapter = refreshAdapter,
-        );
-        await svc.save(
-          SessionIdentity(
-            accessToken: _jwt(expiresIn: const Duration(minutes: -1)),
-            refreshToken: 'old-refresh',
-            userId: 'u',
-          ),
-        );
-
-        final apiAdapter = _StatusSequenceAdapter([401, 401, 401]);
-        final dio = Dio(BaseOptions(baseUrl: apiBaseUrl))
-          ..httpClientAdapter = apiAdapter;
-        dio.interceptors.add(
-          BearerInterceptor(service: svc, apiBaseUrl: apiBaseUrl),
-        );
-        dio.interceptors.add(
-          SessionRefreshInterceptor(dio: dio, service: svc, apiBaseUrl: apiBaseUrl),
-        );
-
-        await expectLater(
-          dio.get<void>('/v1/cats/cat-1/updates'),
-          throwsA(
-            isA<DioException>().having(
-              (e) => e.response?.statusCode,
-              'statusCode',
-              401,
-            ),
-          ),
-        );
-        expect(
-          apiAdapter.callCount,
-          2,
-          reason: 'exactly one retry attempt, never a storm',
-        );
-      },
-    );
+        ),
+      );
+      expect(
+        apiAdapter.callCount,
+        2,
+        reason: 'exactly one retry attempt, never a storm',
+      );
+    });
 
     test('does not attempt a refresh for a non-401 error', () async {
       final refreshAdapter = _FixedRefreshAdapter(
@@ -222,7 +224,11 @@ void main() {
       final dio = Dio(BaseOptions(baseUrl: apiBaseUrl))
         ..httpClientAdapter = apiAdapter;
       dio.interceptors.add(
-        SessionRefreshInterceptor(dio: dio, service: svc, apiBaseUrl: apiBaseUrl),
+        SessionRefreshInterceptor(
+          dio: dio,
+          service: svc,
+          apiBaseUrl: apiBaseUrl,
+        ),
       );
 
       await expectLater(dio.get<void>('/v1/me'), throwsA(isA<DioException>()));
@@ -245,7 +251,11 @@ void main() {
       final dio = Dio(BaseOptions(baseUrl: apiBaseUrl))
         ..httpClientAdapter = apiAdapter;
       dio.interceptors.add(
-        SessionRefreshInterceptor(dio: dio, service: svc, apiBaseUrl: apiBaseUrl),
+        SessionRefreshInterceptor(
+          dio: dio,
+          service: svc,
+          apiBaseUrl: apiBaseUrl,
+        ),
       );
 
       await expectLater(dio.get<void>('/v1/me'), throwsA(isA<DioException>()));
@@ -276,7 +286,11 @@ void main() {
         final apiAdapter = _StatusSequenceAdapter([401]);
         final dio = Dio(BaseOptions())..httpClientAdapter = apiAdapter;
         dio.interceptors.add(
-          SessionRefreshInterceptor(dio: dio, service: svc, apiBaseUrl: apiBaseUrl),
+          SessionRefreshInterceptor(
+            dio: dio,
+            service: svc,
+            apiBaseUrl: apiBaseUrl,
+          ),
         );
 
         await expectLater(
@@ -288,42 +302,43 @@ void main() {
       },
     );
 
-    test(
-      'gives up without a retry when the local token still looks fresh '
-      '(refreshIfExpired no-ops)',
-      () async {
-        final refreshAdapter = _FixedRefreshAdapter(
-          accessToken: 'unused',
-          refreshToken: 'unused',
-        );
-        final svc = SessionIdentityService(
-          storage: _FakeStorage(),
-          dio: Dio(BaseOptions(baseUrl: apiBaseUrl))
-            ..httpClientAdapter = refreshAdapter,
-        );
-        final fresh = _jwt(expiresIn: const Duration(minutes: 15));
-        await svc.save(
-          SessionIdentity(accessToken: fresh, refreshToken: 'rt', userId: 'u'),
-        );
+    test('gives up without a retry when the local token still looks fresh '
+        '(refreshIfExpired no-ops)', () async {
+      final refreshAdapter = _FixedRefreshAdapter(
+        accessToken: 'unused',
+        refreshToken: 'unused',
+      );
+      final svc = SessionIdentityService(
+        storage: _FakeStorage(),
+        dio: Dio(BaseOptions(baseUrl: apiBaseUrl))
+          ..httpClientAdapter = refreshAdapter,
+      );
+      final fresh = _jwt(expiresIn: const Duration(minutes: 15));
+      await svc.save(
+        SessionIdentity(accessToken: fresh, refreshToken: 'rt', userId: 'u'),
+      );
 
-        final apiAdapter = _StatusSequenceAdapter([401]);
-        final dio = Dio(BaseOptions(baseUrl: apiBaseUrl))
-          ..httpClientAdapter = apiAdapter;
-        dio.interceptors.add(
-          BearerInterceptor(service: svc, apiBaseUrl: apiBaseUrl),
-        );
-        dio.interceptors.add(
-          SessionRefreshInterceptor(dio: dio, service: svc, apiBaseUrl: apiBaseUrl),
-        );
+      final apiAdapter = _StatusSequenceAdapter([401]);
+      final dio = Dio(BaseOptions(baseUrl: apiBaseUrl))
+        ..httpClientAdapter = apiAdapter;
+      dio.interceptors.add(
+        BearerInterceptor(service: svc, apiBaseUrl: apiBaseUrl),
+      );
+      dio.interceptors.add(
+        SessionRefreshInterceptor(
+          dio: dio,
+          service: svc,
+          apiBaseUrl: apiBaseUrl,
+        ),
+      );
 
-        await expectLater(dio.get<void>('/v1/me'), throwsA(isA<DioException>()));
-        expect(
-          apiAdapter.callCount,
-          1,
-          reason: 'no retry — the same unchanged token would just 401 again',
-        );
-        expect(refreshAdapter.callCount, 0);
-      },
-    );
+      await expectLater(dio.get<void>('/v1/me'), throwsA(isA<DioException>()));
+      expect(
+        apiAdapter.callCount,
+        1,
+        reason: 'no retry — the same unchanged token would just 401 again',
+      );
+      expect(refreshAdapter.callCount, 0);
+    });
   });
 }

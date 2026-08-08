@@ -792,102 +792,96 @@ void main() {
     },
   );
 
-  test(
-    'a 401 from the update api logs out the stale session locally, leaving '
-    'the device identity untouched (issue #173)',
-    () async {
-      final storage = _FakeStorage(); // pre-populated with did-1/tok-1
-      final registrationAdapter = _CountingRegistrationAdapter();
-      final deviceService = DeviceIdentityService(
-        storage: storage,
-        dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
-          ..httpClientAdapter = registrationAdapter,
-      );
-      final sessionService = SessionIdentityService(
-        storage: _EmptyStorage(),
-        dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
-          ..httpClientAdapter = _NoopAdapter(),
-      );
-      await sessionService.save(_authenticatedSession);
-      final api = _FakeCatDetailApi()
-        ..nextError = const UpdateUnauthorizedException();
-      final container = _containerWith(
-        api,
-        deviceIdentityService: deviceService,
-        sessionIdentityService: sessionService,
-      );
-      addTearDown(container.dispose);
-      await container.read(catDetailProvider(_catId).notifier).load();
+  test('a 401 from the update api logs out the stale session locally, leaving '
+      'the device identity untouched (issue #173)', () async {
+    final storage = _FakeStorage(); // pre-populated with did-1/tok-1
+    final registrationAdapter = _CountingRegistrationAdapter();
+    final deviceService = DeviceIdentityService(
+      storage: storage,
+      dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
+        ..httpClientAdapter = registrationAdapter,
+    );
+    final sessionService = SessionIdentityService(
+      storage: _EmptyStorage(),
+      dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
+        ..httpClientAdapter = _NoopAdapter(),
+    );
+    await sessionService.save(_authenticatedSession);
+    final api = _FakeCatDetailApi()
+      ..nextError = const UpdateUnauthorizedException();
+    final container = _containerWith(
+      api,
+      deviceIdentityService: deviceService,
+      sessionIdentityService: sessionService,
+    );
+    addTearDown(container.dispose);
+    await container.read(catDetailProvider(_catId).notifier).load();
 
-      final ok = await _submitSeen(container);
-      expect(ok, isFalse);
-      final state = container.read(catUpdateComposerProvider(_catId));
-      expect(state.error, UpdateSubmitError.unauthorized);
-      expect(state.isSubmitting, isFalse);
-      expect(
-        updateSubmitErrorMessageTr(state.error!),
-        isNotEmpty,
-        reason: 'every mapped error has turkish, actionable copy',
-      );
-      expect(
-        sessionService.cached,
-        isNull,
-        reason: 'the rejected session — not the device — is what was wrong',
-      );
-      expect(
-        deviceService.cached?.deviceToken,
-        'tok-1',
-        reason: 'a session-level 401 must never touch the device identity',
-      );
-      expect(
-        registrationAdapter.callCount,
-        0,
-        reason: 'the device identity is never re-registered by this path',
-      );
+    final ok = await _submitSeen(container);
+    expect(ok, isFalse);
+    final state = container.read(catUpdateComposerProvider(_catId));
+    expect(state.error, UpdateSubmitError.unauthorized);
+    expect(state.isSubmitting, isFalse);
+    expect(
+      updateSubmitErrorMessageTr(state.error!),
+      isNotEmpty,
+      reason: 'every mapped error has turkish, actionable copy',
+    );
+    expect(
+      sessionService.cached,
+      isNull,
+      reason: 'the rejected session — not the device — is what was wrong',
+    );
+    expect(
+      deviceService.cached?.deviceToken,
+      'tok-1',
+      reason: 'a session-level 401 must never touch the device identity',
+    );
+    expect(
+      registrationAdapter.callCount,
+      0,
+      reason: 'the device identity is never re-registered by this path',
+    );
 
-      // A submit attempted without logging back in fails fast, locally,
-      // instead of replaying the now-cleared session against the api again.
-      final retryOk = await _submitSeen(container);
-      expect(retryOk, isFalse);
-      expect(
-        api.createUpdateCalls,
-        1,
-        reason: 'the retry never re-hits the api once the session is cleared',
-      );
-    },
-  );
+    // A submit attempted without logging back in fails fast, locally,
+    // instead of replaying the now-cleared session against the api again.
+    final retryOk = await _submitSeen(container);
+    expect(retryOk, isFalse);
+    expect(
+      api.createUpdateCalls,
+      1,
+      reason: 'the retry never re-hits the api once the session is cleared',
+    );
+  });
 
-  test(
-    'a storage failure while logging out the stale session does not leave '
-    'the composer stuck submitting',
-    () async {
-      final sessionService = SessionIdentityService(
-        storage: _ThrowingDeleteStorage(),
-        dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
-          ..httpClientAdapter = _NoopAdapter(),
-      );
-      await sessionService.save(_authenticatedSession);
-      final api = _FakeCatDetailApi()
-        ..nextError = const UpdateUnauthorizedException();
-      final container = _containerWith(
-        api,
-        sessionIdentityService: sessionService,
-      );
-      addTearDown(container.dispose);
-      await container.read(catDetailProvider(_catId).notifier).load();
+  test('a storage failure while logging out the stale session does not leave '
+      'the composer stuck submitting', () async {
+    final sessionService = SessionIdentityService(
+      storage: _ThrowingDeleteStorage(),
+      dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
+        ..httpClientAdapter = _NoopAdapter(),
+    );
+    await sessionService.save(_authenticatedSession);
+    final api = _FakeCatDetailApi()
+      ..nextError = const UpdateUnauthorizedException();
+    final container = _containerWith(
+      api,
+      sessionIdentityService: sessionService,
+    );
+    addTearDown(container.dispose);
+    await container.read(catDetailProvider(_catId).notifier).load();
 
-      final ok = await _submitSeen(container);
-      expect(ok, isFalse);
+    final ok = await _submitSeen(container);
+    expect(ok, isFalse);
 
-      final state = container.read(catUpdateComposerProvider(_catId));
-      expect(state.error, UpdateSubmitError.unauthorized);
-      expect(
-        state.isSubmitting,
-        isFalse,
-        reason: 'must not get stuck submitting when storage delete throws',
-      );
-    },
-  );
+    final state = container.read(catUpdateComposerProvider(_catId));
+    expect(state.error, UpdateSubmitError.unauthorized);
+    expect(
+      state.isSubmitting,
+      isFalse,
+      reason: 'must not get stuck submitting when storage delete throws',
+    );
+  });
 
   // UpdateUnauthorizedException is exercised separately above: it clears
   // the session rather than falling through to the generic retry-with-the-
