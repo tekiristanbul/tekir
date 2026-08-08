@@ -49,7 +49,7 @@ body:
     id: design-reference
     attributes:
       label: design reference
-      description: link repository design docs, prototype path, screenshots, or write "none".
+      description: link repository design docs, screenshots, or write "none".
     validations:
       required: true
   - type: textarea

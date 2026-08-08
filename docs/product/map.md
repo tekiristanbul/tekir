@@ -23,7 +23,7 @@ define the role of the map in helping people find and help Istanbul street cats.
 
 ## open questions
 
-- none for mvp. final visual styling is resolved by the approved prototype and implementation contract, not by changing these semantic thresholds.
+- none for mvp. final visual styling is resolved by the shipped implementation and implementation contract, not by changing these semantic thresholds.
 
 ## out of scope
 

@@ -1,5 +1,12 @@
 # issue #121 visual parity audit — 0.2 follow-up
 
+> **historical — point-in-time record.** This audit diffed shipped screens
+> against `prototype/`, which was the binding visual/interaction baseline
+> at the time. `prototype/` has since been retired (issue #192) — every
+> surface it covered has shipped, and the app itself is now that baseline.
+> Kept for record only; not a source of truth for any current work. See
+> `docs/design/implementation-contract.md`.
+
 first deliverable of issue #121's "visual parity — delivery scope" checklist:
 capture + compare + document material differences before implementation. no
 code changes in this pass.

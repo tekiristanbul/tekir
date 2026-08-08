@@ -1,5 +1,5 @@
 ---
-applyTo: "docs/**/*.md,prototype/**/*.md,README.md,CONTRIBUTING.md"
+applyTo: "docs/**/*.md,README.md,CONTRIBUTING.md"
 ---
 
 # documentation

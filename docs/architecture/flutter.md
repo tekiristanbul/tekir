@@ -45,7 +45,7 @@ lib/
 - `account/` remains the settings/logout/guest-gate shell (issue #58's foundation, unchanged in shape by issue #80); `profile/` is the richer, separate authenticated identity surface (display name — editable via `PATCH /v1/me`, contribution totals, badges strip, recent contributions) the approved prototype's own profile screen maps to — its own settings button links into `account/`, mirroring how the prototype keeps "Profil" and "Ayarlar" as two distinct screens rather than one. `core/router/app_shell.dart` now matches the approved prototype's bottom nav exactly (issue #80 product-owner review, correcting the original issue #80 round's gated-corner-button approach, which didn't match this ia): `go_router`'s `StatefulShellRoute.indexedStack` wraps 3 branches — `/` (map), `/discover`, `/profile` — behind a persistent bottom nav bar plus a center-docked add-cat fab; every other route (cat detail, login, account, add-cat, notifications, badges) stays a plain top-level route pushed on top, so the shell's chrome disappears the instant one of those is open, exactly like the prototype's own per-screen nav visibility. `notifications/` is not part of this shell (the approved prototype predates issue #78's notification feature, so there's no prototype ia for it to match) — it stays reachable via its own gated icon button on the map screen (`AuthGate.require`).
 - the update-correction sheet (issue #80, `cat_detail/ui/update_correction_sheet.dart`) has no prototype screen to port — the approved prototype's own correction-window logic (`canDeleteUpdate`/`deleteWindowLeft`) was data-layer only, never wired to any rendered screen. Its shell/copy/state conventions are instead drawn from this app's own existing sheets (`CatUpdateSheet`'s status-pill grid, `NeedsHelpSheet`'s inline-error-banner and toast conventions).
 - each feature has a small `data/` and `ui/` boundary; no separate domain layer is required for mvp.
-- the approved interactive mvp prototype and `docs/design/implementation-contract.md` are the source of truth for final visual tokens and component behavior.
+- the shipped implementation and `docs/design/implementation-contract.md` are the source of truth for final visual tokens and component behavior.
 - `app_theme.dart` implements those approved tokens; visual choices are not left as an architecture open question.
 - production maps api keys are injected by the github actions → digitalocean app platform deployment pipeline and restricted separately from development keys.
 
@@ -63,7 +63,7 @@ lib/
 
 ## open questions
 
-- none for mvp. exact visual values come from the approved prototype and implementation contract.
+- none for mvp. exact visual values come from the shipped implementation and implementation contract.
 
 ## out of scope
 

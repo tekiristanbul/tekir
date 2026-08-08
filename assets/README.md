@@ -58,8 +58,8 @@ re-inline those paths from `brand/temporary/source/*.svg` and update the
 printed dimensions.
 
 colors come from the approved palette (`app/lib/core/theme/app_theme.dart`,
-ported from `prototype/styles.css`): terracotta `#A44732`, ink `#2A1F1B`,
-white.
+originally ported from the retired prototype's `styles.css`): terracotta
+`#A44732`, ink `#2A1F1B`, white.
 
 ## usage notes
 
