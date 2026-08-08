@@ -128,6 +128,15 @@ curl http://localhost:8080/readyz
 
 the `fake` default only applies under an explicit `APP_ENV=development` (`backend/Makefile` and `docker-compose.yml` set it). any other environment — including unset — fails startup unless `OTP_PROVIDER=twilio` is fully configured; there is no fallback from a selected `twilio` provider to `fake`.
 
+### app-review test numbers (issue #184)
+
+apple app review needs to sign in without receiving a real sms — twilio verify can't reliably reach a reviewer-controlled number. `OTP_REVIEW_TEST_NUMBERS` (comma-separated e.164 numbers) and `OTP_REVIEW_TEST_CODE` (a single fixed code) configure a small allowlist that only applies with `OTP_PROVIDER=twilio`:
+
+- for a listed number, `/v1/auth/otp/request` never calls twilio (no real sms, no cost, no dependency on twilio reachability), and `/v1/auth/otp/verify` accepts only the exact `OTP_REVIEW_TEST_CODE`.
+- every other number is unaffected — real twilio verify, as always.
+
+both variables must be set together or both left unset; a half-configured pair fails startup instead of silently doing nothing or turning into a global bypass, same as `OTP_PROVIDER`'s other settings. unset is the default and disables the feature entirely.
+
 ### production setup
 
 set `APP_ENV=production`, `OTP_PROVIDER=twilio`, and the three twilio values as deployment secrets. `fake`, unset, and unknown providers are rejected at startup. to rotate the auth token, update the deployment secret and restart; to roll back, redeploy with the previous secret. during a twilio outage, logins fail with retryable internal errors while the rest of the api keeps working.
