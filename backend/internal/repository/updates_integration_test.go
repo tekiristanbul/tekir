@@ -545,6 +545,60 @@ func TestStore_CreateOrdinaryUpdate_Success(t *testing.T) {
 	}
 }
 
+// TestStore_CreateOrdinaryUpdate_ArchivesAttachedMedia covers issue #171:
+// a photo/video attached to an ordinary update via MediaID must also land
+// in cat_media, exactly like CreateCatWithMedia's own cover-photo archive
+// insert, so the update's media shows up in the gallery/"medya" tab
+// (GET /v1/cats/{cat_id}/media), not just on the timeline entry.
+func TestStore_CreateOrdinaryUpdate_ArchivesAttachedMedia(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "update media archive recipient")
+	userID := createTestUser(t, ctx, store)
+
+	media, err := store.CreateMedia(ctx, repository.CreateMediaParams{
+		ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, ObjectKey: uuid.NewString() + ".mp4",
+		Url: "/v1/media/objects/" + uuid.NewString() + ".mp4", ContentType: "video/quicktime", ByteSize: 100,
+		UploadedByUserID: userID,
+	})
+	if err != nil {
+		t.Fatalf("create media: %v", err)
+	}
+
+	createdAt := time.Date(2026, 2, 1, 9, 30, 0, 0, time.UTC)
+	updateID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if _, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		CreatedAt:    pgtype.Timestamptz{Time: createdAt, Valid: true},
+		Statuses:     []string{"seen"},
+		MediaID:      media.ID,
+	}); err != nil {
+		t.Fatalf("create ordinary update: %v", err)
+	}
+
+	count, err := store.CountCatMedia(ctx, catID)
+	if err != nil {
+		t.Fatalf("CountCatMedia: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected media_count 1, got %d", count)
+	}
+
+	rows, err := store.ListCatMedia(ctx, catID)
+	if err != nil {
+		t.Fatalf("ListCatMedia: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 archive row, got %d", len(rows))
+	}
+	if rows[0].MediaID != media.ID {
+		t.Errorf("expected archive entry to reference media %v, got %v", media.ID, rows[0].MediaID)
+	}
+}
+
 // TestStore_CreateOrdinaryUpdate_WithoutAuthorDeviceID_Succeeds proves an
 // ordinary update can be created with only an author_user_id and no
 // author_device_id (issue #65: device association is optional on this

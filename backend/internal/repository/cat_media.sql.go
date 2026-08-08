@@ -85,7 +85,7 @@ select
   cm.created_at,
   m.url,
   m.content_type,
-  (c.primary_photo_id = cm.media_id) as is_cover,
+  coalesce(c.primary_photo_id = cm.media_id, false) as is_cover,
   uu.display_name as uploader_display_name
 from cat_media cm
 join media m on m.id = cm.media_id
