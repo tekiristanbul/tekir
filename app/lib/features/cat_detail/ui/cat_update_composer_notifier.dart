@@ -433,13 +433,17 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     } on UpdateValidationException {
       _fail(UpdateSubmitError.validation);
     } on UpdateUnauthorizedException {
-      // The stored credential looked valid locally but the server rejected
-      // it — replaying the same token on retry would just 401 again, so
-      // drop it and force a fresh registration next time. Best-effort: a
-      // secure-storage deletion failure must not leave the user stuck in
+      // The global SessionRefreshInterceptor (issue #173) already tried one
+      // silent refresh-and-retry before this exception ever reaches here,
+      // so surfacing it means the session itself is genuinely dead — drop
+      // it locally so the app falls back to the guest state instead of
+      // replaying the same stale access token on every retry (issue #173;
+      // this used to wrongly invalidate the device identity, which was
+      // never the credential that failed). Best-effort: a secure-storage
+      // deletion failure during logout must not leave the user stuck in
       // isSubmitting forever without ever seeing the retryable error.
       try {
-        await ref.read(deviceIdentityServiceProvider).invalidate();
+        await ref.read(sessionProvider.notifier).logout();
       } catch (_) {
         // Ignored — falling through still surfaces the unauthorized error
         // and re-enables submission below.

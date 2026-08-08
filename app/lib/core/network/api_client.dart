@@ -6,6 +6,7 @@ import '../identity/device_identity.dart';
 import '../identity/session_identity.dart';
 import 'bearer_interceptor.dart';
 import 'device_interceptor.dart';
+import 'session_refresh_interceptor.dart';
 
 /// Single entry point for backend calls. The [DeviceInterceptor] attaches
 /// `X-Device-Token` and the [BearerInterceptor] attaches `Authorization:
@@ -49,6 +50,16 @@ class ApiClient {
     if (sessionSvc != null) {
       d.interceptors.add(
         BearerInterceptor(service: sessionSvc, apiBaseUrl: Env.apiBaseUrl),
+      );
+      // Reacts to a 401 the way BearerInterceptor's own doc defers to:
+      // refreshing is a separate concern, handled here rather than in the
+      // header-attaching interceptor itself (issue #173).
+      d.interceptors.add(
+        SessionRefreshInterceptor(
+          dio: d,
+          service: sessionSvc,
+          apiBaseUrl: Env.apiBaseUrl,
+        ),
       );
     }
     return d;

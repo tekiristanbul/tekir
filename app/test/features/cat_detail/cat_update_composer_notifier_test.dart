@@ -259,6 +259,23 @@ class _CountingRegistrationAdapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
+// A no-op 204 for SessionIdentityService's own best-effort revoke call
+// during logout() — used by the UpdateUnauthorizedException tests below,
+// which exercise the composer's session-logout recovery rather than
+// SessionIdentityService's own network behavior (see
+// session_identity_service_test.dart for that surface).
+class _NoopAdapter implements HttpClientAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async => ResponseBody.fromString('', 204);
+
+  @override
+  void close({bool force = false}) {}
+}
+
 // Mirrors auth_gate_test.dart's fake exactly — implements only the public
 // surface (cached/restore/save/logout) SessionIdentityService exposes.
 class _FakeSessionIdentityService implements SessionIdentityService {
@@ -776,7 +793,8 @@ void main() {
   );
 
   test(
-    'a 401 from the update api invalidates the stale device credential so the next submit re-registers',
+    'a 401 from the update api logs out the stale session locally, leaving '
+    'the device identity untouched (issue #173)',
     () async {
       final storage = _FakeStorage(); // pre-populated with did-1/tok-1
       final registrationAdapter = _CountingRegistrationAdapter();
@@ -785,17 +803,24 @@ void main() {
         dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
           ..httpClientAdapter = registrationAdapter,
       );
+      final sessionService = SessionIdentityService(
+        storage: _EmptyStorage(),
+        dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
+          ..httpClientAdapter = _NoopAdapter(),
+      );
+      await sessionService.save(_authenticatedSession);
       final api = _FakeCatDetailApi()
         ..nextError = const UpdateUnauthorizedException();
       final container = _containerWith(
         api,
         deviceIdentityService: deviceService,
+        sessionIdentityService: sessionService,
       );
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
 
-      final firstOk = await _submitSeen(container);
-      expect(firstOk, isFalse);
+      final ok = await _submitSeen(container);
+      expect(ok, isFalse);
       final state = container.read(catUpdateComposerProvider(_catId));
       expect(state.error, UpdateSubmitError.unauthorized);
       expect(state.isSubmitting, isFalse);
@@ -804,44 +829,49 @@ void main() {
         isNotEmpty,
         reason: 'every mapped error has turkish, actionable copy',
       );
-      expect(deviceService.cached, isNull, reason: 'stale credential dropped');
-      expect(storage._data.containsKey('device_token'), isFalse);
+      expect(
+        sessionService.cached,
+        isNull,
+        reason: 'the rejected session — not the device — is what was wrong',
+      );
+      expect(
+        deviceService.cached?.deviceToken,
+        'tok-1',
+        reason: 'a session-level 401 must never touch the device identity',
+      );
       expect(
         registrationAdapter.callCount,
         0,
-        reason: 'invalidate() only clears state, it does not re-register',
+        reason: 'the device identity is never re-registered by this path',
       );
 
-      // Retryable: a following successful submit re-registers and clears
-      // the error.
-      api
-        ..nextError = null
-        ..nextResult = _entry('upd-1');
-      final secondOk = await _submitSeen(container);
-      expect(secondOk, isTrue);
-      expect(container.read(catUpdateComposerProvider(_catId)).error, isNull);
+      // A submit attempted without logging back in fails fast, locally,
+      // instead of replaying the now-cleared session against the api again.
+      final retryOk = await _submitSeen(container);
+      expect(retryOk, isFalse);
       expect(
-        registrationAdapter.callCount,
+        api.createUpdateCalls,
         1,
-        reason: 'stale credential must not be replayed; a fresh one is used',
+        reason: 'the retry never re-hits the api once the session is cleared',
       );
     },
   );
 
   test(
-    'a secure-storage failure during invalidate does not leave the composer stuck submitting',
+    'a storage failure while logging out the stale session does not leave '
+    'the composer stuck submitting',
     () async {
-      final storage = _ThrowingDeleteStorage();
-      final deviceService = DeviceIdentityService(
-        storage: storage,
+      final sessionService = SessionIdentityService(
+        storage: _ThrowingDeleteStorage(),
         dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
-          ..httpClientAdapter = _CountingRegistrationAdapter(),
+          ..httpClientAdapter = _NoopAdapter(),
       );
+      await sessionService.save(_authenticatedSession);
       final api = _FakeCatDetailApi()
         ..nextError = const UpdateUnauthorizedException();
       final container = _containerWith(
         api,
-        deviceIdentityService: deviceService,
+        sessionIdentityService: sessionService,
       );
       addTearDown(container.dispose);
       await container.read(catDetailProvider(_catId).notifier).load();
@@ -856,21 +886,12 @@ void main() {
         isFalse,
         reason: 'must not get stuck submitting when storage delete throws',
       );
-
-      // A later retry remains possible — the in-flight guard isn't wedged.
-      api
-        ..nextError = null
-        ..nextResult = _entry('upd-1');
-      final retryOk = await _submitSeen(container);
-      expect(retryOk, isTrue);
     },
   );
 
-  // UpdateUnauthorizedException is exercised separately above (and below):
-  // retrying it now requires a device identity service that can actually
-  // re-register, since the fix for the stale-credential review comment
-  // makes the composer invalidate() the credential on a 401 rather than
-  // just clearing the in-memory error.
+  // UpdateUnauthorizedException is exercised separately above: it clears
+  // the session rather than falling through to the generic retry-with-the-
+  // same-draft path every other mapped error below shares.
   for (final entry in {
     const UpdateValidationException(): UpdateSubmitError.validation,
     const CatNotFoundException(): UpdateSubmitError.notFound,
