@@ -460,10 +460,14 @@ func toCatDetailResponse(detail service.CatDetail) catDetailResponse {
 // mirrors the cat's primary_photo — the client renders the design's "ana"
 // badge on exactly that entry. UploaderDisplayName (issue #154's
 // media-attribution parity gap) mirrors updateResponse's own
-// author_display_name field.
+// author_display_name field. MediaContentType (issue #179) mirrors
+// updateResponse's own media_content_type — the client uses its
+// `video/`/`image/` prefix to pick the thumbnail/viewer and to hide the
+// "make cover" action for a video entry, which can never become the cover.
 type catMediaResponse struct {
 	ID                  string    `json:"id"`
 	URL                 string    `json:"url"`
+	MediaContentType    string    `json:"media_content_type"`
 	IsCover             bool      `json:"is_cover"`
 	CreatedAt           time.Time `json:"created_at"`
 	UploaderDisplayName *string   `json:"uploader_display_name"`
@@ -480,7 +484,7 @@ func (h *CatsHandler) Media(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]catMediaResponse, 0, len(items))
 	for _, m := range items {
-		resp = append(resp, catMediaResponse{ID: m.ID, URL: m.URL, IsCover: m.IsCover, CreatedAt: m.CreatedAt, UploaderDisplayName: m.UploaderDisplayName})
+		resp = append(resp, catMediaResponse{ID: m.ID, URL: m.URL, MediaContentType: m.ContentType, IsCover: m.IsCover, CreatedAt: m.CreatedAt, UploaderDisplayName: m.UploaderDisplayName})
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

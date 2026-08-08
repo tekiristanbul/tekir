@@ -1078,15 +1078,19 @@ class _ProfileSegment extends StatelessWidget {
 
 /// One entry of the "medya" archive grid (binding design's `.med.sm` tile):
 /// square, rounded, tap opens the same uncropped full-screen view the cover
-/// photo uses. [CatMediaItem.isCover] marks the cat's current cover photo
-/// with the design's "ana" badge — never any other entry. The uploader
-/// (issue #154's media-attribution parity gap) renders with the same
-/// [_TimelineAvatar] the update timeline already uses, so a media entry's
-/// attribution reads identically to a text update's — never a second
-/// visual language just because the entry happens to carry a photo. Only
-/// this grid's own full-screen view carries the "ana fotoğraf yap" (make
-/// cover photo) action (issue #156, design frame D) — never the cover's
-/// own view or a timeline thumbnail's, and only when [isOwner].
+/// photo uses — or, for a video entry, the timeline's own playing
+/// full-screen video view (issue #179's gallery-content-type parity gap,
+/// mirroring [_TimelineThumbnail]'s isVideo split). [CatMediaItem.isCover]
+/// marks the cat's current cover photo with the design's "ana" badge —
+/// never any other entry. The uploader (issue #154's media-attribution
+/// parity gap) renders with the same [_TimelineAvatar] the update timeline
+/// already uses, so a media entry's attribution reads identically to a text
+/// update's — never a second visual language just because the entry
+/// happens to carry a photo. Only this grid's own full-screen photo view
+/// carries the "ana fotoğraf yap" (make cover photo) action (issue #156,
+/// design frame D) — never the cover's own view, a timeline thumbnail's, or
+/// a video entry's full-screen view (a video can never become the cover),
+/// and only when [isOwner].
 class _MediaTile extends StatelessWidget {
   const _MediaTile({
     required this.catId,
@@ -1104,12 +1108,14 @@ class _MediaTile extends StatelessWidget {
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute<void>(
           fullscreenDialog: true,
-          builder: (_) => _FullScreenPhoto(
-            photo: item.url,
-            catId: isOwner ? catId : null,
-            mediaId: isOwner ? item.id : null,
-            isCover: item.isCover,
-          ),
+          builder: (_) => item.isVideoMedia
+              ? _FullScreenVideo(url: item.url)
+              : _FullScreenPhoto(
+                  photo: item.url,
+                  catId: isOwner ? catId : null,
+                  mediaId: isOwner ? item.id : null,
+                  isCover: item.isCover,
+                ),
         ),
       ),
       child: ClipRRect(
@@ -1117,13 +1123,16 @@ class _MediaTile extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            CachedNetworkImage(
-              imageUrl: item.url,
-              fit: BoxFit.cover,
-              placeholder: (context, _) =>
-                  const _HeroPlaceholder(loading: true),
-              errorWidget: (context, _, _) => const _HeroPlaceholder(),
-            ),
+            if (item.isVideoMedia)
+              _VideoThumbnail(url: item.url)
+            else
+              CachedNetworkImage(
+                imageUrl: item.url,
+                fit: BoxFit.cover,
+                placeholder: (context, _) =>
+                    const _HeroPlaceholder(loading: true),
+                errorWidget: (context, _, _) => const _HeroPlaceholder(),
+              ),
             if (item.isCover)
               Positioned(
                 left: 6,

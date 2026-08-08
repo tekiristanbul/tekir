@@ -939,10 +939,14 @@ func isCatOwner(ownerID pgtype.UUID, callerUserID string) bool {
 // the client render the design's "ana" badge without a second lookup.
 // UploaderDisplayName (issue #154's media-attribution parity gap) mirrors
 // CatUpdate's own AuthorDisplayName: nil only when the uploader never set
-// a display name, never when the uploader is unknown.
+// a display name, never when the uploader is unknown. ContentType (issue
+// #179) mirrors CatUpdate's own MediaContentType — the client derives
+// video-vs-photo from its `video/`/`image/` prefix instead of guessing
+// from the url.
 type CatMediaItem struct {
 	ID                  string
 	URL                 string
+	ContentType         string
 	IsCover             bool
 	CreatedAt           time.Time
 	UploaderDisplayName *string
@@ -974,6 +978,7 @@ func (s *CatsService) ListCatMedia(ctx context.Context, id string) ([]CatMediaIt
 		items = append(items, CatMediaItem{
 			ID:                  uuid.UUID(r.ID.Bytes).String(),
 			URL:                 r.Url,
+			ContentType:         r.ContentType,
 			IsCover:             r.IsCover,
 			CreatedAt:           r.CreatedAt.Time,
 			UploaderDisplayName: textPtr(r.UploaderDisplayName),

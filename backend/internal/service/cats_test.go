@@ -2198,6 +2198,37 @@ func TestCatsService_ListCatMedia(t *testing.T) {
 	}
 }
 
+// TestCatsService_ListCatMedia_ContentType covers issue #179's
+// gallery-content-type parity gap: each archive entry carries the
+// underlying media's content type through unchanged, the same field
+// ListCatUpdates already surfaces as MediaContentType.
+func TestCatsService_ListCatMedia_ContentType(t *testing.T) {
+	videoID := uuid.New()
+	photoID := uuid.New()
+
+	svc := NewCatsService(fakeCatsLister{
+		exists: true,
+		mediaRows: []repository.ListCatMediaRow{
+			{ID: pgtype.UUID{Bytes: videoID, Valid: true}, Url: "https://placecats.com/a.mp4", ContentType: "video/mp4"},
+			{ID: pgtype.UUID{Bytes: photoID, Valid: true}, Url: "https://placecats.com/b/300/200", ContentType: "image/jpeg"},
+		},
+	})
+
+	items, err := svc.ListCatMedia(context.Background(), uuid.New().String())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if items[0].ContentType != "video/mp4" {
+		t.Errorf("expected video/mp4, got %q", items[0].ContentType)
+	}
+	if items[1].ContentType != "image/jpeg" {
+		t.Errorf("expected image/jpeg, got %q", items[1].ContentType)
+	}
+}
+
 // TestCatsService_ListCatMedia_UploaderDisplayName covers issue #154's
 // media-attribution parity gap: a media row whose uploader set a display
 // name surfaces it, while a row whose uploader never set one stays nil

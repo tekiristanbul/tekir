@@ -92,7 +92,10 @@ class CatDetail {
 /// One entry of `GET /v1/cats/{cat_id}/media`'s newest-first photo archive
 /// (issue #121's media-archive parity gap). [isCover] mirrors the cat's
 /// current cover photo — the client renders the design's "ana" badge on
-/// exactly that entry.
+/// exactly that entry. [mediaContentType] (issue #179) mirrors
+/// [CatUpdateEntry.mediaContentType] — [isVideoMedia] is the derived check
+/// the gallery grid/detail view reads instead of comparing this prefix
+/// itself, exactly like the timeline already does.
 class CatMediaItem {
   const CatMediaItem({
     required this.id,
@@ -100,6 +103,7 @@ class CatMediaItem {
     required this.isCover,
     required this.createdAt,
     this.uploaderDisplayName,
+    this.mediaContentType,
   });
 
   final String id;
@@ -107,6 +111,9 @@ class CatMediaItem {
   final bool isCover;
   final DateTime createdAt;
   final String? uploaderDisplayName;
+  final String? mediaContentType;
+
+  bool get isVideoMedia => mediaContentType?.startsWith('video/') ?? false;
 
   factory CatMediaItem.fromJson(Map<String, dynamic> json) {
     return CatMediaItem(
@@ -115,6 +122,7 @@ class CatMediaItem {
       isCover: json['is_cover'] as bool? ?? false,
       createdAt: DateTime.parse(json['created_at'] as String),
       uploaderDisplayName: json['uploader_display_name'] as String?,
+      mediaContentType: json['media_content_type'] as String?,
     );
   }
 }
