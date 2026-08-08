@@ -6,7 +6,7 @@ tekir is an open-source, map-first application for discovering and caring for is
 
 [**open the app →**](https://app.tekir.istanbul) · [prototype](https://prototype.tekir.istanbul) · [website](https://tekir.istanbul)
 
-> **0.2 is live on web.** 0.3 backend and web are deployed to production; ios/android store submission is in progress. the prototype remains the approved interaction reference. release notes live in [`docs/releases/`](docs/releases/).
+> **0.3 is live.** backend and web are deployed to production; ios has been submitted to apple for app review, android store publication remains pending. the prototype remains the approved interaction reference. release notes live in [`docs/releases/`](docs/releases/).
 
 ---
 
@@ -28,11 +28,11 @@ tekir is not a social network, animal charity, veterinary service, or pet produc
 - interactive mvp prototype: approved
 - 0.1 (web): superseded — see [release notes](https://github.com/tekiristanbul/tekir/releases/tag/v0.1.0)
 - 0.2: web and backend published — see [release notes](https://github.com/tekiristanbul/tekir/releases/tag/v0.2.0)
-- 0.3 (in progress): backend and web deployed to production — see [`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md)
-- ios: testflight builds uploaded, app store connect submission (screenshots, privacy questionnaire) in progress — see the ios release checklist
-- android: built from this codebase, store release pending a production upload keystore — see the android release checklist
+- 0.3: backend and web published, deployed to production — see [`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md)
+- ios: submitted to apple for app review
+- android: built from this codebase, store release pending a production upload keystore
 
-follow the current implementation sequence in [github issue #45](https://github.com/tekiristanbul/tekir/issues/45).
+current implementation work is tracked through individual maintainer-created issues, not a single tracker.
 
 ## prototype
 
@@ -84,7 +84,7 @@ see [`DEVELOPMENT.md`](DEVELOPMENT.md) for prerequisites, migrations, seed data,
 - [security](SECURITY.md)
 - [license](LICENSE)
 - [github discussions](https://github.com/tekiristanbul/tekir/discussions)
-- [implementation tracker](https://github.com/tekiristanbul/tekir/issues/45)
+- [open issues](https://github.com/tekiristanbul/tekir/issues)
 
 ## contact
 
