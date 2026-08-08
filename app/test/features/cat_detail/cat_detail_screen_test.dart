@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 import 'package:app/core/identity/session_identity.dart';
 import 'package:app/core/theme/app_theme.dart';
@@ -172,7 +173,35 @@ Future<void> _pump(
   await tester.pump();
 }
 
+/// A no-op [VideoPlayerPlatform] so a gallery/timeline video widget's
+/// [VideoPlayerController.initialize] can actually run in a widget test
+/// instead of throwing `UnimplementedError` — the real platform channel
+/// has nothing to talk to under `flutter test`. Its event stream never
+/// emits, so a controller under test simply stays uninitialized (the
+/// still-loading placeholder), which is all these tests need: they only
+/// assert on the static play-glyph/thumbnail chrome around the player, not
+/// on a decoded frame.
+class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
+  int _nextPlayerId = 0;
+
+  @override
+  Future<void> init() async {}
+
+  @override
+  Future<void> dispose(int playerId) async {}
+
+  @override
+  Future<int?> createWithOptions(VideoCreationOptions options) async =>
+      _nextPlayerId++;
+
+  @override
+  Stream<VideoEvent> videoEventsFor(int playerId) =>
+      const Stream<VideoEvent>.empty();
+}
+
 void main() {
+  VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
+
   testWidgets('shows a spinner while loading and not yet loaded once', (
     tester,
   ) async {
@@ -812,6 +841,49 @@ void main() {
       expect(find.byTooltip('asli'), findsOneWidget);
     });
 
+    testWidgets(
+      'medya tab: a video-carrying entry renders as a video thumbnail, '
+      'never as a plain image (issue #179)',
+      (tester) async {
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: CatDetail(
+              id: _catId,
+              name: 'tekir',
+              lat: 41.0256,
+              lng: 28.9744,
+              areaLabel: null,
+              primaryPhoto: null,
+              createdAt: DateTime.utc(2026, 1, 1),
+              lastUpdateAt: null,
+              mediaCount: 1,
+            ),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          media: [
+            CatMediaItem(
+              id: 'm1',
+              url: 'https://example.com/clip.mp4',
+              isCover: false,
+              createdAt: DateTime.utc(2026, 1, 1),
+              mediaContentType: 'video/mp4',
+            ),
+          ],
+        );
+
+        await tester.drag(find.byType(ListView), const Offset(0, -400));
+        await tester.pump();
+        await tester.tap(find.text('medya'));
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.byType(CachedNetworkImage), findsNothing);
+        expect(find.byIcon(Icons.play_circle_fill), findsOneWidget);
+      },
+    );
+
     testWidgets('medya tab: an empty archive shows the empty-state message', (
       tester,
     ) async {
@@ -932,6 +1004,45 @@ void main() {
       expect(find.text('ana fotoğraf yap'), findsNothing);
       expect(find.text('ana fotoğraf'), findsNothing);
     });
+
+    testWidgets(
+      'owner: a video tile opens the video player with no cover action '
+      '(issue #179 — a video can never become the cover)',
+      (tester) async {
+        final videoMedia = [
+          ...ownerMedia,
+          CatMediaItem(
+            id: 'm3',
+            url: 'https://example.com/clip.mp4',
+            isCover: false,
+            createdAt: DateTime.utc(2026, 1, 3),
+            mediaContentType: 'video/mp4',
+          ),
+        ];
+        await _pump(
+          tester,
+          ownerState(isOwner: true),
+          api: _FakeCatMediaApi(videoMedia),
+        );
+
+        await tester.drag(find.byType(ListView), const Offset(0, -400));
+        await tester.pump();
+        await tester.tap(find.text('medya'));
+        await tester.pump();
+        await tester.pump();
+        final tile = find.byWidgetPredicate(
+          (w) => w is Icon && w.icon == Icons.play_circle_fill,
+        );
+        await tester.ensureVisible(tile);
+        await tester.pump();
+        await tester.tap(tile);
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.text('ana fotoğraf yap'), findsNothing);
+        expect(find.text('ana fotoğraf'), findsNothing);
+      },
+    );
 
     testWidgets(
       'owner: tapping "ana fotoğraf yap" submits and closes the view',
