@@ -40,7 +40,7 @@ use maintainer-created issues for concrete feature requests, approved product wo
 - product decisions live in `docs/product/` and are owned by maintainers and the product owner.
 - architecture decisions live in `docs/architecture/` and are owned by maintainers.
 - approved design artifacts live in `docs/design/` and `prototype/`.
-- github issue #45 tracks implementation sequence.
+- implementation work is tracked through individual maintainer-created issues, not a single tracker.
 
 contributors must not invent unresolved product behavior or expand an issue beyond its accepted scope. product-owner review is required only when a pull request changes approved user-visible behavior, copy, or visual output.
 
