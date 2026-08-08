@@ -207,6 +207,55 @@ func TestResolveOTPProvider(t *testing.T) {
 	}
 }
 
+// TestResolveOTPReviewAllowlist covers issue #184's fail-closed parsing:
+// unset is off, a half-configured pair is a startup error, and a fully
+// configured pair returns the parsed number list and code unchanged.
+func TestResolveOTPReviewAllowlist(t *testing.T) {
+	cases := []struct {
+		name        string
+		cfg         Config
+		wantNumbers []string
+		wantCode    string
+		wantErr     bool
+	}{
+		{name: "both unset is off", cfg: Config{}, wantNumbers: nil, wantCode: ""},
+		{name: "numbers without code errors", cfg: Config{OTPReviewTestNumbers: "+905339998877"}, wantErr: true},
+		{name: "code without numbers errors", cfg: Config{OTPReviewTestCode: "123456"}, wantErr: true},
+		{
+			name:        "both set parses the csv list",
+			cfg:         Config{OTPReviewTestNumbers: "+905339998877, +905321112233", OTPReviewTestCode: "123456"},
+			wantNumbers: []string{"+905339998877", "+905321112233"},
+			wantCode:    "123456",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotNumbers, gotCode, err := tc.cfg.ResolveOTPReviewAllowlist()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got numbers %v code %q", gotNumbers, gotCode)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotCode != tc.wantCode {
+				t.Errorf("expected code %q, got %q", tc.wantCode, gotCode)
+			}
+			if len(gotNumbers) != len(tc.wantNumbers) {
+				t.Fatalf("expected numbers %v, got %v", tc.wantNumbers, gotNumbers)
+			}
+			for i, n := range tc.wantNumbers {
+				if gotNumbers[i] != n {
+					t.Errorf("expected numbers %v, got %v", tc.wantNumbers, gotNumbers)
+				}
+			}
+		})
+	}
+}
+
 func TestResolveNotificationProvider(t *testing.T) {
 	fcm := Config{FCMCredentialsFile: "/secrets/fcm-service-account.json"}
 

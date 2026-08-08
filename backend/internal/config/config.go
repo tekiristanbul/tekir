@@ -79,6 +79,17 @@ type Config struct {
 	TwilioAuthToken        string
 	TwilioVerifyServiceSID string
 
+	// OTPReviewTestNumbers/OTPReviewTestCode configure an app-review otp
+	// bypass (issue #184): apple review can't reliably receive a real sms on
+	// a reviewer-controlled number, so a short allowlist of e.164 numbers
+	// (OTP_REVIEW_TEST_NUMBERS, comma-separated) gets a fixed code
+	// (OTP_REVIEW_TEST_CODE) instead of a real twilio verify round trip.
+	// Raw values only — the fail-closed validation and parsing live in
+	// ResolveOTPReviewAllowlist, which cmd/api calls at startup. Unset is
+	// simply off; there is no path from this to a global bypass.
+	OTPReviewTestNumbers string
+	OTPReviewTestCode    string
+
 	// ObjectStorageProvider selects the ObjectStore implementation for
 	// media uploads: "fake" (a deterministic, local-disk provider — issue
 	// #70) or "s3" (an s3-compatible provider; digitalocean spaces is the
@@ -173,6 +184,8 @@ func Load() (Config, error) {
 		TwilioAccountSID:       os.Getenv("TWILIO_ACCOUNT_SID"),
 		TwilioAuthToken:        os.Getenv("TWILIO_AUTH_TOKEN"),
 		TwilioVerifyServiceSID: os.Getenv("TWILIO_VERIFY_SERVICE_SID"),
+		OTPReviewTestNumbers:   os.Getenv("OTP_REVIEW_TEST_NUMBERS"),
+		OTPReviewTestCode:      os.Getenv("OTP_REVIEW_TEST_CODE"),
 
 		// raw value only — ResolveObjectStorageProvider applies the
 		// environment-aware default and validation (issue #89). The old
@@ -261,6 +274,38 @@ func (c Config) ResolveOTPProvider() (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported OTP_PROVIDER %q (%q with APP_ENV=%s, or %q)", provider, OTPProviderFake, AppEnvDevelopment, OTPProviderTwilio)
 	}
+}
+
+// ResolveOTPReviewAllowlist parses and validates the app-review otp bypass
+// (issue #184). It is fail-closed the same way ResolveOTPProvider is:
+//
+//   - both OTP_REVIEW_TEST_NUMBERS and OTP_REVIEW_TEST_CODE unset means the
+//     feature is off — this is the only case that returns a nil list
+//     without error.
+//   - either one set without the other is a startup error: a half-configured
+//     allowlist never silently degrades to "off" or to a global bypass.
+//   - OTP_REVIEW_TEST_NUMBERS must contain at least one comma-separated
+//     entry once trimmed.
+//
+// Per-number validity (each entry must parse as a phone number) is checked
+// by NewReviewAllowlistOTPProvider, not here, since that's where the
+// e.164 normalization it must match already lives.
+func (c Config) ResolveOTPReviewAllowlist() ([]string, string, error) {
+	numbersRaw := strings.TrimSpace(c.OTPReviewTestNumbers)
+	code := c.OTPReviewTestCode
+
+	switch {
+	case numbersRaw == "" && code == "":
+		return nil, "", nil
+	case numbersRaw == "" || code == "":
+		return nil, "", fmt.Errorf("OTP_REVIEW_TEST_NUMBERS and OTP_REVIEW_TEST_CODE must both be set, or both left unset")
+	}
+
+	numbers := splitCSV(numbersRaw)
+	if len(numbers) == 0 {
+		return nil, "", fmt.Errorf("OTP_REVIEW_TEST_NUMBERS must list at least one phone number")
+	}
+	return numbers, code, nil
 }
 
 // ResolveNotificationProvider decides which notification provider

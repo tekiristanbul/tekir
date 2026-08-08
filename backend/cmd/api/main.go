@@ -41,6 +41,15 @@ func run() error {
 		return err
 	}
 
+	// same fail-closed gate for the app-review otp allowlist (issue #184):
+	// a half-configured OTP_REVIEW_TEST_NUMBERS/OTP_REVIEW_TEST_CODE pair
+	// stops startup here rather than silently running as "off" or as a
+	// global bypass. reviewNumbers is nil when the feature is unconfigured.
+	reviewNumbers, reviewCode, err := cfg.ResolveOTPReviewAllowlist()
+	if err != nil {
+		return err
+	}
+
 	// same fail-closed startup gate for media storage (issue #89):
 	// production with fake/unset/unknown, or s3 with missing settings,
 	// stops here — there is no fallback path to local disk.
@@ -107,7 +116,18 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		authOpts = append(authOpts, service.WithExternalOTPProvider(twilio))
+		var external service.OTPVerificationProvider = twilio
+		if len(reviewNumbers) > 0 {
+			// only ever wraps twilio with the reviewer allowlist (issue
+			// #184) — never active unless both env vars above resolved a
+			// non-empty list, and every number outside that list still
+			// goes straight through to twilio unchanged.
+			external, err = service.NewReviewAllowlistOTPProvider(twilio, reviewNumbers, reviewCode)
+			if err != nil {
+				return err
+			}
+		}
+		authOpts = append(authOpts, service.WithExternalOTPProvider(external))
 	default:
 		return fmt.Errorf("unsupported resolved otp provider %q", otpProvider)
 	}
