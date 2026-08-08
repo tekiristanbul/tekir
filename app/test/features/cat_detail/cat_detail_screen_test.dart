@@ -625,6 +625,9 @@ void main() {
 
       expect(find.text('a'), findsOneWidget);
       expect(find.byIcon(Icons.person_outline), findsNothing);
+      // issue #169: the avatar initial alone doesn't satisfy #154 — the
+      // full name must also render as visible text.
+      expect(find.text('Aslı'), findsOneWidget);
     },
   );
 
