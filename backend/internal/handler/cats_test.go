@@ -551,7 +551,7 @@ func TestCatsHandler_Media(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
 		exists: true,
 		mediaRows: []repository.ListCatMediaRow{
-			{ID: pgtype.UUID{Bytes: coverID, Valid: true}, Url: "https://placecats.com/millie/300/200", CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, IsCover: true, UploaderDisplayName: pgtype.Text{String: "asli", Valid: true}},
+			{ID: pgtype.UUID{Bytes: coverID, Valid: true}, Url: "https://placecats.com/millie/300/200", ContentType: "image/jpeg", CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, IsCover: true, UploaderDisplayName: pgtype.Text{String: "asli", Valid: true}},
 		},
 	}), testMaxUploadBytes)
 
@@ -575,6 +575,9 @@ func TestCatsHandler_Media(t *testing.T) {
 	}
 	if body[0].URL != "https://placecats.com/millie/300/200" {
 		t.Errorf("unexpected url: %q", body[0].URL)
+	}
+	if body[0].MediaContentType != "image/jpeg" {
+		t.Errorf("unexpected media_content_type: %q", body[0].MediaContentType)
 	}
 	if !body[0].IsCover {
 		t.Error("expected is_cover true")
