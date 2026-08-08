@@ -7,7 +7,7 @@ tekir (`tekir.istanbul`) is a map-first application for istanbul street cats. it
 1. the assigned issue and the latest explicit issue comments
 2. `docs/product/` for user behavior and data contracts
 3. `docs/architecture/` for api, database, backend, and flutter boundaries
-4. `docs/design/` and an applicable `prototype/` screen for approved visual hierarchy and interaction baseline
+4. `docs/design/` and the existing shipped implementation for approved visual hierarchy and interaction baseline
 5. the existing implementation and tests
 
 follow `AGENTS.md` for readiness, delivery, review, evidence, and definition-of-done rules. do not resolve conflicts between sources by guessing.
@@ -19,7 +19,6 @@ follow `AGENTS.md` for readiness, delivery, review, evidence, and definition-of-
 - `docs/product/`: accepted product behavior and durable product decisions
 - `docs/architecture/`: technical contracts and durable architectural decisions
 - `docs/design/`: design contracts and reviewed screenshots
-- `prototype/`: interaction and visual baseline when the relevant screen exists
 
 ## ownership
 

@@ -4,9 +4,9 @@
 
 tekir is an open-source, map-first application for discovering and caring for istanbul’s street cats.
 
-[**open the app →**](https://app.tekir.istanbul) · [prototype](https://prototype.tekir.istanbul) · [website](https://tekir.istanbul)
+[**open the app →**](https://app.tekir.istanbul) · [website](https://tekir.istanbul)
 
-> **0.3 is live.** backend and web are deployed to production; ios submission is in progress, android store publication remains pending. the prototype remains the approved interaction reference. release notes live in [`docs/releases/`](docs/releases/).
+> **0.3 is live.** backend and web are deployed to production; ios submission is in progress, android store publication remains pending. release notes live in [`docs/releases/`](docs/releases/).
 
 ---
 
@@ -25,7 +25,6 @@ tekir is not a social network, animal charity, veterinary service, or pet produc
 ## current status
 
 - mvp product contract: complete
-- interactive mvp prototype: approved
 - 0.1 (web): superseded — see [release notes](https://github.com/tekiristanbul/tekir/releases/tag/v0.1.0)
 - 0.2: web and backend published — see [release notes](https://github.com/tekiristanbul/tekir/releases/tag/v0.2.0)
 - 0.3: backend and web published, deployed to production — see [`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md)
@@ -33,14 +32,6 @@ tekir is not a social network, animal charity, veterinary service, or pet produc
 - android: built from this codebase, store release pending a production upload keystore
 
 current implementation work is tracked through individual maintainer-created issues, not a single tracker.
-
-## prototype
-
-[**open the interactive mvp prototype**](https://prototype.tekir.istanbul)
-
-use the prototype to explore the approved mvp screens, navigation, map interactions, cat details, updates, needs-help reporting, discovery, profile, badges, settings, and authentication states.
-
-it is a local/static simulation used as the product behavior and interaction reference. it does not use real user data, real sms delivery, or a production backend.
 
 ## open-source contribution policy
 
@@ -61,7 +52,6 @@ see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the complete workflow.
 | --- | --- |
 | [`app/`](app/) | flutter client |
 | [`backend/`](backend/) | go api, database migrations, queries, and seed command |
-| [`prototype/`](prototype/) | approved interactive mvp prototype |
 | [`docs/product/`](docs/product/) | product contract |
 | [`docs/architecture/`](docs/architecture/) | technical contracts |
 | [`docs/design/`](docs/design/) | design references |

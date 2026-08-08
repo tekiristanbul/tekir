@@ -30,9 +30,9 @@ before assigning implementation, the issue must define:
 
 ## source of truth and decisions
 
-- issue-specific decisions follow this order: the latest explicit product owner comment, the issue body and later maintainer comments, product docs, architecture docs, the relevant `prototype/` screen, then existing implementation.
+- issue-specific decisions follow this order: the latest explicit product owner comment, the issue body and later maintainer comments, product docs, architecture docs, applicable `docs/design/` references, then existing implementation.
 - when sources conflict or a product or architecture decision is missing, stop implementation and ask one precise question on the issue. do not invent a decision.
-- product docs define behavior and data contracts. architecture docs define technical boundaries. an applicable prototype defines visual hierarchy and interaction baseline, not new behavior.
+- product docs define behavior and data contracts. architecture docs define technical boundaries. `docs/design/` references and the existing shipped implementation define visual hierarchy and interaction baseline, not new behavior.
 - when an issue or review establishes a durable product or technical rule, update the relevant product or architecture document. create an adr only for consequential decisions with meaningful alternatives and long-term tradeoffs.
 - distinguish unresolved decisions from follow-up implementation work. do not describe planned behavior as implemented.
 
