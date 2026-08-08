@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"errors"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -180,6 +182,21 @@ func (s *Store) CreateOrdinaryUpdate(ctx context.Context, arg CreateOrdinaryUpda
 			LastUpdateAt: arg.CreatedAt,
 		}); err != nil {
 			return err
+		}
+		if arg.MediaID.Valid {
+			// mirrors CreateCatWithMedia's own archive insert: an update's
+			// attached photo/video (issue #153/#167) belongs in the cat's
+			// gallery too, not just on the timeline entry. On conflict do
+			// nothing (same media reused across two updates for this cat)
+			// surfaces as pgx.ErrNoRows, which is not an error here — the
+			// gallery entry already exists.
+			if _, err := q.CreateCatMedia(ctx, CreateCatMediaParams{
+				CatID:     arg.CatID,
+				MediaID:   arg.MediaID,
+				CreatedAt: arg.CreatedAt,
+			}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
 		}
 		return q.CreateNotificationOutbox(ctx, row.ID)
 	})
