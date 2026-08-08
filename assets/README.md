@@ -4,12 +4,16 @@ everything in this tree is the **temporary 0.1 brand** (approved by the
 product owner for 0.1 only, 2026-07-29): a typographic `tekir` wordmark
 and a wordmark-derived `t` lettermark, set in the app's own display font
 (Fraunces, weight 600) on the approved product palette. **issue #24
-remains the final original-logo task** — replacing this brand must not
-require product or architecture changes, and it doesn't: nothing outside
-this tree hardcodes the artwork except the inline copy in
-`app/web/index.html` (marked with a comment pointing back here) and the
-splash lockup in `app/lib/core/splash/splash_gate.dart`, both of which
-swap with the regenerated sources.
+remains the final original-logo task. final-logo design is now developed
+internally through the maintainer's claude/design workflow rather than as
+an open-ended external design task. agents must not independently redesign,
+replace, or reinterpret the logo as part of unrelated work.** once an
+approved final asset exists, replacing this temporary brand must not require
+product or architecture changes, and it doesn't: nothing outside this tree
+hardcodes the artwork except the inline copy in `app/web/index.html` (marked
+with a comment pointing back here) and the splash lockup in
+`app/lib/core/splash/splash_gate.dart`, both of which swap with the regenerated
+sources.
 
 ## structure
 
