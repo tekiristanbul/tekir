@@ -77,8 +77,8 @@ class _FakeCatDetailApi implements CatDetailApi {
 
   @override
   Future<String> uploadMedia({
-    required Uint8List photoBytes,
-    required String photoFilename,
+    required Uint8List mediaBytes,
+    required String mediaFilename,
     required String idempotencyKey,
     void Function(int sent, int total)? onSendProgress,
   }) => throw UnimplementedError();

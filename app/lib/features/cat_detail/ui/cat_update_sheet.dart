@@ -38,6 +38,8 @@ class CatUpdateSheet extends ConsumerStatefulWidget {
   ConsumerState<CatUpdateSheet> createState() => _CatUpdateSheetState();
 }
 
+enum _MediaPick { cameraPhoto, cameraVideo, galleryPhoto, galleryVideo }
+
 class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
   final TextEditingController _commentController = TextEditingController();
 
@@ -67,17 +69,17 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
   Future<void> _submit() async {
     final notifier = ref.read(catUpdateComposerProvider(widget.catId).notifier);
     final state = ref.read(catUpdateComposerProvider(widget.catId));
-    // An ordinary, photo-less submission is optimistic (docs/design/
+    // An ordinary, media-less submission is optimistic (docs/design/
     // app-states.md, mutation affordances): the sheet closes in the same
     // tap and the entry drops onto the timeline as a pending row while the
     // request runs in the background — the parent screen owns the row and
     // any failure surface. A help-carrying submission stays synchronous
     // here: its note must remain visible in this sheet if it fails, and
     // the active alert only ever renders from the server-confirmed entry.
-    // A submission carrying a photo (issue #153) stays synchronous too,
-    // for the same reason: the upload's own progress and any failure need
-    // this sheet to still be open to show them.
-    if (!state.needsHelp && state.photoBytes == null) {
+    // A submission carrying a photo or video (issue #153) stays
+    // synchronous too, for the same reason: the upload's own progress and
+    // any failure need this sheet to still be open to show them.
+    if (!state.needsHelp && state.mediaBytes == null) {
       unawaited(notifier.submit());
       Navigator.of(context).pop(false);
       return;
@@ -86,8 +88,12 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
     if (ok && mounted) Navigator.of(context).pop(true);
   }
 
-  Future<void> _choosePhotoSource() async {
-    final source = await showModalBottomSheet<ImageSource>(
+  /// Offers the four ways to attach media (issue #153's video support):
+  /// photo or video, each from the camera or the gallery. A single flat
+  /// list rather than a two-step (kind, then source) flow — four options
+  /// fit one screen without an extra tap.
+  Future<void> _chooseMediaSource() async {
+    final choice = await showModalBottomSheet<_MediaPick>(
       context: context,
       builder: (sheetContext) => SafeArea(
         child: Column(
@@ -95,22 +101,44 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
           children: [
             ListTile(
               leading: const Icon(Icons.camera_alt),
-              title: const Text('Kameradan çek'),
-              onTap: () => Navigator.of(sheetContext).pop(ImageSource.camera),
+              title: const Text('Kameradan fotoğraf çek'),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_MediaPick.cameraPhoto),
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam),
+              title: const Text('Kameradan video çek'),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_MediaPick.cameraVideo),
             ),
             ListTile(
               leading: const Icon(Icons.photo_library),
-              title: const Text('Galeriden seç'),
-              onTap: () => Navigator.of(sheetContext).pop(ImageSource.gallery),
+              title: const Text('Galeriden fotoğraf seç'),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_MediaPick.galleryPhoto),
+            ),
+            ListTile(
+              leading: const Icon(Icons.video_library),
+              title: const Text('Galeriden video seç'),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_MediaPick.galleryVideo),
             ),
           ],
         ),
       ),
     );
-    if (source == null || !mounted) return;
-    await ref
-        .read(catUpdateComposerProvider(widget.catId).notifier)
-        .pickPhoto(source);
+    if (choice == null || !mounted) return;
+    final notifier = ref.read(catUpdateComposerProvider(widget.catId).notifier);
+    switch (choice) {
+      case _MediaPick.cameraPhoto:
+        await notifier.pickPhoto(ImageSource.camera);
+      case _MediaPick.cameraVideo:
+        await notifier.pickVideo(ImageSource.camera);
+      case _MediaPick.galleryPhoto:
+        await notifier.pickPhoto(ImageSource.gallery);
+      case _MediaPick.galleryVideo:
+        await notifier.pickVideo(ImageSource.gallery);
+    }
   }
 
   @override
@@ -198,25 +226,26 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
                 ],
                 const SizedBox(height: AppSpacing.s4),
                 const Text(
-                  'Fotoğraf (opsiyonel)',
+                  'Fotoğraf / video (opsiyonel)',
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     color: AppColors.muted,
                   ),
                 ),
                 const SizedBox(height: AppSpacing.s2),
-                _PhotoPicker(
-                  photoBytes: state.photoBytes,
+                _MediaPicker(
+                  mediaBytes: state.mediaBytes,
+                  isVideo: state.isVideoMedia,
                   uploading: state.isSubmitting,
                   uploadProgress: state.uploadProgress,
-                  onPick: state.isSubmitting ? null : _choosePhotoSource,
+                  onPick: state.isSubmitting ? null : _chooseMediaSource,
                   onRemove: state.isSubmitting
                       ? null
                       : () => ref
                             .read(
                               catUpdateComposerProvider(widget.catId).notifier,
                             )
-                            .removePhoto(),
+                            .removeMedia(),
                 ),
                 const SizedBox(height: AppSpacing.s4),
                 const Text(
@@ -424,21 +453,30 @@ class _HelpOption extends StatelessWidget {
   }
 }
 
-/// The sheet's optional photo attachment (issue #153): an empty tappable
-/// well that opens the camera/gallery choice, or the picked photo itself
-/// with a remove badge and — while [uploading] — the same upload-percentage
-/// overlay [AddCatScreen] uses for a new cat's required photo. Tapping the
-/// picked photo re-opens the camera/gallery choice, doubling as "replace".
-class _PhotoPicker extends StatelessWidget {
-  const _PhotoPicker({
-    required this.photoBytes,
+/// The sheet's optional photo/video attachment (issue #153; video support
+/// added later in the same issue): an empty tappable well that opens the
+/// camera/gallery choice, or the picked media itself with a remove badge
+/// and — while [uploading] — the same upload-percentage overlay
+/// [AddCatScreen] uses for a new cat's required photo. Tapping the picked
+/// media re-opens the camera/gallery choice, doubling as "replace".
+///
+/// A picked video is never decoded into a preview frame here — that would
+/// need a raw file path, which this app avoids for flutter web
+/// compatibility (mirrors the photo path's own `XFile.readAsBytes`
+/// approach). Instead it shows a fixed video glyph card; the real
+/// playback preview is the uploaded copy the timeline renders once posted.
+class _MediaPicker extends StatelessWidget {
+  const _MediaPicker({
+    required this.mediaBytes,
+    required this.isVideo,
     required this.uploading,
     required this.uploadProgress,
     required this.onPick,
     required this.onRemove,
   });
 
-  final Uint8List? photoBytes;
+  final Uint8List? mediaBytes;
+  final bool isVideo;
   final bool uploading;
   final double? uploadProgress;
   final VoidCallback? onPick;
@@ -446,7 +484,7 @@ class _PhotoPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bytes = photoBytes;
+    final bytes = mediaBytes;
     return ClipRRect(
       borderRadius: BorderRadius.circular(AppRadius.lg),
       child: InkWell(
@@ -474,7 +512,20 @@ class _PhotoPicker extends StatelessWidget {
               : Stack(
                   fit: StackFit.expand,
                   children: [
-                    Image.memory(bytes, fit: BoxFit.cover),
+                    if (isVideo)
+                      const ColoredBox(
+                        color: AppColors.bgElevated,
+                        child: Center(
+                          key: Key('pickedVideoPreview'),
+                          child: Icon(
+                            Icons.play_circle_fill,
+                            size: 36,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      )
+                    else
+                      Image.memory(bytes, fit: BoxFit.cover),
                     if (uploading && uploadProgress != null)
                       PhotoUploadProgress(progress: uploadProgress!),
                     if (!uploading && onRemove != null)

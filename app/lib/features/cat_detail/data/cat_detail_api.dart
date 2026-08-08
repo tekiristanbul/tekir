@@ -48,15 +48,15 @@ class UpdateServerException implements Exception {
   const UpdateServerException();
 }
 
-/// Thrown when the update composer's attached photo exceeds the server's
-/// size limit (issue #153) — mirrors [AddCatMediaTooLargeException] for
-/// the standalone `POST /v1/media` upload this composer uses instead.
+/// Thrown when the update composer's attached photo or video exceeds the
+/// server's size limit (issue #153) — mirrors [AddCatMediaTooLargeException]
+/// for the standalone `POST /v1/media` upload this composer uses instead.
 class UpdateMediaTooLargeException implements Exception {
   const UpdateMediaTooLargeException();
 }
 
-/// Thrown when the update composer's attached photo isn't a supported
-/// image type (issue #153).
+/// Thrown when the update composer's attached photo or video isn't a
+/// supported media type (issue #153).
 class UpdateMediaUnsupportedException implements Exception {
   const UpdateMediaUnsupportedException();
 }
@@ -209,9 +209,9 @@ class CatDetailApi {
   /// resolves a retried key to the original update instead of erroring.
   ///
   /// mediaId (issue #153) is the id [uploadMedia] returned for an optional
-  /// photo attached in the composer — the composer uploads the photo
-  /// first, then references it here; this method never accepts raw media
-  /// bytes itself.
+  /// photo or video attached in the composer — the composer uploads the
+  /// media first, then references it here; this method never accepts raw
+  /// media bytes itself.
   Future<CatUpdateEntry> createUpdate(
     String catId, {
     required List<String> statuses,
@@ -258,24 +258,27 @@ class CatDetailApi {
     return const UpdateNetworkException();
   }
 
-  /// Uploads a photo standalone via `POST /v1/media` (issue #153's optional
-  /// update-composer attachment), returning the created media's id for
-  /// [createUpdate]'s `mediaId`. photoBytes/photoFilename come from the
-  /// picked image the same way [AddCatApi.createCat] reads them (`XFile.
-  /// readAsBytes`, never a raw file path — see that method's own doc for
-  /// why). idempotencyKey must be the same value across retries of the same
-  /// upload attempt, mirroring every other multipart write in this app.
-  /// [onSendProgress] reports raw request-body bytes leaving the device,
-  /// driving the composer's own upload-percentage overlay.
+  /// Uploads a photo or (issue #153's video support) short video standalone
+  /// via `POST /v1/media` (issue #153's optional update-composer
+  /// attachment), returning the created media's id for [createUpdate]'s
+  /// `mediaId`. mediaBytes/mediaFilename come from the picked file the same
+  /// way [AddCatApi.createCat] reads its photo (`XFile.readAsBytes`, never
+  /// a raw file path — see that method's own doc for why). idempotencyKey
+  /// must be the same value across retries of the same upload attempt,
+  /// mirroring every other multipart write in this app. [onSendProgress]
+  /// reports raw request-body bytes leaving the device, driving the
+  /// composer's own upload-percentage overlay. The server tells a photo and
+  /// a video apart by the multipart body's own content, never by this
+  /// filename.
   Future<String> uploadMedia({
-    required Uint8List photoBytes,
-    required String photoFilename,
+    required Uint8List mediaBytes,
+    required String mediaFilename,
     required String idempotencyKey,
     void Function(int sent, int total)? onSendProgress,
   }) async {
     try {
       final formData = FormData.fromMap({
-        'file': MultipartFile.fromBytes(photoBytes, filename: photoFilename),
+        'file': MultipartFile.fromBytes(mediaBytes, filename: mediaFilename),
       });
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '/v1/media',

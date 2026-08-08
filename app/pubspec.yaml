@@ -23,6 +23,7 @@ dependencies:
   firebase_core: ^4.12.1
   firebase_analytics: ^12.4.5
   firebase_messaging: ^16.4.3
+  video_player: ^2.13.0
 
 dev_dependencies:
   flutter_test:

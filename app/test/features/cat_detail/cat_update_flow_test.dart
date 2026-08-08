@@ -92,8 +92,8 @@ class _FakeCatDetailApi implements CatDetailApi {
   bool? lastNeedsHelp;
   String? lastComment;
   String? lastMediaId;
-  Uint8List? lastPhotoBytes;
-  String? lastPhotoFilename;
+  Uint8List? lastMediaBytes;
+  String? lastMediaFilename;
 
   Completer<void>? gate;
   Completer<void>? uploadGate;
@@ -131,14 +131,14 @@ class _FakeCatDetailApi implements CatDetailApi {
 
   @override
   Future<String> uploadMedia({
-    required Uint8List photoBytes,
-    required String photoFilename,
+    required Uint8List mediaBytes,
+    required String mediaFilename,
     required String idempotencyKey,
     void Function(int sent, int total)? onSendProgress,
   }) async {
     uploadMediaCalls++;
-    lastPhotoBytes = photoBytes;
-    lastPhotoFilename = photoFilename;
+    lastMediaBytes = mediaBytes;
+    lastMediaFilename = mediaFilename;
     final event = uploadProgressEvent;
     if (event != null) onSendProgress?.call(event.$1, event.$2);
     if (uploadGate != null) await uploadGate!.future;
@@ -230,6 +230,13 @@ class _FakeImagePickerPlatform extends ImagePickerPlatform {
   Future<XFile?> getImageFromSource({
     required ImageSource source,
     ImagePickerOptions options = const ImagePickerOptions(),
+  }) async => nextFile;
+
+  @override
+  Future<XFile?> getVideo({
+    required ImageSource source,
+    CameraDevice preferredCameraDevice = CameraDevice.rear,
+    Duration? maxDuration,
   }) async => nextFile;
 }
 
@@ -335,7 +342,7 @@ Future<void> _openComposer(WidgetTester tester) async {
 Future<void> _pickPhoto(WidgetTester tester) async {
   await tester.tap(find.text('Ekle'));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Galeriden seç'));
+  await tester.tap(find.text('Galeriden fotoğraf seç'));
   await tester.pumpAndSettle();
 }
 
@@ -432,6 +439,36 @@ void main() {
     expect(find.byKey(const Key('removePhotoButton')), findsNothing);
     expect(find.text('Ekle'), findsOneWidget);
   });
+
+  testWidgets(
+    'a picked video previews as a video glyph, not an image, and can be '
+    'removed (issue #153)',
+    (tester) async {
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'clip.mp4',
+        path: 'clip.mp4',
+        mimeType: 'video/mp4',
+      );
+      await _pump(tester, api: _FakeCatDetailApi());
+      await _openComposer(tester);
+
+      await tester.tap(find.text('Ekle'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Galeriden video seç'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pickedVideoPreview')), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+      expect(find.byKey(const Key('removePhotoButton')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('removePhotoButton')));
+      await tester.pump();
+
+      expect(find.byKey(const Key('removePhotoButton')), findsNothing);
+      expect(find.text('Ekle'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'multi-selecting statuses enables submit, and comment is optional',
@@ -604,7 +641,7 @@ void main() {
       expect(find.byType(CatUpdateSheet), findsOneWidget);
       expect(find.text('%50'), findsOneWidget);
       expect(api.uploadMediaCalls, 1);
-      expect(api.lastPhotoFilename, 'photo.png');
+      expect(api.lastMediaFilename, 'photo.png');
 
       api.uploadGate!.complete();
       await tester.pumpAndSettle();

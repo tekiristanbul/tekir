@@ -118,8 +118,8 @@ class _FakeCatDetailApi implements CatDetailApi {
   String? lastComment;
   String? lastIdempotencyKey;
   String? lastMediaId;
-  Uint8List? lastPhotoBytes;
-  String? lastPhotoFilename;
+  Uint8List? lastMediaBytes;
+  String? lastMediaFilename;
   String? lastMediaUploadIdempotencyKey;
   final idempotencyKeysSeen = <String>[];
   final mediaUploadIdempotencyKeysSeen = <String>[];
@@ -166,14 +166,14 @@ class _FakeCatDetailApi implements CatDetailApi {
 
   @override
   Future<String> uploadMedia({
-    required Uint8List photoBytes,
-    required String photoFilename,
+    required Uint8List mediaBytes,
+    required String mediaFilename,
     required String idempotencyKey,
     void Function(int sent, int total)? onSendProgress,
   }) async {
     uploadMediaCalls++;
-    lastPhotoBytes = photoBytes;
-    lastPhotoFilename = photoFilename;
+    lastMediaBytes = mediaBytes;
+    lastMediaFilename = mediaFilename;
     lastMediaUploadIdempotencyKey = idempotencyKey;
     mediaUploadIdempotencyKeysSeen.add(idempotencyKey);
     final event = uploadProgressEvent;
@@ -290,6 +290,13 @@ class _FakeImagePickerPlatform extends ImagePickerPlatform {
     required ImageSource source,
     ImagePickerOptions options = const ImagePickerOptions(),
   }) async => nextFile;
+
+  @override
+  Future<XFile?> getVideo({
+    required ImageSource source,
+    CameraDevice preferredCameraDevice = CameraDevice.rear,
+    Duration? maxDuration,
+  }) async => nextFile;
 }
 
 const _authenticatedSession = SessionIdentity(
@@ -390,11 +397,83 @@ void main() {
     await notifier.pickPhoto(ImageSource.gallery);
 
     final state = container.read(catUpdateComposerProvider(_catId));
-    expect(state.photoBytes, Uint8List.fromList([1, 2, 3]));
-    expect(state.photoFilename, 'photo.jpg');
+    expect(state.mediaBytes, Uint8List.fromList([1, 2, 3]));
+    expect(state.mediaFilename, 'photo.jpg');
   });
 
-  test('removePhoto clears the currently picked photo', () async {
+  test(
+    'pickVideo stores the picked bytes, filename, and content type',
+    () async {
+      final container = _containerWith(_FakeCatDetailApi());
+      addTearDown(container.dispose);
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'clip.mp4',
+        path: 'clip.mp4',
+        mimeType: 'video/mp4',
+      );
+
+      await notifier.pickVideo(ImageSource.gallery);
+
+      final state = container.read(catUpdateComposerProvider(_catId));
+      expect(state.mediaBytes, Uint8List.fromList([1, 2, 3]));
+      expect(state.mediaFilename, 'clip.mp4');
+      expect(state.mediaContentType, 'video/mp4');
+      expect(state.isVideoMedia, isTrue);
+    },
+  );
+
+  test('pickVideo without a mime type falls back to video/mp4', () async {
+    final container = _containerWith(_FakeCatDetailApi());
+    addTearDown(container.dispose);
+    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([1, 2, 3]),
+      name: 'clip.mp4',
+      path: 'clip.mp4',
+    );
+
+    await notifier.pickVideo(ImageSource.gallery);
+
+    final state = container.read(catUpdateComposerProvider(_catId));
+    expect(state.mediaContentType, 'video/mp4');
+    expect(state.isVideoMedia, isTrue);
+  });
+
+  test('picking a video replaces a previously picked photo', () async {
+    final container = _containerWith(_FakeCatDetailApi());
+    addTearDown(container.dispose);
+    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([1, 2, 3]),
+      name: 'photo.jpg',
+      path: 'photo.jpg',
+      mimeType: 'image/jpeg',
+    );
+    await notifier.pickPhoto(ImageSource.gallery);
+    expect(
+      container.read(catUpdateComposerProvider(_catId)).isVideoMedia,
+      isFalse,
+    );
+
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([4, 5]),
+      name: 'clip.mp4',
+      path: 'clip.mp4',
+      mimeType: 'video/mp4',
+    );
+    await notifier.pickVideo(ImageSource.gallery);
+
+    final state = container.read(catUpdateComposerProvider(_catId));
+    expect(state.mediaBytes, Uint8List.fromList([4, 5]));
+    expect(state.mediaFilename, 'clip.mp4');
+    expect(state.isVideoMedia, isTrue);
+  });
+
+  test('removeMedia clears the currently picked photo', () async {
     final container = _containerWith(_FakeCatDetailApi());
     addTearDown(container.dispose);
     final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
@@ -405,11 +484,11 @@ void main() {
     );
     await notifier.pickPhoto(ImageSource.gallery);
 
-    notifier.removePhoto();
+    notifier.removeMedia();
 
     final state = container.read(catUpdateComposerProvider(_catId));
-    expect(state.photoBytes, isNull);
-    expect(state.photoFilename, isNull);
+    expect(state.mediaBytes, isNull);
+    expect(state.mediaFilename, isNull);
   });
 
   test(
@@ -480,7 +559,7 @@ void main() {
 
       expect(ok, isTrue);
       expect(api.uploadMediaCalls, 1);
-      expect(api.lastPhotoFilename, 'photo.jpg');
+      expect(api.lastMediaFilename, 'photo.jpg');
       expect(api.lastMediaId, 'media-1');
       expect(container.read(catUpdateComposerProvider(_catId)).pending, isNull);
     },
@@ -545,7 +624,7 @@ void main() {
       expect(ok, isFalse);
       final state = container.read(catUpdateComposerProvider(_catId));
       expect(state.error, UpdateSubmitError.mediaTooLarge);
-      expect(state.photoBytes, isNotNull);
+      expect(state.mediaBytes, isNotNull);
       expect(state.selectedStatuses, {'seen'});
     },
   );
@@ -575,8 +654,8 @@ void main() {
       expect(ok, isFalse);
       final state = container.read(catUpdateComposerProvider(_catId));
       expect(state.error, UpdateSubmitError.mediaNotFound);
-      expect(state.photoBytes, isNull);
-      expect(state.photoFilename, isNull);
+      expect(state.mediaBytes, isNull);
+      expect(state.mediaFilename, isNull);
     },
   );
 

@@ -285,8 +285,8 @@ void main() {
       final api = _apiWith(adapter);
 
       final mediaId = await api.uploadMedia(
-        photoBytes: Uint8List.fromList([1, 2, 3]),
-        photoFilename: 'photo.jpg',
+        mediaBytes: Uint8List.fromList([1, 2, 3]),
+        mediaFilename: 'photo.jpg',
         idempotencyKey: 'upload-1',
       );
 
@@ -302,8 +302,8 @@ void main() {
 
       await expectLater(
         api.uploadMedia(
-          photoBytes: Uint8List.fromList([1]),
-          photoFilename: 'photo.jpg',
+          mediaBytes: Uint8List.fromList([1]),
+          mediaFilename: 'photo.jpg',
           idempotencyKey: 'upload-1',
         ),
         throwsA(isA<UpdateMediaTooLargeException>()),
@@ -320,8 +320,8 @@ void main() {
 
       await expectLater(
         api.uploadMedia(
-          photoBytes: Uint8List.fromList([1]),
-          photoFilename: 'photo.jpg',
+          mediaBytes: Uint8List.fromList([1]),
+          mediaFilename: 'photo.jpg',
           idempotencyKey: 'upload-1',
         ),
         throwsA(isA<UpdateMediaUnsupportedException>()),
