@@ -253,6 +253,30 @@ section h2 {
   gap: 1.25rem;
 }
 
+.policy {
+  padding: 2.5rem 0 3rem;
+}
+
+.policy h1 {
+  font-size: clamp(1.75rem, 5vw, 2.25rem);
+  margin: 0 0 0.5rem;
+}
+
+.policy-meta {
+  color: var(--muted-text);
+  margin: 0 0 1.75rem;
+}
+
+.policy h2 {
+  font-size: 1.25rem;
+  margin: 2rem 0 0.75rem;
+}
+
+.policy h3 {
+  font-size: 1.05rem;
+  margin: 1.5rem 0 0.5rem;
+}
+
 @media (min-width: 40rem) {
   .wrap {
     max-width: 48rem;
