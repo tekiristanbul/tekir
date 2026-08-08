@@ -88,14 +88,15 @@ class SessionIdentityService {
     return _rotate(refreshToken: refreshToken, userId: userId);
   }
 
-  /// Rotates the session's tokens if the cached access token has expired
-  /// (issue #155) — call when the app returns to the foreground, since
-  /// access tokens are short-lived (backend default 15m: [[api]]) and
-  /// nothing else proactively refreshes one mid-session. A no-op for a
-  /// guest (nothing cached) or a still-fresh token. Concurrent calls share
-  /// one in-flight rotation, mirroring [restore]. A failed rotation
-  /// (expired/revoked refresh token) clears the session so the app falls
-  /// back to the guest state instead of replaying a dead credential.
+  /// Rotates the session's tokens if the cached access token has expired —
+  /// call on the background-to-foreground transition (issue #155) or
+  /// reactively from the global 401 handler ([[SessionRefreshInterceptor]],
+  /// issue #173), since access tokens are short-lived (backend default
+  /// 15m: [[api]]) and nothing else proactively refreshes one otherwise. A
+  /// no-op for a guest (nothing cached) or a still-fresh token. Concurrent
+  /// calls share one in-flight rotation, mirroring [restore]. A failed
+  /// rotation (expired/revoked refresh token) clears the session so the app
+  /// falls back to the guest state instead of replaying a dead credential.
   Future<SessionIdentity?> refreshIfExpired() {
     final current = _cached;
     if (current == null || !_isAccessTokenExpired(current.accessToken)) {
