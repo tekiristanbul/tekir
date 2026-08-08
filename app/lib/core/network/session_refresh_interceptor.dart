@@ -52,6 +52,16 @@ class SessionRefreshInterceptor extends Interceptor {
       return;
     }
 
+    // A FormData body (e.g. CatDetailApi.uploadMedia, AddCatApi.createCat)
+    // can only be finalized once — dio calls finalize() on send, so
+    // replaying the same instance on retry throws a StateError instead of
+    // reissuing the request. clone() rebuilds an equivalent, unfinalized
+    // FormData for the retry.
+    final body = options.data;
+    if (body is FormData) {
+      options.data = body.clone();
+    }
+
     try {
       final response = await _dio.fetch<dynamic>(options);
       handler.resolve(response);

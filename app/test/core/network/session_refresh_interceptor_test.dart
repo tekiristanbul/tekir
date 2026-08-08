@@ -340,5 +340,56 @@ void main() {
       );
       expect(refreshAdapter.callCount, 0);
     });
+
+    test('retries a 401 on a FormData (multipart) body instead of throwing '
+        'the already-finalized StateError', () async {
+      final refreshAdapter = _FixedRefreshAdapter(
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+      );
+      final svc = SessionIdentityService(
+        storage: _FakeStorage(),
+        dio: Dio(BaseOptions(baseUrl: apiBaseUrl))
+          ..httpClientAdapter = refreshAdapter,
+      );
+      await svc.save(
+        SessionIdentity(
+          accessToken: _jwt(expiresIn: const Duration(minutes: -1)),
+          refreshToken: 'old-refresh',
+          userId: 'u',
+        ),
+      );
+
+      final apiAdapter = _StatusSequenceAdapter([401, 200]);
+      final dio = Dio(BaseOptions(baseUrl: apiBaseUrl))
+        ..httpClientAdapter = apiAdapter;
+      dio.interceptors.add(
+        BearerInterceptor(service: svc, apiBaseUrl: apiBaseUrl),
+      );
+      dio.interceptors.add(
+        SessionRefreshInterceptor(
+          dio: dio,
+          service: svc,
+          apiBaseUrl: apiBaseUrl,
+        ),
+      );
+
+      final formData = FormData.fromMap({
+        'file': MultipartFile.fromBytes([1, 2, 3], filename: 'photo.jpg'),
+      });
+      final response = await dio.post<void>('/v1/media', data: formData);
+
+      expect(response.statusCode, 200);
+      expect(
+        apiAdapter.callCount,
+        2,
+        reason: 'the original attempt plus exactly one retry',
+      );
+      expect(
+        apiAdapter.capturedOptions[1].data,
+        isA<FormData>(),
+        reason: 'the retry must still carry a (cloned) multipart body',
+      );
+    });
   });
 }
