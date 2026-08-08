@@ -1462,6 +1462,17 @@ class _TimelineItem extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (update.authorDisplayName?.trim().isNotEmpty ?? false) ...[
+                    Text(
+                      update.authorDisplayName!.trim(),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                  ],
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
