@@ -2078,6 +2078,53 @@ func TestCatsService_DeleteOwnUpdate_WindowExpired(t *testing.T) {
 	}
 }
 
+// TestCatsService_DeleteOwnUpdate_HoldsCover covers the product decision
+// that a cover image must never disappear implicitly as a side effect of
+// deleting its source update: a delete that's otherwise fully eligible
+// (author matches, still in-window, not already deleted) is refused with
+// ErrUpdateHoldsCover when the update's media is still the cat's cover.
+func TestCatsService_DeleteOwnUpdate_HoldsCover(t *testing.T) {
+	userID := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		deleteErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: userID, Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			HoldsCover:   true,
+		},
+	})
+
+	err := svc.DeleteOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), userID.String())
+	if !errors.Is(err, ErrUpdateHoldsCover) {
+		t.Fatalf("expected ErrUpdateHoldsCover, got %v", err)
+	}
+}
+
+// TestCatsService_CorrectOwnUpdate_IgnoresHoldsCover proves the cover guard
+// only ever blocks a delete: CorrectOrdinaryUpdate's own zero-rows
+// disambiguation must never surface ErrUpdateHoldsCover, even when the
+// disambiguation check reports holds_cover=true (e.g. the same update also
+// happens to hold the cover) — a correction never touches the cover, so
+// there is nothing to guard there.
+func TestCatsService_CorrectOwnUpdate_IgnoresHoldsCover(t *testing.T) {
+	userID := uuid.New()
+	svc := NewCatsService(fakeCatsLister{
+		correctErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: userID, Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			HoldsCover:   true,
+		},
+	})
+
+	_, err := svc.CorrectOwnUpdate(context.Background(), uuid.New().String(), uuid.New().String(), userID.String(), statusCorrection("seen"))
+	if errors.Is(err, ErrUpdateHoldsCover) {
+		t.Fatalf("expected a correction's own zero-rows disambiguation to never surface ErrUpdateHoldsCover, got %v", err)
+	}
+}
+
 // galataLat/galataLng are a real inside-istanbulBounds coordinate (Galata
 // Kulesi), reused across ListDiscover tests exactly like
 // TestCatsService_ListNearby above reuses the same landmark for its own

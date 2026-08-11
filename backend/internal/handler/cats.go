@@ -768,7 +768,9 @@ func (h *CatsHandler) CorrectUpdate(w http.ResponseWriter, r *http.Request) {
 // DeleteUpdate answers DELETE /v1/cats/{cat_id}/updates/{update_id}: the
 // caller soft-deletes their own ordinary update within the fixed 10-minute
 // window. A retry against an already-deleted row also answers 204 — see
-// service.CatsService.DeleteOwnUpdate's idempotent-retry note.
+// service.CatsService.DeleteOwnUpdate's idempotent-retry note. 409 when the
+// update's attached media is still the cat's current cover — the caller
+// must change the cover first, then retry (service.ErrUpdateHoldsCover).
 func (h *CatsHandler) DeleteUpdate(w http.ResponseWriter, r *http.Request) {
 	user := UserFromContext(r.Context())
 	if err := h.cats.DeleteOwnUpdate(r.Context(), chi.URLParam(r, "cat_id"), chi.URLParam(r, "update_id"), user.UserID); err != nil {
@@ -814,6 +816,8 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the update author"})
 	case errors.Is(err, service.ErrCorrectionWindowExpired):
 		writeJSON(w, http.StatusGone, map[string]string{"error": "correction window expired"})
+	case errors.Is(err, service.ErrUpdateHoldsCover):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "update holds cat's current cover"})
 	case errors.Is(err, service.ErrMediaNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "media not found"})
 	case errors.Is(err, service.ErrNotCatOwner):

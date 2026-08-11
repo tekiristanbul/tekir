@@ -27,6 +27,17 @@ select count(*) from cat_media where cat_id = sqlc.arg(cat_id);
 -- ListCatUpdates' own author_display_name: left-joined and nullable because
 -- a linked account may never have set one (00015), never because the
 -- uploader is unknown (media.uploaded_by_user_id is not null).
+-- the where clause's exists/not-exists pair hides media whose only owning
+-- update has been soft-deleted (deleted update media must vanish from the
+-- archive same as it vanished from the timeline): a row survives when
+-- either no update ever attached this media (the cat's own creation photo,
+-- see Store.CreateCatWithMedia, or a future non-update write path) or at
+-- least one update still attaching it remains non-deleted. this is a
+-- read-time filter only — the cat_media row itself is never touched, so
+-- historical data stays intact for audit/recovery. the cover can never
+-- reach the "hidden" branch: DeleteOwnUpdate refuses to delete an update
+-- that owns the cat's current cover, so a live cover's owning update is
+-- never soft-deleted out from under it.
 select
   cm.id,
   cm.cat_id,
@@ -41,4 +52,13 @@ join media m on m.id = cm.media_id
 join cats c on c.id = cm.cat_id
 left join users uu on uu.id = m.uploaded_by_user_id
 where cm.cat_id = sqlc.arg(cat_id)
+  and (
+    not exists (
+      select 1 from updates u where u.media_id = cm.media_id and u.cat_id = cm.cat_id
+    )
+    or exists (
+      select 1 from updates u
+      where u.media_id = cm.media_id and u.cat_id = cm.cat_id and u.deleted_at is null
+    )
+  )
 order by cm.created_at desc, cm.id desc;
