@@ -19,3 +19,8 @@
   convention (add to the relevant topic file, or a new one if none fits).
   state what was chosen and why, and what was ruled out. skip this for
   routine changes with no real alternative on the table.
+- before finishing, write the commit message for your change to
+  `.asistan-commit-message` at the repo root: `<type>: description` per
+  `CONTRIBUTING.md` above, describing what you actually changed — not a
+  placeholder. This is what gets committed and used as the PR title. It's
+  removed before staging, so it never lands in the commit itself.
