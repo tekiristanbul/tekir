@@ -1,0 +1,13 @@
+name: reviewer
+
+runtime:
+  type: codex
+
+tools:
+  - "Bash(git diff:*)"
+  - "Bash(git log:*)"
+  - "Bash(git show:*)"
+
+skills:
+  - engineering
+  - pr-review
