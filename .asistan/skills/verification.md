@@ -12,7 +12,13 @@ before saying a change works, a test suite passes, or a bug is fixed:
 
 1. identify what command actually proves it (`make test`, `make lint`,
    `flutter test`, or reproducing the specific reported case)
-2. run the full command, fresh, right now
+2. run the full command, fresh, right now — the whole test **file** (or
+   suite) your change touches, not just the test you added or fixed. A
+   change can make its own new test pass while breaking sibling tests in
+   the same file through shared setup, teardown, or state (an
+   `AnimationController`/`Timer` left running across tests is a real
+   example that shipped this way) — running only the new test can't catch
+   that, and "the new test passes" is not the same claim as "tests pass"
 3. read the full output — exit code, failure count, actual error text
 4. only then state the result — what you saw, not what you expected to see
 
