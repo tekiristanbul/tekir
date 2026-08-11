@@ -682,6 +682,25 @@ func (q *Queries) UpdateCatLastUpdateAt(ctx context.Context, arg UpdateCatLastUp
 	return err
 }
 
+const updateCatName = `-- name: UpdateCatName :exec
+update cats set name = $1 where id = $2
+`
+
+type UpdateCatNameParams struct {
+	Name pgtype.Text `json:"name"`
+	ID   pgtype.UUID `json:"id"`
+}
+
+// issue #199: owner-only rename — corrects a naming mistake made at
+// creation time without touching anything else about the cat.
+// CatsService verifies ownership (created_by_user_id matches the caller)
+// and trims/validates the name before ever issuing this update — this
+// query itself trusts both already happened and only writes.
+func (q *Queries) UpdateCatName(ctx context.Context, arg UpdateCatNameParams) error {
+	_, err := q.db.Exec(ctx, updateCatName, arg.Name, arg.ID)
+	return err
+}
+
 const upsertCat = `-- name: UpsertCat :one
 insert into cats (id, name, area, area_label, photo_url, status, last_update_at)
 values (

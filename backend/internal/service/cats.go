@@ -108,6 +108,10 @@ var ErrNotCatOwner = errors.New("not the cat owner")
 // /v1/cats/{cat_id}/cover isn't a well-formed uuid.
 var ErrInvalidMediaID = errors.New("invalid media id")
 
+// ErrInvalidCatName means the name submitted to PATCH /v1/cats/{cat_id}
+// (issue #199) is empty or whitespace-only after trimming.
+var ErrInvalidCatName = errors.New("invalid cat name")
+
 // ErrMediaNotInGallery means the submitted media_id isn't part of the cat's
 // own cat_media archive (issue #156: the owner may only promote an existing
 // gallery photo — one already attached to this cat via cat creation or an
@@ -554,6 +558,7 @@ type CatsStore interface {
 	GetMediaByID(ctx context.Context, id pgtype.UUID) (repository.Medium, error)
 	GetCatMediaByCatAndMedia(ctx context.Context, arg repository.GetCatMediaByCatAndMediaParams) (repository.CatMedium, error)
 	SetCatCoverPhoto(ctx context.Context, arg repository.SetCatCoverPhotoParams) error
+	UpdateCatName(ctx context.Context, arg repository.UpdateCatNameParams) error
 }
 
 type CatsService struct {
@@ -1037,6 +1042,46 @@ func (s *CatsService) SetCoverPhoto(ctx context.Context, id, callerUserID, media
 	if err := s.db.SetCatCoverPhoto(ctx, repository.SetCatCoverPhotoParams{
 		ID:             catID,
 		PrimaryPhotoID: mediaUUID,
+	}); err != nil {
+		return CatDetail{}, err
+	}
+
+	return s.GetCatDetail(ctx, id, callerUserID)
+}
+
+// RenameCat changes cat id's name to name, trimmed of surrounding whitespace
+// (issue #199: recovering from a naming mistake made at creation time).
+// Only the cat's owning account (created_by_user_id) may do this —
+// ErrNotCatOwner for anyone else, mirroring SetCoverPhoto's exact ownership
+// check. name must not be empty once trimmed (ErrInvalidCatName otherwise).
+// Nothing else about the cat — media, updates, location, ownership, or
+// unrelated timestamps — is touched. Returns the refreshed CatDetail, same
+// shape GetCatDetail already gives the caller who just made this change.
+func (s *CatsService) RenameCat(ctx context.Context, id, callerUserID, name string) (CatDetail, error) {
+	catID, err := parseCatID(id)
+	if err != nil {
+		return CatDetail{}, err
+	}
+
+	row, err := s.db.GetCatByID(ctx, catID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CatDetail{}, ErrCatNotFound
+		}
+		return CatDetail{}, err
+	}
+	if !isCatOwner(row.CreatedByUserID, callerUserID) {
+		return CatDetail{}, ErrNotCatOwner
+	}
+
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return CatDetail{}, ErrInvalidCatName
+	}
+
+	if err := s.db.UpdateCatName(ctx, repository.UpdateCatNameParams{
+		ID:   catID,
+		Name: pgtype.Text{String: trimmed, Valid: true},
 	}); err != nil {
 		return CatDetail{}, err
 	}

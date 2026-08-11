@@ -133,6 +133,14 @@ where c.id = sqlc.arg(id);
 -- already happened and only writes.
 update cats set primary_photo_id = sqlc.arg(primary_photo_id) where id = sqlc.arg(id);
 
+-- name: UpdateCatName :exec
+-- issue #199: owner-only rename — corrects a naming mistake made at
+-- creation time without touching anything else about the cat.
+-- CatsService verifies ownership (created_by_user_id matches the caller)
+-- and trims/validates the name before ever issuing this update — this
+-- query itself trusts both already happened and only writes.
+update cats set name = sqlc.arg(name) where id = sqlc.arg(id);
+
 -- name: CatExists :one
 -- lets the updates-history endpoint 404 on an unknown cat instead of
 -- silently returning an empty page indistinguishable from "no history yet".
