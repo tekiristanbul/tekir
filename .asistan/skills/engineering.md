@@ -12,7 +12,9 @@
   `Co-Authored-By:`/`Author:` trailers referencing an ai tool.
 - backend (`backend/`, go): test with `make test`, lint with `make lint`,
   format with `make fmt` (see `backend/Makefile`).
-- app (`app/`, flutter/dart): test with `flutter test` from `app/`.
+- app (`app/`, flutter/dart): test with `flutter test`, format with
+  `dart format .` from `app/` — CI runs `dart format --set-exit-if-changed`
+  and fails the build on anything unformatted.
 - repo hooks (`git config core.hooksPath .githooks`) enforce the commit
   message rules above — assume they're active in the agent workspace.
 - when the implementation involves a non-trivial tradeoff (a real
