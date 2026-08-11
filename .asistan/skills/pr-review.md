@@ -9,6 +9,11 @@ Look for:
 - risk and scope creep
 - whether the diff matches what the task actually asked for
 - anything that reads unfinished
+- if the diff makes a non-trivial tradeoff (a real alternative existed
+  and one was picked over it), whether a decision note was added under
+  `docs/architecture/` for it, and whether that note is consistent with
+  what the diff actually does — say so explicitly in the review, calling
+  out a missing or inconsistent note
 
 End with a short verdict line:
 

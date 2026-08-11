@@ -12,3 +12,10 @@
 - app (`app/`, flutter/dart): test with `flutter test` from `app/`.
 - repo hooks (`git config core.hooksPath .githooks`) enforce the commit
   message rules above — assume they're active in the agent workspace.
+- when the implementation involves a non-trivial tradeoff (a real
+  alternative existed and you picked one over it — library choice, schema
+  shape, sync vs async, where a boundary sits), write a short decision
+  note under `docs/architecture/` using the existing one-file-per-topic
+  convention (add to the relevant topic file, or a new one if none fits).
+  state what was chosen and why, and what was ruled out. skip this for
+  routine changes with no real alternative on the table.
