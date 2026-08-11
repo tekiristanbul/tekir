@@ -232,6 +232,15 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   // a second media row.
   String _mediaIdempotencyKey = _generateIdempotencyKey();
 
+  // issue #202: bumped whenever this composer's current draft stops being
+  // "the one the user is looking at" — a fresh [reset] (opening the sheet
+  // again, for this cat or after navigating from another one) or the sheet
+  // being dismissed via [discardInFlightMediaPick]. pickPhoto/pickVideo
+  // capture the generation before their picker await and re-check it
+  // after, so a picker result that resolves once the user has moved on can
+  // never resurrect a selection into a draft nobody is looking at anymore.
+  int _generation = 0;
+
   void toggleStatus(String status) {
     if (state.isSubmitting) return;
     final next = {...state.selectedStatuses};
@@ -256,9 +265,14 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   /// sheet's picker affordance doubles as "replace" once media is showing.
   Future<void> pickPhoto(ImageSource source) async {
     if (state.isSubmitting) return;
+    final generation = _generation;
     final picked = await ImagePicker().pickImage(source: source);
     if (picked == null) return;
-    await _setPickedMedia(picked, fallbackContentType: 'image/jpeg');
+    await _setPickedMedia(
+      picked,
+      fallbackContentType: 'image/jpeg',
+      generation: generation,
+    );
   }
 
   /// Picks a video from the given source (issue #153's video support) —
@@ -268,19 +282,30 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   /// media was already picked.
   Future<void> pickVideo(ImageSource source) async {
     if (state.isSubmitting) return;
+    final generation = _generation;
     final picked = await ImagePicker().pickVideo(
       source: source,
       maxDuration: const Duration(seconds: 30),
     );
     if (picked == null) return;
-    await _setPickedMedia(picked, fallbackContentType: 'video/mp4');
+    await _setPickedMedia(
+      picked,
+      fallbackContentType: 'video/mp4',
+      generation: generation,
+    );
   }
 
   Future<void> _setPickedMedia(
     XFile picked, {
     required String fallbackContentType,
+    required int generation,
   }) async {
     final bytes = await picked.readAsBytes();
+    // The composer moved on — reset for a fresh session, or dismissed —
+    // while this pick was in flight (issue #202). Applying it now would
+    // write a selection into a draft the user isn't looking at anymore, so
+    // it's silently dropped instead.
+    if (generation != _generation) return;
     _mediaIdempotencyKey = _generateIdempotencyKey();
     state = state.copyWith(
       mediaBytes: bytes,
@@ -298,8 +323,11 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   }
 
   /// Clears any selection, draft comment, and stale error from a previous
-  /// open of the composition sheet — called when the sheet mounts so a
-  /// dismissed-without-submitting draft never leaks into the next open.
+  /// open of the composition sheet — called by the caller opening the
+  /// sheet (synchronously, before it mounts, so the very first frame can
+  /// never flash a previous open's leftover media or draft; issue #202)
+  /// so a dismissed-without-submitting draft never leaks into the next
+  /// open, for this cat or any other.
   ///
   /// Never touches an in-flight background submission, and keeps a failed
   /// attempt whole: reopening the sheet after an optimistic failure must
@@ -309,7 +337,19 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   void reset() {
     if (state.isSubmitting) return;
     if (state.pending?.status == InlineSaveStatus.failed) return;
+    _generation++;
     state = const CatUpdateComposerState();
+  }
+
+  /// Invalidates any media pick still in flight from this composer session
+  /// (issue #202), without otherwise touching state — called when the
+  /// sheet that started the pick is dismissed. Distinct from [reset]: it
+  /// must still run while a failed attempt's draft is being kept (a
+  /// dismissed sheet's own in-flight pick is never that draft — picking is
+  /// already blocked once a submission starts), so it carries no guard of
+  /// its own.
+  void discardInFlightMediaPick() {
+    _generation++;
   }
 
   /// Submits the current selection, help mark, and draft comment from the
