@@ -95,6 +95,10 @@ type fakeCatsLister struct {
 	setCoverErr error
 	// capturedSetCover mirrors captured above, for SetCatCoverPhoto.
 	capturedSetCover *repository.SetCatCoverPhotoParams
+
+	renameErr error
+	// capturedRename mirrors captured above, for UpdateCatName.
+	capturedRename *repository.UpdateCatNameParams
 }
 
 func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error) {
@@ -114,6 +118,13 @@ func (f fakeCatsLister) SetCatCoverPhoto(ctx context.Context, arg repository.Set
 		*f.capturedSetCover = arg
 	}
 	return f.setCoverErr
+}
+
+func (f fakeCatsLister) UpdateCatName(ctx context.Context, arg repository.UpdateCatNameParams) error {
+	if f.capturedRename != nil {
+		*f.capturedRename = arg
+	}
+	return f.renameErr
 }
 
 func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {
@@ -590,6 +601,122 @@ func TestCatsService_SetCoverPhoto(t *testing.T) {
 		svc := NewCatsService(fakeCatsLister{})
 
 		_, err := svc.SetCoverPhoto(context.Background(), "not-a-uuid", ownerID.String(), mediaID.String())
+		if !errors.Is(err, ErrInvalidCatID) {
+			t.Fatalf("expected ErrInvalidCatID, got %v", err)
+		}
+	})
+}
+
+func TestCatsService_RenameCat(t *testing.T) {
+	id := uuid.New()
+	ownerID := uuid.New()
+	otherID := uuid.New()
+
+	t.Run("owner renames and whitespace is trimmed", func(t *testing.T) {
+		var captured repository.UpdateCatNameParams
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				Name:            pgtype.Text{String: "tekri", Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+			capturedRename: &captured,
+		})
+
+		detail, err := svc.RenameCat(context.Background(), id.String(), ownerID.String(), "  Tekir  ")
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if !detail.IsOwner {
+			t.Errorf("expected is_owner true in the refreshed detail")
+		}
+		if uuid.UUID(captured.ID.Bytes) != id {
+			t.Errorf("expected UpdateCatName to target cat %s, got %s", id, uuid.UUID(captured.ID.Bytes))
+		}
+		if captured.Name.String != "Tekir" || !captured.Name.Valid {
+			t.Errorf("expected trimmed name %q, got %+v", "Tekir", captured.Name)
+		}
+	})
+
+	t.Run("non-owner is rejected", func(t *testing.T) {
+		var captured repository.UpdateCatNameParams
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+			capturedRename: &captured,
+		})
+
+		_, err := svc.RenameCat(context.Background(), id.String(), otherID.String(), "Tekir")
+		if !errors.Is(err, ErrNotCatOwner) {
+			t.Fatalf("expected ErrNotCatOwner, got %v", err)
+		}
+		if captured.ID.Valid {
+			t.Errorf("expected UpdateCatName never called for a non-owner")
+		}
+	})
+
+	t.Run("guest is rejected", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+		})
+
+		_, err := svc.RenameCat(context.Background(), id.String(), "", "Tekir")
+		if !errors.Is(err, ErrNotCatOwner) {
+			t.Fatalf("expected ErrNotCatOwner, got %v", err)
+		}
+	})
+
+	t.Run("empty name is rejected", func(t *testing.T) {
+		var captured repository.UpdateCatNameParams
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+			capturedRename: &captured,
+		})
+
+		_, err := svc.RenameCat(context.Background(), id.String(), ownerID.String(), "")
+		if !errors.Is(err, ErrInvalidCatName) {
+			t.Fatalf("expected ErrInvalidCatName, got %v", err)
+		}
+		if captured.ID.Valid {
+			t.Errorf("expected UpdateCatName never called for an invalid name")
+		}
+	})
+
+	t.Run("whitespace-only name is rejected", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+		})
+
+		_, err := svc.RenameCat(context.Background(), id.String(), ownerID.String(), "   ")
+		if !errors.Is(err, ErrInvalidCatName) {
+			t.Fatalf("expected ErrInvalidCatName, got %v", err)
+		}
+	})
+
+	t.Run("unknown cat", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{catErr: pgx.ErrNoRows})
+
+		_, err := svc.RenameCat(context.Background(), id.String(), ownerID.String(), "Tekir")
+		if !errors.Is(err, ErrCatNotFound) {
+			t.Fatalf("expected ErrCatNotFound, got %v", err)
+		}
+	})
+
+	t.Run("malformed cat id", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{})
+
+		_, err := svc.RenameCat(context.Background(), "not-a-uuid", ownerID.String(), "Tekir")
 		if !errors.Is(err, ErrInvalidCatID) {
 			t.Fatalf("expected ErrInvalidCatID, got %v", err)
 		}

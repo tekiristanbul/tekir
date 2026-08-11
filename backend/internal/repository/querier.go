@@ -550,6 +550,12 @@ type Querier interface {
 	// correctly. this keeps an out-of-order commit (an older update committing
 	// after a newer one) from moving a cat's displayed freshness backwards.
 	UpdateCatLastUpdateAt(ctx context.Context, arg UpdateCatLastUpdateAtParams) error
+	// issue #199: owner-only rename — corrects a naming mistake made at
+	// creation time without touching anything else about the cat.
+	// CatsService verifies ownership (created_by_user_id matches the caller)
+	// and trims/validates the name before ever issuing this update — this
+	// query itself trusts both already happened and only writes.
+	UpdateCatName(ctx context.Context, arg UpdateCatNameParams) error
 	UpdateUserDisplayName(ctx context.Context, arg UpdateUserDisplayNameParams) error
 	UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UUID, error)
 	// loads/updates the vocabulary itself (seed data only for now — there's no

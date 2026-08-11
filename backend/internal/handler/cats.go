@@ -524,6 +524,40 @@ func (h *CatsHandler) SetCover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toCatDetailResponse(detail))
 }
 
+// renameCatRequest is the body of PATCH /v1/cats/{cat_id} (issue #199).
+// DisallowUnknownFields rejects any client-supplied field beyond name,
+// mirroring setCoverRequest's own guarantee — nothing else about the cat is
+// ever alterable through this path.
+type renameCatRequest struct {
+	Name string `json:"name"`
+}
+
+// Rename answers PATCH /v1/cats/{cat_id}: the cat's own owning account
+// corrects the cat's name (issue #199) — a recovery path for a naming
+// mistake made at creation time. Only the cat's owner may do this;
+// CatsService.RenameCat re-checks created_by_user_id against the
+// authenticated caller server-side, regardless of what the client believes.
+// Nothing else about the cat (media, updates, location, ownership, or
+// unrelated timestamps) changes.
+func (h *CatsHandler) Rename(w http.ResponseWriter, r *http.Request) {
+	var req renameCatRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	user := UserFromContext(r.Context())
+	detail, err := h.cats.RenameCat(r.Context(), chi.URLParam(r, "cat_id"), user.UserID, req.Name)
+	if err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toCatDetailResponse(detail))
+}
+
 // UpdateHistory answers GET /v1/cats/{cat_id}/updates?cursor=&limit= with one
 // newest-first page of the cat's status-update history. cursor is the opaque
 // next_cursor from a previous page; limit defaults to 20 and caps at 50 so a
@@ -788,6 +822,8 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid media id"})
 	case errors.Is(err, service.ErrMediaNotInGallery):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "media not in cat gallery"})
+	case errors.Is(err, service.ErrInvalidCatName):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cat name"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 	}

@@ -115,6 +115,8 @@ type fakeCatsLister struct {
 	catMediaErr error
 
 	setCoverErr error
+
+	renameErr error
 }
 
 func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error) {
@@ -131,6 +133,10 @@ func (f fakeCatsLister) GetCatMediaByCatAndMedia(ctx context.Context, arg reposi
 
 func (f fakeCatsLister) SetCatCoverPhoto(ctx context.Context, arg repository.SetCatCoverPhotoParams) error {
 	return f.setCoverErr
+}
+
+func (f fakeCatsLister) UpdateCatName(ctx context.Context, arg repository.UpdateCatNameParams) error {
+	return f.renameErr
 }
 
 func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {
@@ -259,6 +265,7 @@ func routerFor(h *CatsHandler) http.Handler {
 func routerForWithResolver(h *CatsHandler, resolver DeviceTokenResolver, validator AccessTokenValidator) http.Handler {
 	r := chi.NewRouter()
 	r.With(OptionalBearer(validator)).Get("/v1/cats/{cat_id}", h.Detail)
+	r.With(RequireBearer(validator)).Patch("/v1/cats/{cat_id}", h.Rename)
 	r.Get("/v1/cats/{cat_id}/media", h.Media)
 	r.With(RequireBearer(validator)).Patch("/v1/cats/{cat_id}/cover", h.SetCover)
 	r.With(OptionalBearer(validator)).Get("/v1/cats/{cat_id}/updates", h.UpdateHistory)
@@ -1860,6 +1867,133 @@ func TestCatsHandler_SetCover_UnknownFields_Returns400(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()
 	req := newSetCoverRequest(uuid.New().String(), `{"media_id":"`+uuid.New().String()+`","kind":"cover"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func newRenameCatRequest(catID, body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPatch, "/v1/cats/"+catID, strings.NewReader(body))
+	return withBearerToken(req)
+}
+
+func TestCatsHandler_Rename_Success(t *testing.T) {
+	catID := uuid.New()
+	ownerID := uuid.MustParse(defaultTestUserID)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:              pgtype.UUID{Bytes: catID, Valid: true},
+			Name:            pgtype.Text{String: "tekri", Valid: true},
+			CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newRenameCatRequest(catID.String(), `{"name":"  Tekir  "}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body catDetailResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !body.IsOwner {
+		t.Error("expected is_owner true for the cat's own owner")
+	}
+}
+
+func TestCatsHandler_Rename_NotOwner_Returns403(t *testing.T) {
+	catID := uuid.New()
+	realOwner := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:              pgtype.UUID{Bytes: catID, Valid: true},
+			CreatedByUserID: pgtype.UUID{Bytes: realOwner, Valid: true},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newRenameCatRequest(catID.String(), `{"name":"Tekir"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Rename_EmptyName_Returns400(t *testing.T) {
+	catID := uuid.New()
+	ownerID := uuid.MustParse(defaultTestUserID)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{
+			ID:              pgtype.UUID{Bytes: catID, Valid: true},
+			CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newRenameCatRequest(catID.String(), `{"name":"   "}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Rename_NotFound_Returns404(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{catErr: pgx.ErrNoRows}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newRenameCatRequest(uuid.New().String(), `{"name":"Tekir"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Rename_InvalidCatID_Returns400(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newRenameCatRequest("not-a-uuid", `{"name":"Tekir"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Rename_RequiresBearer(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/cats/"+uuid.New().String(), strings.NewReader(`{"name":"Tekir"}`))
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Rename_MalformedJSON(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newRenameCatRequest(uuid.New().String(), `{"name":`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Rename_UnknownFields_Returns400(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := newRenameCatRequest(uuid.New().String(), `{"name":"Tekir","created_by_user_id":"`+uuid.New().String()+`"}`)
 	routerFor(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {

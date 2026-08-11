@@ -14,6 +14,7 @@ define the core thing shown on the map: the cat.
 - cats can be deleted only by admins. ordinary users cannot delete a cat.
 - the minimum information to add a cat is a photo and a location. a user-provided name is optional.
 - when no name is provided, the product may assign a friendly random name. photo-based ai name suggestions are a later enhancement, not an mvp requirement.
+- the cat's creator may correct the name after creation (issue #199) — a recovery path for a naming mistake, not a general-purpose profile editor. no other cat field is editable through this path.
 - permanent personality traits are not collected during cat creation and are not treated as authoritative cat-profile data. different people may experience the same cat differently.
 - behavioral observations such as playful, shy, or friendly belong in update comments ([[updates]]). future ai-generated summary labels may be derived from accumulated observations, but they must remain summaries rather than a single user's permanent classification.
 - strongly identifying physical information should help users recognize that they opened the correct cat.
