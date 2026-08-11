@@ -1,0 +1,16 @@
+name: developer
+
+runtime:
+  type: claude-code
+
+tools:
+  - Edit
+  - Write
+  - "Bash(git:*)"
+  - "Bash(go:*)"
+  - "Bash(make:*)"
+  - "Bash(flutter:*)"
+  - "Bash(dart:*)"
+
+skills:
+  - engineering

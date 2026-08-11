@@ -1,0 +1,31 @@
+version: v1
+name: tekir-change
+
+repo:
+  url: https://github.com/tekiristanbul/tekir.git
+  defaultRevision: main
+  publish:
+    branchPrefix: asistan
+    identity:
+      name: asistan
+      email: 315691971+asistanio@users.noreply.github.com
+
+steps:
+  - name: implement
+    agent: developer
+
+  - name: review
+    agent: reviewer
+    needs:
+      - implement
+
+  - name: approve
+    type: approval
+    needs:
+      - review
+
+  - name: complete
+    type: builtin
+    action: complete
+    needs:
+      - approve
