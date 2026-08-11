@@ -471,6 +471,35 @@ void main() {
   );
 
   testWidgets(
+    'dismissing the sheet with a picked photo, unsubmitted, never leaks it '
+    'into the next open — not even for the very first frame (issue #202)',
+    (tester) async {
+      fakePlatform.nextFile = XFile.fromData(
+        _validPngBytes,
+        name: 'photo.png',
+        path: 'photo.png',
+      );
+      await _pump(tester, api: _FakeCatDetailApi());
+      await _openComposer(tester);
+      await _pickPhoto(tester);
+      expect(find.byKey(const Key('removePhotoButton')), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Kapat'));
+      await tester.pumpAndSettle();
+      expect(find.byType(CatUpdateSheet), findsNothing);
+
+      // Reopen, but only pump the one frame that mounts the sheet — an
+      // earlier implementation reset the draft in a post-mount microtask,
+      // so this exact frame used to still render the previous open's
+      // picked photo before that reset landed on the next frame.
+      await tester.tap(find.widgetWithText(ElevatedButton, '+ update'));
+      await tester.pump();
+
+      expect(find.byKey(const Key('removePhotoButton')), findsNothing);
+    },
+  );
+
+  testWidgets(
     'multi-selecting statuses enables submit, and comment is optional',
     (tester) async {
       final api = _FakeCatDetailApi()

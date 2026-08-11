@@ -1277,11 +1277,18 @@ class _UpdateBar extends ConsumerWidget {
       ref,
       contextText: 'Güncelleme paylaşmak için giriş yap',
       intent: AnalyticsAuthIntent.ordinaryUpdate,
-      onAuthenticated: () => unawaited(_openComposer(context)),
+      onAuthenticated: () => unawaited(_openComposer(context, ref)),
     );
   }
 
-  Future<void> _openComposer(BuildContext context) async {
+  Future<void> _openComposer(BuildContext context, WidgetRef ref) async {
+    // Reset synchronously, before the sheet ever mounts (issue #202) — a
+    // dismissed-without-submitting draft, including any picked media, must
+    // never be visible even for a single frame of a fresh open, whether
+    // that's this same cat again or (via each cat's own composer instance)
+    // a different one. See CatUpdateComposerNotifier.reset's own doc for
+    // why a failed attempt's draft is the one exception kept whole.
+    ref.read(catUpdateComposerProvider(catId).notifier).reset();
     final result = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,

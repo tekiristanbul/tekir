@@ -46,22 +46,26 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
   @override
   void initState() {
     super.initState();
-    // A previous open dismissed without submitting (or a stale error from
-    // one) must not leak into this fresh open. A failed optimistic attempt
-    // is the exception — reset() keeps that draft, and the field text is
-    // restored from it here so the retained comment is actually visible
-    // ("data is never lost").
-    Future.microtask(() {
-      if (!mounted) return;
-      ref.read(catUpdateComposerProvider(widget.catId).notifier).reset();
-      _commentController.text = ref
-          .read(catUpdateComposerProvider(widget.catId))
-          .comment;
-    });
+    // The caller opening this sheet already reset the composer
+    // synchronously before showing it (issue #202 — doing it here instead,
+    // after mount, left a one-frame window where a previous open's
+    // leftover media or draft could flash before clearing). A failed
+    // optimistic attempt is the exception — reset() keeps that draft, so
+    // the field text is seeded from it here to make the retained comment
+    // actually visible ("data is never lost").
+    _commentController.text = ref
+        .read(catUpdateComposerProvider(widget.catId))
+        .comment;
   }
 
   @override
   void dispose() {
+    // A media pick started in this session (photo or video) but still
+    // awaiting the picker when the sheet closes must never resolve into a
+    // draft nobody is looking at anymore (issue #202).
+    ref
+        .read(catUpdateComposerProvider(widget.catId).notifier)
+        .discardInFlightMediaPick();
     _commentController.dispose();
     super.dispose();
   }
