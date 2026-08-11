@@ -2,7 +2,10 @@
 
 - keep changes small and scoped to the task.
 - prefer editing existing files over adding new abstractions.
-- write tests for behavior you change.
+- write tests for behavior you change — test first: write the test, watch
+  it fail for the right reason, then write the minimal code to pass it.
+  a test written after the code already passes on the first run proves
+  nothing about whether it would have caught the bug.
 - leave the codebase in a state you would want to review.
 - follow `CONTRIBUTING.md`: commit subject `<type>: description`, lowercase
   after the colon, 50 chars max, english only. never add ai-attribution or
