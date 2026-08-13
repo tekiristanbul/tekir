@@ -43,9 +43,17 @@ enum _MediaPick { cameraPhoto, cameraVideo, galleryPhoto, galleryVideo }
 class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
   final TextEditingController _commentController = TextEditingController();
 
+  /// Held from initState because dispose() needs it: `ref` reads a
+  /// BuildContext, and riverpod refuses one from a widget that is already
+  /// unmounting. catUpdateComposerProvider is a plain (non-autoDispose)
+  /// family, so the notifier outlives this sheet and stays safe to call
+  /// from dispose().
+  late final CatUpdateComposerNotifier _composer;
+
   @override
   void initState() {
     super.initState();
+    _composer = ref.read(catUpdateComposerProvider(widget.catId).notifier);
     // The caller opening this sheet already reset the composer
     // synchronously before showing it (issue #202 — doing it here instead,
     // after mount, left a one-frame window where a previous open's
@@ -63,9 +71,7 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
     // A media pick started in this session (photo or video) but still
     // awaiting the picker when the sheet closes must never resolve into a
     // draft nobody is looking at anymore (issue #202).
-    ref
-        .read(catUpdateComposerProvider(widget.catId).notifier)
-        .discardInFlightMediaPick();
+    _composer.discardInFlightMediaPick();
     _commentController.dispose();
     super.dispose();
   }
