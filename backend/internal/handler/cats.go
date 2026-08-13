@@ -558,6 +558,22 @@ func (h *CatsHandler) Rename(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toCatDetailResponse(detail))
 }
 
+// Delete answers DELETE /v1/cats/{cat_id}: the cat's own owning account
+// soft-deletes it (issue #200) — a terminal state with no restore/
+// reactivate flow. CatsService.DeleteCat re-checks created_by_user_id
+// against the authenticated caller server-side, regardless of what the
+// client believes, and treats a retry against an already-deleted cat as a
+// safe no-op rather than an error, so this handler always answers 204 on
+// success, first call or repeated.
+func (h *CatsHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if err := h.cats.DeleteCat(r.Context(), chi.URLParam(r, "cat_id"), user.UserID); err != nil {
+		writeCatsServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // UpdateHistory answers GET /v1/cats/{cat_id}/updates?cursor=&limit= with one
 // newest-first page of the cat's status-update history. cursor is the opaque
 // next_cursor from a previous page; limit defaults to 20 and caps at 50 so a

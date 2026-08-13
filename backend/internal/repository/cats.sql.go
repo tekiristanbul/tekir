@@ -12,11 +12,18 @@ import (
 )
 
 const catExists = `-- name: CatExists :one
-select exists(select 1 from cats where id = $1) as exists
+select exists(select 1 from cats where id = $1 and status != 'deleted') as exists
 `
 
 // lets the updates-history endpoint 404 on an unknown cat instead of
 // silently returning an empty page indistinguishable from "no history yet".
+// status != 'deleted' (issue #200) folds a soft-deleted cat into the same
+// "doesn't exist" outcome for every caller of this query — the media
+// archive read, the updates-history read, and the ordinary/needs-help
+// update write paths all stop seeing a deleted cat as a valid target, since
+// deletion is terminal and none of those are the map/nearby/discovery/
+// detail surfaces this issue names but are still "active listing/query
+// surfaces" a deleted cat must not remain reachable through.
 func (q *Queries) CatExists(ctx context.Context, id pgtype.UUID) (bool, error) {
 	row := q.db.QueryRow(ctx, catExists, id)
 	var exists bool
@@ -163,7 +170,7 @@ left join lateral (
   order by u.created_at desc, u.seq desc
   limit 1
 ) water on true
-where c.id = $1
+where c.id = $1 and c.status != 'deleted'
 `
 
 type GetCatByIDRow struct {
@@ -199,6 +206,11 @@ type GetCatByIDRow struct {
 // every other read path. created_by_user_id (issue #156) lets CatsService
 // derive is_owner without a second query — a pre-#70 seed cat has it null,
 // so is_owner is always false for one, matching that no account can own it.
+// status != 'deleted' (issue #200) makes a soft-deleted cat's detail read
+// answer exactly like an unknown id (ErrCatNotFound -> 404) — deletion is
+// terminal, never relaxed even for the cat's own owner. This same predicate
+// is what makes Rename/SetCoverPhoto (both fetch ownership through this
+// query) refuse to mutate a deleted cat too, at no extra cost.
 func (q *Queries) GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error) {
 	row := q.db.QueryRow(ctx, getCatByID, id)
 	var i GetCatByIDRow
@@ -265,6 +277,26 @@ func (q *Queries) GetCatByIdempotencyKey(ctx context.Context, arg GetCatByIdempo
 		&i.Lng,
 		&i.Lat,
 	)
+	return i, err
+}
+
+const getCatOwnershipForDelete = `-- name: GetCatOwnershipForDelete :one
+select id, created_by_user_id, status from cats where id = $1
+`
+
+type GetCatOwnershipForDeleteRow struct {
+	ID              pgtype.UUID `json:"id"`
+	CreatedByUserID pgtype.UUID `json:"created_by_user_id"`
+	Status          string      `json:"status"`
+}
+
+// called only when SoftDeleteCat affects 0 rows, to disambiguate why:
+// unknown id (404), someone else's cat (403), or an already-deleted cat
+// (treated as an idempotent-success retry by the service, not an error).
+func (q *Queries) GetCatOwnershipForDelete(ctx context.Context, id pgtype.UUID) (GetCatOwnershipForDeleteRow, error) {
+	row := q.db.QueryRow(ctx, getCatOwnershipForDelete, id)
+	var i GetCatOwnershipForDeleteRow
+	err := row.Scan(&i.ID, &i.CreatedByUserID, &i.Status)
 	return i, err
 }
 
@@ -659,6 +691,37 @@ type SetCatCoverPhotoParams struct {
 func (q *Queries) SetCatCoverPhoto(ctx context.Context, arg SetCatCoverPhotoParams) error {
 	_, err := q.db.Exec(ctx, setCatCoverPhoto, arg.PrimaryPhotoID, arg.ID)
 	return err
+}
+
+const softDeleteCat = `-- name: SoftDeleteCat :one
+update cats
+set status = 'deleted'
+where id = $1
+  and created_by_user_id = $2
+  and status != 'deleted'
+returning id
+`
+
+type SoftDeleteCatParams struct {
+	ID              pgtype.UUID `json:"id"`
+	CreatedByUserID pgtype.UUID `json:"created_by_user_id"`
+}
+
+// issue #200: owner-initiated, terminal soft delete of a cat — no restore/
+// reactivate flow exists in this version. Same atomic-conditional-update
+// shape DeleteOwnUpdate already established (docs/architecture/db.md):
+// authorization (created_by_user_id match) and the "not already deleted"
+// guard are both part of the one conditional statement, so a concurrent
+// retry can't race past either check. Returns 0 rows when the cat doesn't
+// exist, isn't owned by the caller, or is already deleted;
+// CatsService.DeleteCat disambiguates a 0-row outcome via
+// GetCatOwnershipForDelete, exactly like DeleteOwnUpdate uses
+// GetUpdateForCorrectionCheck.
+func (q *Queries) SoftDeleteCat(ctx context.Context, arg SoftDeleteCatParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, softDeleteCat, arg.ID, arg.CreatedByUserID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const updateCatLastUpdateAt = `-- name: UpdateCatLastUpdateAt :exec

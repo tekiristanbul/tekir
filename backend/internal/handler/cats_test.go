@@ -117,6 +117,12 @@ type fakeCatsLister struct {
 	setCoverErr error
 
 	renameErr error
+
+	softDeleteRow pgtype.UUID
+	softDeleteErr error
+
+	ownershipForDeleteRow repository.GetCatOwnershipForDeleteRow
+	ownershipForDeleteErr error
 }
 
 func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error) {
@@ -137,6 +143,14 @@ func (f fakeCatsLister) SetCatCoverPhoto(ctx context.Context, arg repository.Set
 
 func (f fakeCatsLister) UpdateCatName(ctx context.Context, arg repository.UpdateCatNameParams) error {
 	return f.renameErr
+}
+
+func (f fakeCatsLister) SoftDeleteCat(ctx context.Context, arg repository.SoftDeleteCatParams) (pgtype.UUID, error) {
+	return f.softDeleteRow, f.softDeleteErr
+}
+
+func (f fakeCatsLister) GetCatOwnershipForDelete(ctx context.Context, id pgtype.UUID) (repository.GetCatOwnershipForDeleteRow, error) {
+	return f.ownershipForDeleteRow, f.ownershipForDeleteErr
 }
 
 func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {
@@ -266,6 +280,7 @@ func routerForWithResolver(h *CatsHandler, resolver DeviceTokenResolver, validat
 	r := chi.NewRouter()
 	r.With(OptionalBearer(validator)).Get("/v1/cats/{cat_id}", h.Detail)
 	r.With(RequireBearer(validator)).Patch("/v1/cats/{cat_id}", h.Rename)
+	r.With(RequireBearer(validator)).Delete("/v1/cats/{cat_id}", h.Delete)
 	r.Get("/v1/cats/{cat_id}/media", h.Media)
 	r.With(RequireBearer(validator)).Patch("/v1/cats/{cat_id}/cover", h.SetCover)
 	r.With(OptionalBearer(validator)).Get("/v1/cats/{cat_id}/updates", h.UpdateHistory)
@@ -2022,6 +2037,131 @@ func TestCatsHandler_Rename_UnknownFields_Returns400(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ── Delete (DELETE /v1/cats/{cat_id}, issue #200) ─────
+
+func newDeleteCatRequest(catID string) *http.Request {
+	req := httptest.NewRequest(http.MethodDelete, "/v1/cats/"+catID, nil)
+	return withBearerToken(req)
+}
+
+func TestCatsHandler_Delete_Success_Returns204(t *testing.T) {
+	catID := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		softDeleteRow: pgtype.UUID{Bytes: catID, Valid: true},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newDeleteCatRequest(catID.String())
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCatsHandler_Delete_RetryAfterDelete_StillReturns204 proves a repeated
+// delete against a cat the caller already deleted answers 204, not an
+// error — the same idempotent-retry convention DELETE
+// /v1/cats/{cat_id}/updates/{update_id} already established.
+func TestCatsHandler_Delete_RetryAfterDelete_StillReturns204(t *testing.T) {
+	catID := uuid.New()
+	ownerID := uuid.MustParse(defaultTestUserID)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		softDeleteErr: pgx.ErrNoRows,
+		ownershipForDeleteRow: repository.GetCatOwnershipForDeleteRow{
+			ID:              pgtype.UUID{Bytes: catID, Valid: true},
+			CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			Status:          "deleted",
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newDeleteCatRequest(catID.String())
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on a retried delete, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Delete_NotOwner_Returns403(t *testing.T) {
+	catID := uuid.New()
+	realOwner := uuid.New()
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		softDeleteErr: pgx.ErrNoRows,
+		ownershipForDeleteRow: repository.GetCatOwnershipForDeleteRow{
+			ID:              pgtype.UUID{Bytes: catID, Valid: true},
+			CreatedByUserID: pgtype.UUID{Bytes: realOwner, Valid: true},
+			Status:          "active",
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newDeleteCatRequest(catID.String())
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Delete_UnknownCat_Returns404(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		softDeleteErr:         pgx.ErrNoRows,
+		ownershipForDeleteErr: pgx.ErrNoRows,
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newDeleteCatRequest(uuid.New().String())
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Delete_InvalidCatID_Returns400(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newDeleteCatRequest("not-a-uuid")
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatsHandler_Delete_RequiresBearer(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/v1/cats/"+uuid.New().String(), nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCatsHandler_Detail_DeletedCat_Returns404 proves a deleted cat's detail
+// read answers exactly like an unknown id (issue #200: "direct access to a
+// deleted cat behaves as 404 not found"). GetCatByID's own where clause
+// excludes status = 'deleted' at the query level (see db/queries/cats.sql),
+// so from CatsService's perspective this is indistinguishable from
+// pgx.ErrNoRows — the same fake-store shape TestCatsHandler_Rename_NotFound_Returns404
+// already uses for "no such cat".
+func TestCatsHandler_Detail_DeletedCat_Returns404(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{catErr: pgx.ErrNoRows}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/"+uuid.New().String(), nil)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

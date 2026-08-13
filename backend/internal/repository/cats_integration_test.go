@@ -352,3 +352,102 @@ func TestStore_ListNearbyCatsForDuplicateCheck(t *testing.T) {
 		t.Error("expected an inactive cat within the radius not to be returned")
 	}
 }
+
+// TestStore_SoftDeleteCat covers issue #200's terminal soft delete end to
+// end against a real database: the owner's delete succeeds and is
+// idempotent on retry, a non-owner's attempt affects zero rows, no row is
+// ever physically removed (cats, its media, and its updates all survive),
+// and the two read paths the issue names — GetCatByID (detail) and
+// CatExists (the media/updates-history/write-path existence gate) — both
+// stop seeing the cat once it's deleted.
+func TestStore_SoftDeleteCat(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set, skipping integration test")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+	store := repository.NewStore(pool)
+
+	ownerID := createTestUser(t, ctx, store)
+	otherID := createTestUser(t, ctx, store)
+
+	created, err := store.CreateCatWithMedia(ctx, newCreateCatWithMediaParams(ownerID, 40.98, 29.03, pgtype.Text{}))
+	if err != nil {
+		t.Fatalf("create cat: %v", err)
+	}
+	catID := created.Cat.ID
+
+	// a non-owner's delete attempt must affect zero rows and leave the cat
+	// exactly as it was.
+	if _, err := store.SoftDeleteCat(ctx, repository.SoftDeleteCatParams{ID: catID, CreatedByUserID: otherID}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected pgx.ErrNoRows for a non-owner delete, got %v", err)
+	}
+	stillActive, err := store.GetCatOwnershipForDelete(ctx, catID)
+	if err != nil {
+		t.Fatalf("get ownership after rejected delete: %v", err)
+	}
+	if stillActive.Status != "active" {
+		t.Fatalf("expected status to remain active after a non-owner delete attempt, got %q", stillActive.Status)
+	}
+
+	// the owner's delete succeeds.
+	deletedID, err := store.SoftDeleteCat(ctx, repository.SoftDeleteCatParams{ID: catID, CreatedByUserID: ownerID})
+	if err != nil {
+		t.Fatalf("owner delete: %v", err)
+	}
+	if deletedID != catID {
+		t.Fatalf("expected SoftDeleteCat to return %v, got %v", catID, deletedID)
+	}
+
+	// no physical deletion: the row survives with status = 'deleted'.
+	afterDelete, err := store.GetCatOwnershipForDelete(ctx, catID)
+	if err != nil {
+		t.Fatalf("get ownership after delete: %v", err)
+	}
+	if afterDelete.Status != "deleted" {
+		t.Fatalf("expected status = deleted, got %q", afterDelete.Status)
+	}
+	if afterDelete.CreatedByUserID != ownerID {
+		t.Fatalf("expected created_by_user_id to survive deletion unchanged")
+	}
+	var mediaCount, catMediaCount int
+	if err := pool.QueryRow(ctx, "select count(*) from media where id = $1", created.Media.ID).Scan(&mediaCount); err != nil {
+		t.Fatalf("count media: %v", err)
+	}
+	if mediaCount != 1 {
+		t.Errorf("expected the cat's cover media row to survive deletion, found %d", mediaCount)
+	}
+	if err := pool.QueryRow(ctx, "select count(*) from cat_media where cat_id = $1", catID).Scan(&catMediaCount); err != nil {
+		t.Fatalf("count cat_media: %v", err)
+	}
+	if catMediaCount != 1 {
+		t.Errorf("expected the cat's cat_media archive row to survive deletion, found %d", catMediaCount)
+	}
+
+	// a repeated delete by the same owner is a safe no-op: zero rows
+	// affected (nothing left to transition), never an error surfaced to
+	// the caller by this query itself — CatsService.DeleteCat is what turns
+	// this specific zero-rows outcome into a successful idempotent retry.
+	if _, err := store.SoftDeleteCat(ctx, repository.SoftDeleteCatParams{ID: catID, CreatedByUserID: ownerID}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected pgx.ErrNoRows on a repeated delete, got %v", err)
+	}
+
+	// the detail read (GetCatByID) and the shared existence gate (CatExists,
+	// backing the media archive, updates history, and update-write paths)
+	// both now treat the cat as not found.
+	if _, err := store.GetCatByID(ctx, catID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected GetCatByID to answer pgx.ErrNoRows for a deleted cat, got %v", err)
+	}
+	exists, err := store.CatExists(ctx, catID)
+	if err != nil {
+		t.Fatalf("cat exists: %v", err)
+	}
+	if exists {
+		t.Error("expected CatExists to report false for a deleted cat")
+	}
+}

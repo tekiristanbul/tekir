@@ -11,7 +11,7 @@ define the core thing shown on the map: the cat.
 - every mvp cat record represents one individual cat. colonies or groups are not modeled.
 - adding a cat should not be blocked by duplicate-detection warnings. if two people add what looks like the same cat, contribution continues; duplicate cats can be merged later through an admin workflow.
 - duplicate merge selects one canonical cat, moves updates, media, and follows to it, and leaves a redirect or tombstone for the duplicate record. duplicate records are not silently hard-deleted.
-- cats can be deleted only by admins. ordinary users cannot delete a cat.
+- the cat's creator may soft-delete a cat they created by mistake (issue #200) — a terminal state in this version, with no restore/reactivate flow. moderator/admin-initiated deletion of a cat the caller doesn't own remains out of scope for this slice; see [[trust]].
 - the minimum information to add a cat is a photo and a location. a user-provided name is optional.
 - when no name is provided, the product may assign a friendly random name. photo-based ai name suggestions are a later enhancement, not an mvp requirement.
 - the cat's creator may correct the name after creation (issue #199) — a recovery path for a naming mistake, not a general-purpose profile editor. no other cat field is editable through this path.
@@ -30,7 +30,8 @@ define the core thing shown on the map: the cat.
 ## out of scope
 
 - automatic ai naming in mvp.
-- user-controlled cat deletion.
+- restoring or reactivating a soft-deleted cat.
+- moderator/admin-initiated deletion of a cat the caller doesn't own.
 - permanent user-selected personality traits.
 - colony or group records.
 - automatic profile-image promotion.

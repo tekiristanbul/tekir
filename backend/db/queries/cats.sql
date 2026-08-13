@@ -73,6 +73,11 @@ order by c.created_at desc;
 -- every other read path. created_by_user_id (issue #156) lets CatsService
 -- derive is_owner without a second query — a pre-#70 seed cat has it null,
 -- so is_owner is always false for one, matching that no account can own it.
+-- status != 'deleted' (issue #200) makes a soft-deleted cat's detail read
+-- answer exactly like an unknown id (ErrCatNotFound -> 404) — deletion is
+-- terminal, never relaxed even for the cat's own owner. This same predicate
+-- is what makes Rename/SetCoverPhoto (both fetch ownership through this
+-- query) refuse to mutate a deleted cat too, at no extra cost.
 select
   c.id,
   c.name,
@@ -123,7 +128,7 @@ left join lateral (
   order by u.created_at desc, u.seq desc
   limit 1
 ) water on true
-where c.id = sqlc.arg(id);
+where c.id = sqlc.arg(id) and c.status != 'deleted';
 
 -- name: SetCatCoverPhoto :exec
 -- issue #156: switches a cat's cover to an existing entry from its own
@@ -144,7 +149,14 @@ update cats set name = sqlc.arg(name) where id = sqlc.arg(id);
 -- name: CatExists :one
 -- lets the updates-history endpoint 404 on an unknown cat instead of
 -- silently returning an empty page indistinguishable from "no history yet".
-select exists(select 1 from cats where id = sqlc.arg(id)) as exists;
+-- status != 'deleted' (issue #200) folds a soft-deleted cat into the same
+-- "doesn't exist" outcome for every caller of this query — the media
+-- archive read, the updates-history read, and the ordinary/needs-help
+-- update write paths all stop seeing a deleted cat as a valid target, since
+-- deletion is terminal and none of those are the map/nearby/discovery/
+-- detail surfaces this issue names but are still "active listing/query
+-- surfaces" a deleted cat must not remain reachable through.
+select exists(select 1 from cats where id = sqlc.arg(id) and status != 'deleted') as exists;
 
 -- name: UpdateCatLastUpdateAt :exec
 -- issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
@@ -317,3 +329,27 @@ where needs_help_expires_at is not null
   )
 order by distance_m asc, id asc
 limit sqlc.arg(row_limit);
+
+-- name: SoftDeleteCat :one
+-- issue #200: owner-initiated, terminal soft delete of a cat — no restore/
+-- reactivate flow exists in this version. Same atomic-conditional-update
+-- shape DeleteOwnUpdate already established (docs/architecture/db.md):
+-- authorization (created_by_user_id match) and the "not already deleted"
+-- guard are both part of the one conditional statement, so a concurrent
+-- retry can't race past either check. Returns 0 rows when the cat doesn't
+-- exist, isn't owned by the caller, or is already deleted;
+-- CatsService.DeleteCat disambiguates a 0-row outcome via
+-- GetCatOwnershipForDelete, exactly like DeleteOwnUpdate uses
+-- GetUpdateForCorrectionCheck.
+update cats
+set status = 'deleted'
+where id = sqlc.arg(id)
+  and created_by_user_id = sqlc.arg(created_by_user_id)
+  and status != 'deleted'
+returning id;
+
+-- name: GetCatOwnershipForDelete :one
+-- called only when SoftDeleteCat affects 0 rows, to disambiguate why:
+-- unknown id (404), someone else's cat (403), or an already-deleted cat
+-- (treated as an idempotent-success retry by the service, not an error).
+select id, created_by_user_id, status from cats where id = sqlc.arg(id);

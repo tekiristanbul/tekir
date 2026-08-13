@@ -40,6 +40,7 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.Get("/v1/cats/discover", cats.Discover)
 	r.With(handler.OptionalBearer(accessTokens)).Get("/v1/cats/{cat_id}", cats.Detail)
 	r.With(handler.RequireBearer(accessTokens)).Patch("/v1/cats/{cat_id}", cats.Rename)
+	r.With(handler.RequireBearer(accessTokens)).Delete("/v1/cats/{cat_id}", cats.Delete)
 	r.Get("/v1/cats/{cat_id}/media", cats.Media)
 	r.With(handler.RequireBearer(accessTokens)).Patch("/v1/cats/{cat_id}/cover", cats.SetCover)
 	r.With(handler.OptionalBearer(accessTokens)).Get("/v1/cats/{cat_id}/updates", cats.UpdateHistory)
