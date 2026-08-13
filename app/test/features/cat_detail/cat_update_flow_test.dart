@@ -497,14 +497,20 @@ void main() {
 
       expect(find.byKey(const Key('removePhotoButton')), findsNothing);
 
-      // Drive the reopened sheet's still-mid-flight entrance transition to
-      // completion before the test ends. Left running, that ticking
-      // AnimationController survives into the next test in this file (the
-      // widget tree persists across testWidgets bodies) and gets ticked
-      // there against a freshly reset clock, producing a negative-elapsed
-      // assertion in the framework's animation code — not a real bug in
-      // the app, just an unsettled animation leaking across tests.
+      // Close the reopened sheet and let its exit transition fully finish
+      // before the test ends. Settling the entrance transition alone
+      // (#215) still left the modal route itself — and the
+      // AnimationController it owns — mounted on the navigator when the
+      // test returned; only a real pop drives that route to `dispose()`.
+      // Left mounted, that controller survives into the next test in this
+      // file (the widget tree persists across testWidgets bodies) and
+      // gets ticked there against a freshly reset clock, producing a
+      // negative-elapsed assertion in the framework's animation code —
+      // not a real bug in the app, just an unsettled route leaking across
+      // tests.
+      await tester.tap(find.byTooltip('Kapat'));
       await tester.pumpAndSettle();
+      expect(find.byType(CatUpdateSheet), findsNothing);
     },
   );
 
