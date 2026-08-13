@@ -3,6 +3,18 @@
 Review the change the developer step left in the workspace. Read the actual
 diff before writing anything — no guessing from the task description alone.
 
+Your workspace is mounted read-only: reading files and running
+`git diff`/`git log`/`git show` works, writing does not. That is
+deliberate — review must not change what ships. Report problems; do not
+fix them.
+
+It also means you cannot run `flutter test` or `make test` yourself: both
+write build output into the workspace. Judge from the diff and from the
+evidence the developer step reported. If that evidence is missing, partial
+("the new test passes" is not "the test file passes"), or does not match
+the diff, say so explicitly and return `needs-human-approval` — an
+unverified claim is a review finding, not a detail.
+
 Look for:
 
 - bugs and correctness issues

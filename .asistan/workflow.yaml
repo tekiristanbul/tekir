@@ -11,15 +11,25 @@ repo:
       email: 315691971+asistanio@users.noreply.github.com
 
 steps:
+  - name: analyze
+    agent: developer
+
+  - name: approve-plan
+    type: approval
+    needs:
+      - analyze
+
   - name: implement
     agent: developer
+    needs:
+      - approve-plan
 
   - name: review
     agent: reviewer
     needs:
       - implement
 
-  - name: approve
+  - name: approve-change
     type: approval
     needs:
       - review
@@ -28,4 +38,4 @@ steps:
     type: builtin
     action: complete
     needs:
-      - approve
+      - approve-change
