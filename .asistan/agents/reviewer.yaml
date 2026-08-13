@@ -1,7 +1,9 @@
 name: reviewer
 
 runtime:
-  type: codex
+  type: claude-code
+
+workspace: read-only
 
 tools:
   - "Bash(git diff:*)"
