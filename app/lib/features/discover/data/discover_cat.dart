@@ -32,6 +32,18 @@ class DiscoverCat {
 
   bool get needsHelp => activeAlert != null;
 
+  DiscoverCat copyWith({String? name}) {
+    return DiscoverCat(
+      id: id,
+      name: name ?? this.name,
+      primaryPhoto: primaryPhoto,
+      areaLabel: areaLabel,
+      distanceMeters: distanceMeters,
+      activeAlert: activeAlert,
+      lastUpdateAt: lastUpdateAt,
+    );
+  }
+
   factory DiscoverCat.fromJson(Map<String, dynamic> json) {
     final rawLastUpdate = json['last_update_at'] as String?;
     final rawActiveAlert = json['active_alert'] as Map<String, dynamic>?;

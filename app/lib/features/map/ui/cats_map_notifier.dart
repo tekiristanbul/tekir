@@ -140,6 +140,24 @@ class CatsMapNotifier extends Notifier<CatsMapState> {
     state = state.copyWith(clearSelectedMarker: true);
   }
 
+  /// Patches [catId]'s marker name in place (issue #230) — [build]'s empty
+  /// state fetches nothing, so invalidating this provider after a rename
+  /// (as issue #227 originally did) discarded whatever viewport was already
+  /// loaded instead of refreshing it. A no-op for any cat not currently
+  /// loaded, including while [selectedMarker] is open on it.
+  void renameCat(String catId, String name) {
+    final selected = state.selectedMarker;
+    state = state.copyWith(
+      markers: [
+        for (final marker in state.markers)
+          marker.id == catId ? marker.copyWith(name: name) : marker,
+      ],
+      selectedMarker: selected != null && selected.id == catId
+          ? selected.copyWith(name: name)
+          : selected,
+    );
+  }
+
   /// Drops [catId]'s marker from state in place (issue #228's delete
   /// flow) — never a re-fetch/invalidate, since this notifier's own
   /// build() fetches nothing: invalidating would empty the map instead of

@@ -317,6 +317,32 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
     }
   }
 
+  /// Patches [catId]'s name in place across all three tabs (issue #230) —
+  /// [build]'s empty state fetches nothing, so invalidating this provider
+  /// after a rename (as issue #227 originally did) discarded whatever tab
+  /// data was already loaded instead of refreshing it. A no-op wherever
+  /// [catId] isn't currently loaded.
+  void renameCat(String catId, String name) {
+    DiscoverLocationTabState patch(DiscoverLocationTabState tab) =>
+        tab.copyWith(
+          cats: [
+            for (final cat in tab.cats)
+              cat.id == catId ? cat.copyWith(name: name) : cat,
+          ],
+        );
+
+    state = state.copyWith(
+      nearby: patch(state.nearby),
+      needsHelp: patch(state.needsHelp),
+      following: state.following.copyWith(
+        cats: [
+          for (final cat in state.following.cats)
+            cat.id == catId ? cat.copyWith(name: name) : cat,
+        ],
+      ),
+    );
+  }
+
   /// Drops [catId] from every tab's already-loaded list in place (issue
   /// #228's delete flow) — never invalidate/re-fetch, since this
   /// notifier's own build() fetches nothing: invalidating would empty

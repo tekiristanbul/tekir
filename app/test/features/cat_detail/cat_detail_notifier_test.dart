@@ -517,8 +517,9 @@ void main() {
       expect(state.detail?.name, 'boncuk');
     });
 
-    test('invalidates catsMapProvider and discoverProvider, the same shape '
-        'setCoverPhoto uses for catMediaProvider', () async {
+    test('patches catsMapProvider and discoverProvider in place instead of '
+        'invalidating them, so neither loses what it already had loaded '
+        '(issue #230)', () async {
       final api = _FakeCatDetailApi(
         detail: _detail,
         updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
@@ -529,14 +530,16 @@ void main() {
       final notifier = container.read(catDetailProvider(_catId).notifier);
       await notifier.load();
 
-      // Push both providers into a non-default state first, so a reset
-      // back to their build()-time default is observable evidence that
-      // renameCat actually invalidated them.
+      // Seed a selected marker for this same cat and a non-default
+      // discover tab. Invalidating (the pre-#230 bug) would reset both
+      // back to build()'s empty defaults; an in-place patch leaves them
+      // as they were, only with the new name.
       container
           .read(catsMapProvider.notifier)
           .selectCat(
             const CatMarker(
-              id: 'other-cat',
+              id: _catId,
+              name: 'tekir',
               primaryPhoto: '',
               lat: 41.0,
               lng: 29.0,
@@ -545,11 +548,6 @@ void main() {
       container
           .read(discoverProvider.notifier)
           .selectTab(DiscoverTab.following);
-      expect(container.read(catsMapProvider).selectedMarker, isNotNull);
-      expect(
-        container.read(discoverProvider).selectedTab,
-        DiscoverTab.following,
-      );
 
       api.renameResult = CatDetail(
         id: _catId,
@@ -565,8 +563,11 @@ void main() {
 
       await notifier.renameCat('boncuk');
 
-      expect(container.read(catsMapProvider).selectedMarker, isNull);
-      expect(container.read(discoverProvider).selectedTab, DiscoverTab.nearby);
+      expect(container.read(catsMapProvider).selectedMarker?.name, 'boncuk');
+      expect(
+        container.read(discoverProvider).selectedTab,
+        DiscoverTab.following,
+      );
     });
 
     test('a failure propagates to the caller, state left untouched', () async {

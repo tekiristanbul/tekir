@@ -238,4 +238,42 @@ void main() {
       expect(api._pending, isEmpty);
     });
   });
+
+  test('renameCat patches the matching marker in place, leaving the rest of '
+      'the loaded viewport untouched (issue #230)', () async {
+    const other = CatMarker(id: 'cat-2', primaryPhoto: '', lat: 41, lng: 29);
+    final api = _ControllableCatsApi();
+    final container = ProviderContainer(
+      overrides: [catsApiProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+
+    final notifier = container.read(catsMapProvider.notifier);
+    final fetch = notifier.fetchForBounds(_boundsA);
+    api.resolve(_boundsA, const [_cat, other]);
+    await fetch;
+    notifier.selectCat(_cat);
+
+    notifier.renameCat('cat-1', 'boncuk');
+
+    final state = container.read(catsMapProvider);
+    expect(state.markers.map((m) => m.name), ['boncuk', '']);
+    expect(state.selectedMarker?.name, 'boncuk');
+    expect(state.hasLoadedOnce, isTrue);
+  });
+
+  test('renameCat is a no-op when the cat is not currently loaded', () async {
+    final container = ProviderContainer(
+      overrides: [catsApiProvider.overrideWithValue(_ControllableCatsApi())],
+    );
+    addTearDown(container.dispose);
+
+    final notifier = container.read(catsMapProvider.notifier);
+    notifier.renameCat('unknown-cat', 'boncuk');
+
+    final state = container.read(catsMapProvider);
+    expect(state.markers, isEmpty);
+    expect(state.selectedMarker, isNull);
+    expect(state.hasLoadedOnce, isFalse);
+  });
 }

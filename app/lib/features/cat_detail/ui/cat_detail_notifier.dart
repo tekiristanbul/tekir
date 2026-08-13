@@ -234,16 +234,16 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
   /// made at creation time. Only the cat's own owner ever sees the
   /// affordance that calls this; the server re-checks ownership regardless
   /// of what the client believes. Replaces [CatDetailState.detail] with the
-  /// server-refreshed detail (its own name) and invalidates
-  /// [catsMapProvider]/[discoverProvider] — the same shape [setCoverPhoto]
-  /// above uses for [catMediaProvider] — so the map and discover surfaces
-  /// pick up the new name on their next load rather than staying stale
-  /// until some unrelated refetch.
+  /// server-refreshed detail (its own name) and patches the same name into
+  /// [catsMapProvider]/[discoverProvider] in place (issue #230) — unlike
+  /// [catMediaProvider] above, those two providers' `build()` fetches
+  /// nothing, so invalidating them would discard whatever the map/discover
+  /// screens already had loaded instead of refreshing it.
   Future<void> renameCat(String name) async {
     final updated = await ref.read(catDetailApiProvider).renameCat(catId, name);
     state = state.copyWith(detail: updated);
-    ref.invalidate(catsMapProvider);
-    ref.invalidate(discoverProvider);
+    ref.read(catsMapProvider.notifier).renameCat(catId, name);
+    ref.read(discoverProvider.notifier).renameCat(catId, name);
   }
 
   /// Deletes the cat (issue #228) — a terminal soft delete (#200): no

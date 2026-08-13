@@ -309,4 +309,77 @@ void main() {
       expect(api.calls, 1);
     });
   });
+
+  test('renameCat patches the matching cat in place across all three tabs, '
+      'leaving the rest of the loaded lists untouched (issue #230)', () async {
+    final location = _FakeLocationService(_resolved);
+    final api = _FakeDiscoverApi([
+      const DiscoverPage(
+        items: [
+          DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 5),
+          DiscoverCat(id: 'cat-2', primaryPhoto: '', distanceMeters: 10),
+        ],
+      ),
+      const DiscoverPage(
+        items: [DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 5)],
+      ),
+    ]);
+    final container = ProviderContainer(
+      overrides: [
+        sessionIdentityServiceProvider.overrideWithValue(
+          _FakeSessionIdentityService(),
+        ),
+        followsApiProvider.overrideWithValue(
+          _FollowsApiWith([
+            const CatMarker(id: 'cat-1', primaryPhoto: '', lat: 41, lng: 29),
+          ]),
+        ),
+        discoverLocationServiceProvider.overrideWithValue(location),
+        discoverApiProvider.overrideWithValue(api),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final notifier = container.read(discoverProvider.notifier);
+    await notifier.ensureNearbyLoaded();
+    await notifier.ensureNeedsHelpLoaded();
+    await notifier.loadFollowing();
+
+    notifier.renameCat('cat-1', 'boncuk');
+
+    final state = container.read(discoverProvider);
+    expect(state.nearby.cats.map((c) => c.name), ['boncuk', '']);
+    expect(state.needsHelp.cats.single.name, 'boncuk');
+    expect(state.following.cats.single.name, 'boncuk');
+  });
+
+  test('renameCat is a no-op when the cat is not currently loaded', () async {
+    final location = _FakeLocationService(_resolved);
+    final api = _FakeDiscoverApi([const DiscoverPage(items: [])]);
+    final container = _buildContainer(location: location, discoverApi: api);
+    addTearDown(container.dispose);
+
+    final notifier = container.read(discoverProvider.notifier);
+    notifier.renameCat('unknown-cat', 'boncuk');
+
+    final state = container.read(discoverProvider);
+    expect(state.nearby.cats, isEmpty);
+    expect(state.needsHelp.cats, isEmpty);
+    expect(state.following.cats, isEmpty);
+  });
+}
+
+class _FollowsApiWith implements FollowsApi {
+  _FollowsApiWith(this.cats);
+
+  final List<CatMarker> cats;
+
+  @override
+  Future<void> follow(String catId) async {}
+
+  @override
+  Future<void> unfollow(String catId) async {}
+
+  @override
+  Future<List<CatMarker>> fetchFollows() async => cats;
 }
