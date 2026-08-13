@@ -496,6 +496,15 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(const Key('removePhotoButton')), findsNothing);
+
+      // Drive the reopened sheet's still-mid-flight entrance transition to
+      // completion before the test ends. Left running, that ticking
+      // AnimationController survives into the next test in this file (the
+      // widget tree persists across testWidgets bodies) and gets ticked
+      // there against a freshly reset clock, producing a negative-elapsed
+      // assertion in the framework's animation code — not a real bug in
+      // the app, just an unsettled animation leaking across tests.
+      await tester.pumpAndSettle();
     },
   );
 

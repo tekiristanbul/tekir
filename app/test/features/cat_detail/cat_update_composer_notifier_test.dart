@@ -1348,37 +1348,34 @@ void main() {
       },
     );
 
-    test(
-      'a photo pick that resolves after reset() (reopening the sheet) is '
-      'discarded, never resurrected into the fresh draft',
-      () async {
-        final container = _containerWith(_FakeCatDetailApi());
-        addTearDown(container.dispose);
-        final notifier = container.read(
-          catUpdateComposerProvider(_catId).notifier,
-        );
-        fakePlatform.nextFile = XFile.fromData(
-          Uint8List.fromList([1, 2, 3]),
-          name: 'photo.jpg',
-          path: 'photo.jpg',
-        );
-        fakePlatform.gate = Completer<void>();
+    test('a photo pick that resolves after reset() (reopening the sheet) is '
+        'discarded, never resurrected into the fresh draft', () async {
+      final container = _containerWith(_FakeCatDetailApi());
+      addTearDown(container.dispose);
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      fakePlatform.gate = Completer<void>();
 
-        final pick = notifier.pickPhoto(ImageSource.gallery);
+      final pick = notifier.pickPhoto(ImageSource.gallery);
 
-        // The caller opening the sheet again (issue #202: cat_detail_screen's
-        // _openComposer, called synchronously before the sheet mounts) resets
-        // the draft while the pick from the previous open is still in flight.
-        notifier.reset();
-        fakePlatform.gate!.complete();
-        await pick;
+      // The caller opening the sheet again (issue #202: cat_detail_screen's
+      // _openComposer, called synchronously before the sheet mounts) resets
+      // the draft while the pick from the previous open is still in flight.
+      notifier.reset();
+      fakePlatform.gate!.complete();
+      await pick;
 
-        expect(
-          container.read(catUpdateComposerProvider(_catId)).mediaBytes,
-          isNull,
-        );
-      },
-    );
+      expect(
+        container.read(catUpdateComposerProvider(_catId)).mediaBytes,
+        isNull,
+      );
+    });
 
     test(
       'a video pick that resolves after reset() is discarded the same way',
@@ -1409,59 +1406,53 @@ void main() {
       },
     );
 
-    test(
-      'a pick that resolves after the sheet is dismissed '
-      '(discardInFlightMediaPick) is discarded',
-      () async {
-        final container = _containerWith(_FakeCatDetailApi());
-        addTearDown(container.dispose);
-        final notifier = container.read(
-          catUpdateComposerProvider(_catId).notifier,
-        );
-        fakePlatform.nextFile = XFile.fromData(
-          Uint8List.fromList([1, 2, 3]),
-          name: 'photo.jpg',
-          path: 'photo.jpg',
-        );
-        fakePlatform.gate = Completer<void>();
+    test('a pick that resolves after the sheet is dismissed '
+        '(discardInFlightMediaPick) is discarded', () async {
+      final container = _containerWith(_FakeCatDetailApi());
+      addTearDown(container.dispose);
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      fakePlatform.gate = Completer<void>();
 
-        final pick = notifier.pickPhoto(ImageSource.gallery);
+      final pick = notifier.pickPhoto(ImageSource.gallery);
 
-        // Mirrors CatUpdateSheet.dispose() closing without a submission
-        // while the picker is still awaited.
-        notifier.discardInFlightMediaPick();
-        fakePlatform.gate!.complete();
-        await pick;
+      // Mirrors CatUpdateSheet.dispose() closing without a submission
+      // while the picker is still awaited.
+      notifier.discardInFlightMediaPick();
+      fakePlatform.gate!.complete();
+      await pick;
 
-        expect(
-          container.read(catUpdateComposerProvider(_catId)).mediaBytes,
-          isNull,
-        );
-      },
-    );
+      expect(
+        container.read(catUpdateComposerProvider(_catId)).mediaBytes,
+        isNull,
+      );
+    });
 
-    test(
-      'a pick that resolves before any reset applies normally',
-      () async {
-        final container = _containerWith(_FakeCatDetailApi());
-        addTearDown(container.dispose);
-        final notifier = container.read(
-          catUpdateComposerProvider(_catId).notifier,
-        );
-        fakePlatform.nextFile = XFile.fromData(
-          Uint8List.fromList([1, 2, 3]),
-          name: 'photo.jpg',
-          path: 'photo.jpg',
-        );
-        fakePlatform.gate = null;
+    test('a pick that resolves before any reset applies normally', () async {
+      final container = _containerWith(_FakeCatDetailApi());
+      addTearDown(container.dispose);
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      fakePlatform.gate = null;
 
-        await notifier.pickPhoto(ImageSource.gallery);
+      await notifier.pickPhoto(ImageSource.gallery);
 
-        expect(
-          container.read(catUpdateComposerProvider(_catId)).mediaBytes,
-          isNotNull,
-        );
-      },
-    );
+      expect(
+        container.read(catUpdateComposerProvider(_catId)).mediaBytes,
+        isNotNull,
+      );
+    });
   });
 }
