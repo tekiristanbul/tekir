@@ -45,6 +45,7 @@ select
   cm.created_at,
   m.url,
   m.content_type,
+  m.muted,
   coalesce(c.primary_photo_id = cm.media_id, false) as is_cover,
   uu.display_name as uploader_display_name
 from cat_media cm

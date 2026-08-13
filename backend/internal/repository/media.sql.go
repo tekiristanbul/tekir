@@ -12,10 +12,10 @@ import (
 )
 
 const createMedia = `-- name: CreateMedia :one
-insert into media (id, object_key, url, content_type, byte_size, uploaded_by_user_id, uploaded_by_device_id, idempotency_key)
-values ($1, $2, $3, $4, $5, $6, $7, $8)
+insert into media (id, object_key, url, content_type, byte_size, uploaded_by_user_id, uploaded_by_device_id, idempotency_key, muted)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 on conflict (uploaded_by_user_id, idempotency_key) where idempotency_key is not null do nothing
-returning id, object_key, url, content_type, byte_size, uploaded_by_user_id, uploaded_by_device_id, idempotency_key, created_at
+returning id, object_key, url, content_type, byte_size, uploaded_by_user_id, uploaded_by_device_id, idempotency_key, created_at, muted
 `
 
 type CreateMediaParams struct {
@@ -27,11 +27,16 @@ type CreateMediaParams struct {
 	UploadedByUserID   pgtype.UUID `json:"uploaded_by_user_id"`
 	UploadedByDeviceID pgtype.UUID `json:"uploaded_by_device_id"`
 	IdempotencyKey     pgtype.Text `json:"idempotency_key"`
+	Muted              bool        `json:"muted"`
 }
 
 // issue #70: uploaded_by_user_id is required (resolved from the
 // authenticated bearer session, never client-supplied); uploaded_by_device_id
 // is optional (X-Device-Token, installation/abuse-control association only).
+// muted (issue #194) is caller-supplied, defaulting true at the handler
+// when the uploader sends nothing — it never falls back to the column's own
+// default here, so a retried idempotent request and a fresh one behave
+// identically.
 // idempotent by construction: on conflict do nothing on the partial
 // (uploaded_by_user_id, idempotency_key) unique index means a retried
 // upload with the same key never creates a second row — no row comes back
@@ -47,6 +52,7 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) (Mediu
 		arg.UploadedByUserID,
 		arg.UploadedByDeviceID,
 		arg.IdempotencyKey,
+		arg.Muted,
 	)
 	var i Medium
 	err := row.Scan(
@@ -59,12 +65,13 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) (Mediu
 		&i.UploadedByDeviceID,
 		&i.IdempotencyKey,
 		&i.CreatedAt,
+		&i.Muted,
 	)
 	return i, err
 }
 
 const getMediaByID = `-- name: GetMediaByID :one
-select id, object_key, url, content_type, byte_size, uploaded_by_user_id, uploaded_by_device_id, idempotency_key, created_at from media where id = $1
+select id, object_key, url, content_type, byte_size, uploaded_by_user_id, uploaded_by_device_id, idempotency_key, created_at, muted from media where id = $1
 `
 
 func (q *Queries) GetMediaByID(ctx context.Context, id pgtype.UUID) (Medium, error) {
@@ -80,12 +87,13 @@ func (q *Queries) GetMediaByID(ctx context.Context, id pgtype.UUID) (Medium, err
 		&i.UploadedByDeviceID,
 		&i.IdempotencyKey,
 		&i.CreatedAt,
+		&i.Muted,
 	)
 	return i, err
 }
 
 const getMediaByIdempotencyKey = `-- name: GetMediaByIdempotencyKey :one
-select id, object_key, url, content_type, byte_size, uploaded_by_user_id, uploaded_by_device_id, idempotency_key, created_at from media where uploaded_by_user_id = $1 and idempotency_key = $2
+select id, object_key, url, content_type, byte_size, uploaded_by_user_id, uploaded_by_device_id, idempotency_key, created_at, muted from media where uploaded_by_user_id = $1 and idempotency_key = $2
 `
 
 type GetMediaByIdempotencyKeyParams struct {
@@ -106,6 +114,7 @@ func (q *Queries) GetMediaByIdempotencyKey(ctx context.Context, arg GetMediaById
 		&i.UploadedByDeviceID,
 		&i.IdempotencyKey,
 		&i.CreatedAt,
+		&i.Muted,
 	)
 	return i, err
 }

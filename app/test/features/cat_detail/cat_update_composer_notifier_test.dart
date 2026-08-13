@@ -135,6 +135,7 @@ class _FakeCatDetailApi implements CatDetailApi {
   Object? uploadError;
   CatUpdateEntry? nextResult;
   String uploadedMediaId = 'media-1';
+  bool? lastMediaMuted;
 
   @override
   Future<CatDetail> fetchDetail(String catId) async => _detail;
@@ -169,11 +170,13 @@ class _FakeCatDetailApi implements CatDetailApi {
     required Uint8List mediaBytes,
     required String mediaFilename,
     required String idempotencyKey,
+    required bool muted,
     void Function(int sent, int total)? onSendProgress,
   }) async {
     uploadMediaCalls++;
     lastMediaBytes = mediaBytes;
     lastMediaFilename = mediaFilename;
+    lastMediaMuted = muted;
     lastMediaUploadIdempotencyKey = idempotencyKey;
     mediaUploadIdempotencyKeysSeen.add(idempotencyKey);
     final event = uploadProgressEvent;
@@ -460,6 +463,75 @@ void main() {
     },
   );
 
+  test(
+    'a picked video defaults to muted (issue #194 product decision)',
+    () async {
+      final container = _containerWith(_FakeCatDetailApi());
+      addTearDown(container.dispose);
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'clip.mp4',
+        path: 'clip.mp4',
+        mimeType: 'video/mp4',
+      );
+
+      await notifier.pickVideo(ImageSource.gallery);
+
+      expect(
+        container.read(catUpdateComposerProvider(_catId)).mediaMuted,
+        isTrue,
+      );
+    },
+  );
+
+  test('toggleMuted flips the composer state, and a fresh pick resets it '
+      'back to muted', () async {
+    final container = _containerWith(_FakeCatDetailApi());
+    addTearDown(container.dispose);
+    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([1, 2, 3]),
+      name: 'clip.mp4',
+      path: 'clip.mp4',
+      mimeType: 'video/mp4',
+    );
+    await notifier.pickVideo(ImageSource.gallery);
+
+    notifier.toggleMuted();
+    expect(
+      container.read(catUpdateComposerProvider(_catId)).mediaMuted,
+      isFalse,
+    );
+    notifier.toggleMuted();
+    expect(
+      container.read(catUpdateComposerProvider(_catId)).mediaMuted,
+      isTrue,
+    );
+
+    notifier.toggleMuted();
+    expect(
+      container.read(catUpdateComposerProvider(_catId)).mediaMuted,
+      isFalse,
+    );
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([4, 5, 6]),
+      name: 'clip2.mp4',
+      path: 'clip2.mp4',
+      mimeType: 'video/mp4',
+    );
+    await notifier.pickVideo(ImageSource.gallery);
+    expect(
+      container.read(catUpdateComposerProvider(_catId)).mediaMuted,
+      isTrue,
+      reason:
+          'a fresh pick is a new attempt and must not inherit the '
+          'previous pick\'s unmuted toggle',
+    );
+  });
+
   test('pickVideo without a mime type falls back to video/mp4', () async {
     final container = _containerWith(_FakeCatDetailApi());
     addTearDown(container.dispose);
@@ -666,6 +738,54 @@ void main() {
       expect(container.read(catUpdateComposerProvider(_catId)).pending, isNull);
     },
   );
+
+  test(
+    'a submit sends the composer\'s current mute state to the upload '
+    '(issue #194): muted by default, unmuted when explicitly toggled',
+    () async {
+      final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+      await container.read(catDetailProvider(_catId).notifier).load();
+      final notifier = container.read(
+        catUpdateComposerProvider(_catId).notifier,
+      );
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'clip.mp4',
+        path: 'clip.mp4',
+        mimeType: 'video/mp4',
+      );
+      await notifier.pickVideo(ImageSource.gallery);
+      notifier.toggleStatus('seen');
+
+      await notifier.submit();
+
+      expect(api.lastMediaMuted, isTrue);
+    },
+  );
+
+  test('a submit sends muted=false once the composer\'s toggle explicitly '
+      'opts into audio (issue #194)', () async {
+    final api = _FakeCatDetailApi()..nextResult = _entry('upd-1');
+    final container = _containerWith(api);
+    addTearDown(container.dispose);
+    await container.read(catDetailProvider(_catId).notifier).load();
+    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([1, 2, 3]),
+      name: 'clip.mp4',
+      path: 'clip.mp4',
+      mimeType: 'video/mp4',
+    );
+    await notifier.pickVideo(ImageSource.gallery);
+    notifier.toggleMuted();
+    notifier.toggleStatus('seen');
+
+    await notifier.submit();
+
+    expect(api.lastMediaMuted, isFalse);
+  });
 
   test(
     'a photo upload drives progress while the sheet stays synchronous',

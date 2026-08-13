@@ -288,11 +288,36 @@ void main() {
         mediaBytes: Uint8List.fromList([1, 2, 3]),
         mediaFilename: 'photo.jpg',
         idempotencyKey: 'upload-1',
+        muted: true,
       );
 
       expect(mediaId, 'media-1');
       expect(adapter.lastOptions?.path, '/v1/media');
       expect(adapter.lastOptions?.headers['Idempotency-Key'], 'upload-1');
+    });
+
+    // issue #194: the composer's mute/unmute toggle must actually reach
+    // the server as the multipart body's own "muted" field, not just live
+    // as client-side state.
+    test('sends the muted field in the multipart body', () async {
+      final adapter = _FakeAdapter(
+        statusCode: 201,
+        bodyJson: {'media_id': 'media-1', 'url': 'https://x/clip.mp4'},
+      );
+      final api = _apiWith(adapter);
+
+      await api.uploadMedia(
+        mediaBytes: Uint8List.fromList([1, 2, 3]),
+        mediaFilename: 'clip.mp4',
+        idempotencyKey: 'upload-1',
+        muted: false,
+      );
+
+      expect(
+        adapter.lastRequestBody,
+        contains('content-disposition: form-data; name="muted"'),
+      );
+      expect(adapter.lastRequestBody, contains('\r\nfalse\r\n'));
     });
 
     test('413 maps to UpdateMediaTooLargeException', () async {
@@ -305,6 +330,7 @@ void main() {
           mediaBytes: Uint8List.fromList([1]),
           mediaFilename: 'photo.jpg',
           idempotencyKey: 'upload-1',
+          muted: true,
         ),
         throwsA(isA<UpdateMediaTooLargeException>()),
       );
@@ -323,6 +349,7 @@ void main() {
           mediaBytes: Uint8List.fromList([1]),
           mediaFilename: 'photo.jpg',
           idempotencyKey: 'upload-1',
+          muted: true,
         ),
         throwsA(isA<UpdateMediaUnsupportedException>()),
       );

@@ -164,6 +164,9 @@ type updateResponse struct {
 	// conditions as PhotoURL; the client checks whether it starts with
 	// "video/" to render a video player instead of an image widget.
 	MediaContentType *string `json:"media_content_type"`
+	// MediaMuted (issue #194) is null under the same conditions as
+	// PhotoURL — every video playback surface honors it.
+	MediaMuted *bool `json:"media_muted"`
 	// AuthorIsMe/CorrectionExpiresAt (issue #80): on GET
 	// /v1/cats/{cat_id}/updates (OptionalBearer), both stay their zero
 	// value (false/null) for a guest read. This same struct also backs
@@ -464,10 +467,13 @@ func toCatDetailResponse(detail service.CatDetail) catDetailResponse {
 // updateResponse's own media_content_type — the client uses its
 // `video/`/`image/` prefix to pick the thumbnail/viewer and to hide the
 // "make cover" action for a video entry, which can never become the cover.
+// MediaMuted (issue #194) mirrors updateResponse's own media_muted — every
+// video playback surface honors it.
 type catMediaResponse struct {
 	ID                  string    `json:"id"`
 	URL                 string    `json:"url"`
 	MediaContentType    string    `json:"media_content_type"`
+	MediaMuted          bool      `json:"media_muted"`
 	IsCover             bool      `json:"is_cover"`
 	CreatedAt           time.Time `json:"created_at"`
 	UploaderDisplayName *string   `json:"uploader_display_name"`
@@ -484,7 +490,7 @@ func (h *CatsHandler) Media(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]catMediaResponse, 0, len(items))
 	for _, m := range items {
-		resp = append(resp, catMediaResponse{ID: m.ID, URL: m.URL, MediaContentType: m.ContentType, IsCover: m.IsCover, CreatedAt: m.CreatedAt, UploaderDisplayName: m.UploaderDisplayName})
+		resp = append(resp, catMediaResponse{ID: m.ID, URL: m.URL, MediaContentType: m.ContentType, MediaMuted: m.Muted, IsCover: m.IsCover, CreatedAt: m.CreatedAt, UploaderDisplayName: m.UploaderDisplayName})
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -624,6 +630,7 @@ func toUpdateResponse(u service.CatUpdate) updateResponse {
 		AuthorDisplayName:      u.AuthorDisplayName,
 		PhotoURL:               u.PhotoURL,
 		MediaContentType:       u.MediaContentType,
+		MediaMuted:             u.MediaMuted,
 		AuthorIsMe:             u.AuthorIsMe,
 		CorrectionExpiresAt:    u.CorrectionExpiresAt,
 	}

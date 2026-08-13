@@ -304,6 +304,7 @@ select
   u.needs_help_expires_at,
   um.url as photo_url,
   um.content_type as media_content_type,
+  um.muted as media_muted,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
@@ -311,7 +312,7 @@ left join media um on um.id = u.media_id
 where u.author_user_id = $1
   and u.idempotency_key = $2
   and u.kind = 'ordinary'
-group by u.id, um.url, um.content_type
+group by u.id, um.url, um.content_type, um.muted
 `
 
 type GetUpdateByIdempotencyKeyParams struct {
@@ -328,6 +329,7 @@ type GetUpdateByIdempotencyKeyRow struct {
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	PhotoUrl           pgtype.Text        `json:"photo_url"`
 	MediaContentType   pgtype.Text        `json:"media_content_type"`
+	MediaMuted         pgtype.Bool        `json:"media_muted"`
 	Statuses           []string           `json:"statuses"`
 }
 
@@ -350,6 +352,7 @@ func (q *Queries) GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateBy
 		&i.NeedsHelpExpiresAt,
 		&i.PhotoUrl,
 		&i.MediaContentType,
+		&i.MediaMuted,
 		&i.Statuses,
 	)
 	return i, err
@@ -421,6 +424,7 @@ select
   u.needs_help_expires_at,
   um.url as photo_url,
   um.content_type as media_content_type,
+  um.muted as media_muted,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
@@ -433,7 +437,7 @@ where u.cat_id = $1
     or u.created_at < $2::timestamptz
     or (u.created_at = $2::timestamptz and u.seq < $3::bigint)
   )
-group by u.id, au.display_name, um.url, um.content_type
+group by u.id, au.display_name, um.url, um.content_type, um.muted
 order by u.created_at desc, u.seq desc
 limit $4::int
 `
@@ -458,6 +462,7 @@ type ListCatUpdatesRow struct {
 	NeedsHelpExpiresAt pgtype.Timestamptz `json:"needs_help_expires_at"`
 	PhotoUrl           pgtype.Text        `json:"photo_url"`
 	MediaContentType   pgtype.Text        `json:"media_content_type"`
+	MediaMuted         pgtype.Bool        `json:"media_muted"`
 	Statuses           []string           `json:"statuses"`
 }
 
@@ -486,7 +491,9 @@ type ListCatUpdatesRow struct {
 // #153's video support) is the same row's media.content_type, null under
 // the same conditions as photo_url — the client uses it to tell an
 // attached video (a "video/*" content type) apart from a photo so it can
-// render a video player instead of an image widget.
+// render a video player instead of an image widget. media_muted (issue
+// #194) is the same row's media.muted, null under the same conditions —
+// every video playback surface honors it.
 func (q *Queries) ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) ([]ListCatUpdatesRow, error) {
 	rows, err := q.db.Query(ctx, listCatUpdates,
 		arg.CatID,
@@ -514,6 +521,7 @@ func (q *Queries) ListCatUpdates(ctx context.Context, arg ListCatUpdatesParams) 
 			&i.NeedsHelpExpiresAt,
 			&i.PhotoUrl,
 			&i.MediaContentType,
+			&i.MediaMuted,
 			&i.Statuses,
 		); err != nil {
 			return nil, err

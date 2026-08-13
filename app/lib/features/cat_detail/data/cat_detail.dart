@@ -95,7 +95,9 @@ class CatDetail {
 /// exactly that entry. [mediaContentType] (issue #179) mirrors
 /// [CatUpdateEntry.mediaContentType] — [isVideoMedia] is the derived check
 /// the gallery grid/detail view reads instead of comparing this prefix
-/// itself, exactly like the timeline already does.
+/// itself, exactly like the timeline already does. [mediaMuted] (issue
+/// #194) is the uploader's own stored audio choice — every video playback
+/// surface honors it; meaningless for a photo entry.
 class CatMediaItem {
   const CatMediaItem({
     required this.id,
@@ -104,6 +106,7 @@ class CatMediaItem {
     required this.createdAt,
     this.uploaderDisplayName,
     this.mediaContentType,
+    this.mediaMuted = true,
   });
 
   final String id;
@@ -112,6 +115,7 @@ class CatMediaItem {
   final DateTime createdAt;
   final String? uploaderDisplayName;
   final String? mediaContentType;
+  final bool mediaMuted;
 
   bool get isVideoMedia => mediaContentType?.startsWith('video/') ?? false;
 
@@ -123,6 +127,7 @@ class CatMediaItem {
       createdAt: DateTime.parse(json['created_at'] as String),
       uploaderDisplayName: json['uploader_display_name'] as String?,
       mediaContentType: json['media_content_type'] as String?,
+      mediaMuted: json['media_muted'] as bool? ?? true,
     );
   }
 }
@@ -157,6 +162,7 @@ class CatUpdateEntry {
     this.authorDisplayName,
     this.photoUrl,
     this.mediaContentType,
+    this.mediaMuted,
   });
 
   final String id;
@@ -189,6 +195,11 @@ class CatUpdateEntry {
   /// Whether [photoUrl] — when set — points at a video rather than an
   /// image, per the server's `media_content_type` (issue #153).
   bool get isVideoMedia => mediaContentType?.startsWith('video/') ?? false;
+
+  /// The attached video's stored audio choice (issue #194), null under the
+  /// same conditions as [photoUrl] — every video playback surface honors
+  /// it. Meaningless for a photo attachment.
+  final bool? mediaMuted;
 
   /// Server-derived (issue #80): true only when this entry was returned to
   /// its own author's authenticated read of `GET .../updates` — always
@@ -241,6 +252,7 @@ class CatUpdateEntry {
       authorDisplayName: json['author_display_name'] as String?,
       photoUrl: json['photo_url'] as String?,
       mediaContentType: json['media_content_type'] as String?,
+      mediaMuted: json['media_muted'] as bool?,
     );
   }
 }

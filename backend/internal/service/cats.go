@@ -505,6 +505,10 @@ type CatUpdate struct {
 	// client checks whether this starts with "video/" to render a video
 	// player instead of an image widget.
 	MediaContentType *string
+	// MediaMuted (issue #194) is the same media row's muted flag, nil
+	// under the same conditions as PhotoURL — every video playback
+	// surface in the app honors it.
+	MediaMuted *bool
 
 	// NeedsHelp (issue #101) is the flag itself — the field 0.2 clients
 	// read. The four fields below are populated exactly when it is true:
@@ -838,6 +842,14 @@ func textPtr(t pgtype.Text) *string {
 	return &s
 }
 
+func boolPtr(b pgtype.Bool) *bool {
+	if !b.Valid {
+		return nil
+	}
+	v := b.Bool
+	return &v
+}
+
 // authorDisplayNameFor looks up authorUserID's current users.display_name,
 // mirroring what ListCatUpdates' join already returns — needed on the
 // create paths below because CreateOrdinaryUpdateParams' INSERT ... RETURNING
@@ -960,11 +972,13 @@ func isCatOwner(ownerID pgtype.UUID, callerUserID string) bool {
 // a display name, never when the uploader is unknown. ContentType (issue
 // #179) mirrors CatUpdate's own MediaContentType — the client derives
 // video-vs-photo from its `video/`/`image/` prefix instead of guessing
-// from the url.
+// from the url. Muted (issue #194) mirrors CatUpdate's own MediaMuted —
+// every video playback surface in the app honors it.
 type CatMediaItem struct {
 	ID                  string
 	URL                 string
 	ContentType         string
+	Muted               bool
 	IsCover             bool
 	CreatedAt           time.Time
 	UploaderDisplayName *string
@@ -997,6 +1011,7 @@ func (s *CatsService) ListCatMedia(ctx context.Context, id string) ([]CatMediaIt
 			ID:                  uuid.UUID(r.ID.Bytes).String(),
 			URL:                 r.Url,
 			ContentType:         r.ContentType,
+			Muted:               r.Muted,
 			IsCover:             r.IsCover,
 			CreatedAt:           r.CreatedAt.Time,
 			UploaderDisplayName: textPtr(r.UploaderDisplayName),
@@ -1251,6 +1266,7 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 			AuthorDisplayName: textPtr(r.AuthorDisplayName),
 			PhotoURL:          textPtr(r.PhotoUrl),
 			MediaContentType:  textPtr(r.MediaContentType),
+			MediaMuted:        boolPtr(r.MediaMuted),
 		}
 		if r.NeedsHelp {
 			category := needsHelpCompatCategory
@@ -1436,6 +1452,7 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 	if media != nil {
 		result.PhotoURL = &media.Url
 		result.MediaContentType = &media.ContentType
+		result.MediaMuted = &media.Muted
 	}
 	if needsHelp {
 		category := needsHelpCompatCategory
@@ -1511,6 +1528,7 @@ func (s *CatsService) fetchIdempotentOrdinaryUpdate(ctx context.Context, authorU
 		AuthorDisplayName:   authorDisplayName,
 		PhotoURL:            textPtr(row.PhotoUrl),
 		MediaContentType:    textPtr(row.MediaContentType),
+		MediaMuted:          boolPtr(row.MediaMuted),
 	}
 	if row.NeedsHelp {
 		category := needsHelpCompatCategory
@@ -1959,6 +1977,12 @@ func (s *CatsService) Create(ctx context.Context, userID, deviceID string, idemp
 			ByteSize:           int32(len(processed.data)),
 			UploadedByUserID:   ownerUUID,
 			UploadedByDeviceID: authorDeviceID,
+			// This pipeline never accepts video (mediaPipeline.maxVideoBytes
+			// is 0 here) — muted is meaningless for the cat's own creation
+			// photo, but set true regardless so the column's application-
+			// level default stays consistent everywhere a row is created,
+			// not just at POST /v1/media.
+			Muted: true,
 		},
 		Cat: repository.CreateCatParams{
 			ID:                pgtype.UUID{Bytes: uuid.New(), Valid: true},

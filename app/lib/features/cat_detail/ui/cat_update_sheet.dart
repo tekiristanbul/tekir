@@ -270,6 +270,7 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
                 _MediaPicker(
                   mediaBytes: state.mediaBytes,
                   isVideo: state.isVideoMedia,
+                  muted: state.mediaMuted,
                   uploading: state.isSubmitting,
                   uploadProgress: state.uploadProgress,
                   onPick: state.isSubmitting ? null : _chooseMediaSource,
@@ -280,7 +281,30 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
                               catUpdateComposerProvider(widget.catId).notifier,
                             )
                             .removeMedia(),
+                  onToggleMuted: state.isSubmitting
+                      ? null
+                      : () => ref
+                            .read(
+                              catUpdateComposerProvider(widget.catId).notifier,
+                            )
+                            .toggleMuted(),
                 ),
+                // issue #194: the selected mute/unmute state must be
+                // visible before upload, not just inferable from the
+                // badge's icon — spelled out in text right beside the
+                // picker whenever a video is attached.
+                if (state.isVideoMedia) ...[
+                  const SizedBox(height: AppSpacing.s2),
+                  Text(
+                    state.mediaMuted
+                        ? 'Video sessiz paylaşılacak'
+                        : 'Video sesli paylaşılacak',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.muted,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.s4),
                 const Text(
                   'Yorum (opsiyonel)',
@@ -503,18 +527,28 @@ class _MediaPicker extends StatelessWidget {
   const _MediaPicker({
     required this.mediaBytes,
     required this.isVideo,
+    required this.muted,
     required this.uploading,
     required this.uploadProgress,
     required this.onPick,
     required this.onRemove,
+    required this.onToggleMuted,
   });
 
   final Uint8List? mediaBytes;
   final bool isVideo;
+
+  /// Whether the picked video will publish with sound (issue #194) —
+  /// meaningless while [isVideo] is false. Defaults to muted; the
+  /// mute/unmute badge below is this state made visible before upload,
+  /// per the product requirement that the selected state be clear ahead
+  /// of submit.
+  final bool muted;
   final bool uploading;
   final double? uploadProgress;
   final VoidCallback? onPick;
   final VoidCallback? onRemove;
+  final VoidCallback? onToggleMuted;
 
   @override
   Widget build(BuildContext context) {
@@ -560,6 +594,36 @@ class _MediaPicker extends StatelessWidget {
                       )
                     else
                       Image.memory(bytes, fit: BoxFit.cover),
+                    // issue #194: the composer's own mute/unmute toggle —
+                    // videos default to muted, and this badge is the
+                    // selected state made visible before upload. A picked
+                    // video is never locally decoded for real playback (see
+                    // this widget's own doc), so this icon-only state is
+                    // the preview of whether the published video will have
+                    // sound, not an audio preview itself.
+                    if (isVideo && !uploading && onToggleMuted != null)
+                      Positioned(
+                        left: 4,
+                        bottom: 4,
+                        child: GestureDetector(
+                          key: const Key('toggleMutedButton'),
+                          onTap: onToggleMuted,
+                          child: DecoratedBox(
+                            decoration: const BoxDecoration(
+                              color: AppColors.overlay,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Icon(
+                                muted ? Icons.volume_off : Icons.volume_up,
+                                size: 16,
+                                color: AppColors.primaryInk,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     if (uploading && uploadProgress != null)
                       PhotoUploadProgress(progress: uploadProgress!),
                     if (!uploading && onRemove != null)

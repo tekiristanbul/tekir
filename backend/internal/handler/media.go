@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/tekiristanbul/tekir/backend/internal/service"
@@ -13,7 +14,7 @@ import (
 // MediaUploader is satisfied by service.MediaService; kept as an interface
 // so the handler is testable without a real database or object store.
 type MediaUploader interface {
-	Upload(ctx context.Context, userID, deviceID string, idempotencyKey *string, raw []byte) (service.Media, error)
+	Upload(ctx context.Context, userID, deviceID string, idempotencyKey *string, raw []byte, muted bool) (service.Media, error)
 }
 
 // MediaHandler handles standalone media uploads (POST /v1/media, issue
@@ -33,6 +34,7 @@ func NewMediaHandler(media MediaUploader, maxUploadBytes int) *MediaHandler {
 type mediaResponse struct {
 	MediaID string `json:"media_id"`
 	URL     string `json:"url"`
+	Muted   bool   `json:"muted"`
 }
 
 // Upload answers POST /v1/media: a multipart request with a required file
@@ -40,7 +42,11 @@ type mediaResponse struct {
 // (see RequireBearer) and the optional X-Device-Token (see
 // OptionalDeviceToken) — never from the request body. An optional
 // Idempotency-Key header makes a retried request return the original
-// result instead of creating a second media row.
+// result instead of creating a second media row. An optional "muted" form
+// field (issue #194) is the uploader's own audio choice for a video
+// attachment, defaulting true (short-form videos default to muted) when
+// absent or unparseable — meaningless for a photo but accepted the same
+// way regardless.
 func (h *MediaHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
 	if err := r.ParseMultipartForm(multipartMemoryThreshold); err != nil {
@@ -51,6 +57,17 @@ func (h *MediaHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	var idempotencyKey *string
 	if v := strings.TrimSpace(r.Header.Get("Idempotency-Key")); v != "" {
 		idempotencyKey = &v
+	}
+
+	// muted (issue #194) defaults true — a short-form video defaults to
+	// muted unless the composer's toggle explicitly sends "false" to opt
+	// into audio. Any other or missing value stays the safe default rather
+	// than rejecting the request over a malformed form field.
+	muted := true
+	if v := strings.TrimSpace(r.FormValue("muted")); v != "" {
+		if parsed, err := strconv.ParseBool(v); err == nil {
+			muted = parsed
+		}
 	}
 
 	file, _, ferr := r.FormFile("file")
@@ -67,13 +84,13 @@ func (h *MediaHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	user := UserFromContext(r.Context())
 	device := DeviceFromContext(r.Context())
-	media, err := h.media.Upload(r.Context(), user.UserID, device.DeviceID, idempotencyKey, raw)
+	media, err := h.media.Upload(r.Context(), user.UserID, device.DeviceID, idempotencyKey, raw, muted)
 	if err != nil {
 		writeMediaServiceError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, mediaResponse{MediaID: media.ID, URL: media.URL})
+	writeJSON(w, http.StatusCreated, mediaResponse{MediaID: media.ID, URL: media.URL, Muted: media.Muted})
 }
 
 func writeMediaServiceError(w http.ResponseWriter, err error) {

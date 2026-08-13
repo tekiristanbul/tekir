@@ -1109,7 +1109,7 @@ class _MediaTile extends StatelessWidget {
         MaterialPageRoute<void>(
           fullscreenDialog: true,
           builder: (_) => item.isVideoMedia
-              ? _FullScreenVideo(url: item.url)
+              ? _FullScreenVideo(url: item.url, muted: item.mediaMuted)
               : _FullScreenPhoto(
                   photo: item.url,
                   catId: isOwner ? catId : null,
@@ -1570,6 +1570,7 @@ class _TimelineItem extends StatelessWidget {
                     _TimelineThumbnail(
                       url: update.photoUrl!,
                       isVideo: update.isVideoMedia,
+                      muted: update.mediaMuted ?? true,
                     ),
                   ],
                 ],
@@ -1592,10 +1593,19 @@ class _TimelineItem extends StatelessWidget {
 /// video is never eligible to become the cat's cover, so that view carries
 /// no such action.
 class _TimelineThumbnail extends StatelessWidget {
-  const _TimelineThumbnail({required this.url, required this.isVideo});
+  const _TimelineThumbnail({
+    required this.url,
+    required this.isVideo,
+    required this.muted,
+  });
 
   final String url;
   final bool isVideo;
+
+  /// The attached video's stored audio choice (issue #194) — passed
+  /// through to the full-screen view unmute affordance; ignored for a
+  /// photo entry.
+  final bool muted;
 
   @override
   Widget build(BuildContext context) {
@@ -1604,7 +1614,7 @@ class _TimelineThumbnail extends StatelessWidget {
         MaterialPageRoute<void>(
           fullscreenDialog: true,
           builder: (_) => isVideo
-              ? _FullScreenVideo(url: url)
+              ? _FullScreenVideo(url: url, muted: muted)
               : _FullScreenPhoto(photo: url),
         ),
       ),
@@ -1727,10 +1737,20 @@ class _VideoThumbnailState extends State<_VideoThumbnail> {
 /// action, autoplaying looped with a tap-to-pause/resume affordance
 /// instead of a static `contain`ed image. Never carries a "make cover"
 /// action: a video is never eligible to become the cat's cover.
+///
+/// Every playback surface starts muted (issue #194's playback-level
+/// default, independent of the stored flag): [_controller]'s volume is
+/// always initialized to 0. [muted] — the media's own stored `muted` flag
+/// (issue #194's product decision) — decides whether an unmute affordance
+/// is offered at all: when true, the uploader's own choice was silence, so
+/// the toggle is never shown and this view stays silent for the whole
+/// playback; when false, the uploader opted the video into audio and the
+/// viewer may unmute (and re-mute) while watching.
 class _FullScreenVideo extends StatefulWidget {
-  const _FullScreenVideo({required this.url});
+  const _FullScreenVideo({required this.url, required this.muted});
 
   final String url;
+  final bool muted;
 
   @override
   State<_FullScreenVideo> createState() => _FullScreenVideoState();
@@ -1739,6 +1759,7 @@ class _FullScreenVideo extends StatefulWidget {
 class _FullScreenVideoState extends State<_FullScreenVideo> {
   late final VideoPlayerController _controller;
   late final Future<void> _initialize;
+  bool _unmuted = false;
 
   @override
   void initState() {
@@ -1746,6 +1767,7 @@ class _FullScreenVideoState extends State<_FullScreenVideo> {
     _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
     _initialize = _controller.initialize().then((_) {
       _controller.setLooping(true);
+      _controller.setVolume(0);
       _controller.play();
       if (mounted) setState(() {});
     });
@@ -1765,6 +1787,14 @@ class _FullScreenVideoState extends State<_FullScreenVideo> {
       } else {
         _controller.play();
       }
+    });
+  }
+
+  void _toggleMute() {
+    if (widget.muted || !_controller.value.isInitialized) return;
+    setState(() {
+      _unmuted = !_unmuted;
+      _controller.setVolume(_unmuted ? 1 : 0);
     });
   }
 
@@ -1815,6 +1845,32 @@ class _FullScreenVideoState extends State<_FullScreenVideo> {
               ),
             ),
           ),
+          // The unmute affordance only ever appears when the uploader's own
+          // stored choice (issue #194) allows it — a muted video never
+          // offers a way around that from the viewer side.
+          if (!widget.muted)
+            Positioned(
+              top: AppSpacing.s3,
+              right: AppSpacing.s4,
+              child: SafeArea(
+                child: Material(
+                  color: Colors.white.withValues(alpha: 0.14),
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    onPressed: _toggleMute,
+                    tooltip: _unmuted ? 'Sesi kapat' : 'Sesi aç',
+                    icon: Icon(
+                      _unmuted ? Icons.volume_up : Icons.volume_off,
+                      color: Colors.white,
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: kTapMin,
+                      minHeight: kTapMin,
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

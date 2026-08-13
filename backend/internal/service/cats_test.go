@@ -964,6 +964,7 @@ func TestCatsService_ListCatUpdates_PhotoURL(t *testing.T) {
 				Statuses:         []string{"seen"},
 				PhotoUrl:         pgtype.Text{String: "https://media.example/millie.mp4", Valid: true},
 				MediaContentType: pgtype.Text{String: "video/mp4", Valid: true},
+				MediaMuted:       pgtype.Bool{Bool: false, Valid: true},
 			},
 			{
 				ID:               pgtype.UUID{Bytes: uuid.New(), Valid: true},
@@ -995,6 +996,9 @@ func TestCatsService_ListCatUpdates_PhotoURL(t *testing.T) {
 	if page.Items[0].MediaContentType == nil || *page.Items[0].MediaContentType != "video/mp4" {
 		t.Errorf("expected video media_content_type set, got %v", page.Items[0].MediaContentType)
 	}
+	if page.Items[0].MediaMuted == nil || *page.Items[0].MediaMuted != false {
+		t.Errorf("expected video media_muted false, got %v", page.Items[0].MediaMuted)
+	}
 	if page.Items[1].PhotoURL == nil || *page.Items[1].PhotoURL != "https://placecats.com/millie/300/200" {
 		t.Errorf("expected photo_url set, got %v", page.Items[1].PhotoURL)
 	}
@@ -1006,6 +1010,9 @@ func TestCatsService_ListCatUpdates_PhotoURL(t *testing.T) {
 	}
 	if page.Items[2].MediaContentType != nil {
 		t.Errorf("expected nil media_content_type for medialess row, got %v", *page.Items[2].MediaContentType)
+	}
+	if page.Items[2].MediaMuted != nil {
+		t.Errorf("expected nil media_muted for medialess row, got %v", *page.Items[2].MediaMuted)
 	}
 }
 
@@ -1431,6 +1438,7 @@ func TestCatsService_CreateOrdinaryUpdate_WithOwnVideoAttachesVideo(t *testing.T
 			Url:              "https://media.example/cat.mp4",
 			ContentType:      "video/mp4",
 			UploadedByUserID: pgtype.UUID{Bytes: authorID, Valid: true},
+			Muted:            true,
 		},
 	})
 
@@ -1444,6 +1452,9 @@ func TestCatsService_CreateOrdinaryUpdate_WithOwnVideoAttachesVideo(t *testing.T
 	}
 	if update.MediaContentType == nil || *update.MediaContentType != "video/mp4" {
 		t.Errorf("expected the response to carry video/mp4, got %v", update.MediaContentType)
+	}
+	if update.MediaMuted == nil || *update.MediaMuted != true {
+		t.Errorf("expected the response to carry the attached video's muted flag, got %v", update.MediaMuted)
 	}
 }
 

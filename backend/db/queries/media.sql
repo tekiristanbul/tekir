@@ -2,13 +2,17 @@
 -- issue #70: uploaded_by_user_id is required (resolved from the
 -- authenticated bearer session, never client-supplied); uploaded_by_device_id
 -- is optional (X-Device-Token, installation/abuse-control association only).
+-- muted (issue #194) is caller-supplied, defaulting true at the handler
+-- when the uploader sends nothing — it never falls back to the column's own
+-- default here, so a retried idempotent request and a fresh one behave
+-- identically.
 -- idempotent by construction: on conflict do nothing on the partial
 -- (uploaded_by_user_id, idempotency_key) unique index means a retried
 -- upload with the same key never creates a second row — no row comes back
 -- (pgx.ErrNoRows) on the conflicting retry, and the caller (MediaService)
 -- looks the existing row up via GetMediaByIdempotencyKey instead.
-insert into media (id, object_key, url, content_type, byte_size, uploaded_by_user_id, uploaded_by_device_id, idempotency_key)
-values (sqlc.arg(id), sqlc.arg(object_key), sqlc.arg(url), sqlc.arg(content_type), sqlc.arg(byte_size), sqlc.arg(uploaded_by_user_id), sqlc.narg(uploaded_by_device_id), sqlc.narg(idempotency_key))
+insert into media (id, object_key, url, content_type, byte_size, uploaded_by_user_id, uploaded_by_device_id, idempotency_key, muted)
+values (sqlc.arg(id), sqlc.arg(object_key), sqlc.arg(url), sqlc.arg(content_type), sqlc.arg(byte_size), sqlc.arg(uploaded_by_user_id), sqlc.narg(uploaded_by_device_id), sqlc.narg(idempotency_key), sqlc.arg(muted))
 on conflict (uploaded_by_user_id, idempotency_key) where idempotency_key is not null do nothing
 returning *;
 

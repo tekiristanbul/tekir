@@ -123,6 +123,7 @@ class _FakeCatMediaApi implements CatDetailApi {
     required Uint8List mediaBytes,
     required String mediaFilename,
     required String idempotencyKey,
+    required bool muted,
     void Function(int sent, int total)? onSendProgress,
   }) => throw UnimplementedError();
 
@@ -1041,6 +1042,88 @@ void main() {
 
         expect(find.text('ana fotoğraf yap'), findsNothing);
         expect(find.text('ana fotoğraf'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a muted video entry (issue #194) offers no unmute affordance at all — '
+      'the stored flag is honored, not just the playback-level default',
+      (tester) async {
+        final videoMedia = [
+          CatMediaItem(
+            id: 'm1',
+            url: 'https://example.com/clip.mp4',
+            isCover: false,
+            createdAt: DateTime.utc(2026, 1, 3),
+            mediaContentType: 'video/mp4',
+            mediaMuted: true,
+          ),
+        ];
+        await _pump(
+          tester,
+          ownerState(isOwner: false),
+          api: _FakeCatMediaApi(videoMedia),
+        );
+
+        await tester.drag(find.byType(ListView), const Offset(0, -400));
+        await tester.pump();
+        await tester.tap(find.text('medya'));
+        await tester.pump();
+        await tester.pump();
+        final tile = find.byWidgetPredicate(
+          (w) => w is Icon && w.icon == Icons.play_circle_fill,
+        );
+        await tester.ensureVisible(tile);
+        await tester.pump();
+        await tester.tap(tile);
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.byIcon(Icons.volume_off), findsNothing);
+        expect(find.byIcon(Icons.volume_up), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'an unmuted video entry (issue #194) offers an unmute affordance, '
+      'starting muted regardless (playback-level default)',
+      (tester) async {
+        final videoMedia = [
+          CatMediaItem(
+            id: 'm1',
+            url: 'https://example.com/clip.mp4',
+            isCover: false,
+            createdAt: DateTime.utc(2026, 1, 3),
+            mediaContentType: 'video/mp4',
+            mediaMuted: false,
+          ),
+        ];
+        await _pump(
+          tester,
+          ownerState(isOwner: false),
+          api: _FakeCatMediaApi(videoMedia),
+        );
+
+        await tester.drag(find.byType(ListView), const Offset(0, -400));
+        await tester.pump();
+        await tester.tap(find.text('medya'));
+        await tester.pump();
+        await tester.pump();
+        final tile = find.byWidgetPredicate(
+          (w) => w is Icon && w.icon == Icons.play_circle_fill,
+        );
+        await tester.ensureVisible(tile);
+        await tester.pump();
+        await tester.tap(tile);
+        await tester.pump();
+        await tester.pump();
+
+        // Starts muted (issue #194's playback-level default) even though
+        // the stored flag allows audio — the volume_off glyph is the
+        // unmute affordance itself, offered only because mediaMuted is
+        // false.
+        expect(find.byIcon(Icons.volume_off), findsOneWidget);
+        expect(find.byIcon(Icons.volume_up), findsNothing);
       },
     );
 
