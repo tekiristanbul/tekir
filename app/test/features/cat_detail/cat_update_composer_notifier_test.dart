@@ -324,6 +324,13 @@ class _FakeImagePickerPlatform extends ImagePickerPlatform {
     if (gate != null) await gate!.future;
     return nextFile;
   }
+
+  @override
+  Future<List<XFile>> getMedia({required MediaOptions options}) async {
+    if (gate != null) await gate!.future;
+    final file = nextFile;
+    return file == null ? [] : [file];
+  }
 }
 
 const _authenticatedSession = SessionIdentity(
@@ -468,6 +475,74 @@ void main() {
     final state = container.read(catUpdateComposerProvider(_catId));
     expect(state.mediaContentType, 'video/mp4');
     expect(state.isVideoMedia, isTrue);
+  });
+
+  test('pickMedia stores a picked photo from the mixed gallery picker '
+      '(issue #196)', () async {
+    final container = _containerWith(_FakeCatDetailApi());
+    addTearDown(container.dispose);
+    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([1, 2, 3]),
+      name: 'photo.jpg',
+      path: 'photo.jpg',
+      mimeType: 'image/jpeg',
+    );
+
+    await notifier.pickMedia();
+
+    final state = container.read(catUpdateComposerProvider(_catId));
+    expect(state.mediaBytes, Uint8List.fromList([1, 2, 3]));
+    expect(state.mediaFilename, 'photo.jpg');
+    expect(state.mediaContentType, 'image/jpeg');
+    expect(state.isVideoMedia, isFalse);
+  });
+
+  test('pickMedia stores a picked video from the mixed gallery picker '
+      '(issue #196)', () async {
+    final container = _containerWith(_FakeCatDetailApi());
+    addTearDown(container.dispose);
+    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([1, 2, 3]),
+      name: 'clip.mp4',
+      path: 'clip.mp4',
+      mimeType: 'video/mp4',
+    );
+
+    await notifier.pickMedia();
+
+    final state = container.read(catUpdateComposerProvider(_catId));
+    expect(state.mediaContentType, 'video/mp4');
+    expect(state.isVideoMedia, isTrue);
+  });
+
+  test('pickMedia without a mime type guesses image vs video from the '
+      'extension (issue #196)', () async {
+    final container = _containerWith(_FakeCatDetailApi());
+    addTearDown(container.dispose);
+    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([1, 2, 3]),
+      name: 'clip.mov',
+      path: 'clip.mov',
+    );
+    await notifier.pickMedia();
+    expect(
+      container.read(catUpdateComposerProvider(_catId)).isVideoMedia,
+      isTrue,
+    );
+
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([4, 5]),
+      name: 'photo.png',
+      path: 'photo.png',
+    );
+    await notifier.pickMedia();
+    final state = container.read(catUpdateComposerProvider(_catId));
+    expect(state.isVideoMedia, isFalse);
+    expect(state.mediaContentType, 'image/jpeg');
   });
 
   test('picking a video replaces a previously picked photo', () async {
