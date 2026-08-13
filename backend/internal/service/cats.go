@@ -570,6 +570,8 @@ type CatsStore interface {
 	GetCatMediaByCatAndMedia(ctx context.Context, arg repository.GetCatMediaByCatAndMediaParams) (repository.CatMedium, error)
 	SetCatCoverPhoto(ctx context.Context, arg repository.SetCatCoverPhotoParams) error
 	UpdateCatName(ctx context.Context, arg repository.UpdateCatNameParams) error
+	SoftDeleteCat(ctx context.Context, arg repository.SoftDeleteCatParams) (pgtype.UUID, error)
+	GetCatOwnershipForDelete(ctx context.Context, id pgtype.UUID) (repository.GetCatOwnershipForDeleteRow, error)
 }
 
 type CatsService struct {
@@ -1098,6 +1100,66 @@ func (s *CatsService) RenameCat(ctx context.Context, id, callerUserID, name stri
 	}
 
 	return s.GetCatDetail(ctx, id, callerUserID)
+}
+
+// DeleteCat soft-deletes cat id: only the cat's owning account
+// (created_by_user_id) may do this (issue #200) — ErrNotCatOwner for anyone
+// else, mirroring RenameCat/SetCoverPhoto's exact ownership check. Deletion
+// is terminal in this version: there is no restore/reactivate flow, no cat
+// or dependent (media/update) row is ever physically removed, and a repeat
+// call against an already-deleted cat is a safe no-op (idempotent retry),
+// not an error — mirroring DeleteOwnUpdate's own retry convention
+// (docs/architecture/api.md).
+func (s *CatsService) DeleteCat(ctx context.Context, id, callerUserID string) error {
+	catID, err := parseCatID(id)
+	if err != nil {
+		return err
+	}
+	// callerUserID comes from the authenticated bearer context RequireBearer
+	// placed on the request — always a well-formed uuid, never
+	// client-supplied input to re-validate against a sentinel error here.
+	ownerID, err := uuid.Parse(callerUserID)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.SoftDeleteCat(ctx, repository.SoftDeleteCatParams{
+		ID:              catID,
+		CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+	})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	return s.resolveDeleteCatFailure(ctx, catID, ownerID)
+}
+
+// resolveDeleteCatFailure disambiguates SoftDeleteCat's 0-row outcome,
+// exactly like resolveCorrectionFailure does for DeleteOwnUpdate: unknown id
+// (ErrCatNotFound), a cat owned by someone else (ErrNotCatOwner), or a cat
+// that's already deleted — the caller treats that last case as a
+// successful, idempotent retry rather than an error.
+func (s *CatsService) resolveDeleteCatFailure(ctx context.Context, catID pgtype.UUID, callerUserID uuid.UUID) error {
+	row, err := s.db.GetCatOwnershipForDelete(ctx, catID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrCatNotFound
+		}
+		return err
+	}
+	if !isCatOwner(row.CreatedByUserID, callerUserID.String()) {
+		return ErrNotCatOwner
+	}
+	if row.Status == "deleted" {
+		return nil
+	}
+	// every condition SoftDeleteCat's own where clause checks held true
+	// here, yet it still affected zero rows — a genuine race (e.g.
+	// concurrently deleted between the two statements) is the only
+	// remaining cause, mirroring resolveCorrectionFailure's own fallback.
+	return ErrCatNotFound
 }
 
 // ListCatUpdates returns one newest-first page of id's update history.

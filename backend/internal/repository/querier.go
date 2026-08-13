@@ -27,6 +27,13 @@ type Querier interface {
 	BackfillUpdatesAuthorUserID(ctx context.Context, arg BackfillUpdatesAuthorUserIDParams) error
 	// lets the updates-history endpoint 404 on an unknown cat instead of
 	// silently returning an empty page indistinguishable from "no history yet".
+	// status != 'deleted' (issue #200) folds a soft-deleted cat into the same
+	// "doesn't exist" outcome for every caller of this query — the media
+	// archive read, the updates-history read, and the ordinary/needs-help
+	// update write paths all stop seeing a deleted cat as a valid target, since
+	// deletion is terminal and none of those are the map/nearby/discovery/
+	// detail surfaces this issue names but are still "active listing/query
+	// surfaces" a deleted cat must not remain reachable through.
 	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	// issue #78: the notification worker's read step. `for update skip locked`
 	// lets more than one worker process poll concurrently without claiming the
@@ -263,9 +270,18 @@ type Querier interface {
 	// every other read path. created_by_user_id (issue #156) lets CatsService
 	// derive is_owner without a second query — a pre-#70 seed cat has it null,
 	// so is_owner is always false for one, matching that no account can own it.
+	// status != 'deleted' (issue #200) makes a soft-deleted cat's detail read
+	// answer exactly like an unknown id (ErrCatNotFound -> 404) — deletion is
+	// terminal, never relaxed even for the cat's own owner. This same predicate
+	// is what makes Rename/SetCoverPhoto (both fetch ownership through this
+	// query) refuse to mutate a deleted cat too, at no extra cost.
 	GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error)
 	GetCatByIdempotencyKey(ctx context.Context, arg GetCatByIdempotencyKeyParams) (GetCatByIdempotencyKeyRow, error)
 	GetCatMediaByCatAndMedia(ctx context.Context, arg GetCatMediaByCatAndMediaParams) (CatMedium, error)
+	// called only when SoftDeleteCat affects 0 rows, to disambiguate why:
+	// unknown id (404), someone else's cat (403), or an already-deleted cat
+	// (treated as an idempotent-success retry by the service, not an error).
+	GetCatOwnershipForDelete(ctx context.Context, id pgtype.UUID) (GetCatOwnershipForDeleteRow, error)
 	// batch display lookup (name + resolved primary photo) for exactly the cat
 	// ids the profile's recent-contributions list is about to render — never
 	// the caller's full contribution history, which can be much larger. Mirrors
@@ -553,6 +569,17 @@ type Querier interface {
 	// row is the installation identity, so a refreshed token never creates a
 	// second row (issue #84's no-duplicate-installations constraint).
 	SetDevicePushToken(ctx context.Context, arg SetDevicePushTokenParams) error
+	// issue #200: owner-initiated, terminal soft delete of a cat — no restore/
+	// reactivate flow exists in this version. Same atomic-conditional-update
+	// shape DeleteOwnUpdate already established (docs/architecture/db.md):
+	// authorization (created_by_user_id match) and the "not already deleted"
+	// guard are both part of the one conditional statement, so a concurrent
+	// retry can't race past either check. Returns 0 rows when the cat doesn't
+	// exist, isn't owned by the caller, or is already deleted;
+	// CatsService.DeleteCat disambiguates a 0-row outcome via
+	// GetCatOwnershipForDelete, exactly like DeleteOwnUpdate uses
+	// GetUpdateForCorrectionCheck.
+	SoftDeleteCat(ctx context.Context, arg SoftDeleteCatParams) (pgtype.UUID, error)
 	// issue #80 (product-owner review): clears a device's account link on
 	// logout, so the same installation can sign into a *different* account
 	// afterward without linkDevice's "already linked to a different account"

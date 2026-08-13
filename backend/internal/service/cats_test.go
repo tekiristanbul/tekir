@@ -99,6 +99,14 @@ type fakeCatsLister struct {
 	renameErr error
 	// capturedRename mirrors captured above, for UpdateCatName.
 	capturedRename *repository.UpdateCatNameParams
+
+	softDeleteRow pgtype.UUID
+	softDeleteErr error
+	// capturedSoftDelete mirrors captured above, for SoftDeleteCat.
+	capturedSoftDelete *repository.SoftDeleteCatParams
+
+	ownershipForDeleteRow repository.GetCatOwnershipForDeleteRow
+	ownershipForDeleteErr error
 }
 
 func (f fakeCatsLister) GetUserByID(ctx context.Context, id pgtype.UUID) (repository.User, error) {
@@ -125,6 +133,17 @@ func (f fakeCatsLister) UpdateCatName(ctx context.Context, arg repository.Update
 		*f.capturedRename = arg
 	}
 	return f.renameErr
+}
+
+func (f fakeCatsLister) SoftDeleteCat(ctx context.Context, arg repository.SoftDeleteCatParams) (pgtype.UUID, error) {
+	if f.capturedSoftDelete != nil {
+		*f.capturedSoftDelete = arg
+	}
+	return f.softDeleteRow, f.softDeleteErr
+}
+
+func (f fakeCatsLister) GetCatOwnershipForDelete(ctx context.Context, id pgtype.UUID) (repository.GetCatOwnershipForDeleteRow, error) {
+	return f.ownershipForDeleteRow, f.ownershipForDeleteErr
 }
 
 func (f fakeCatsLister) CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error) {
@@ -717,6 +736,88 @@ func TestCatsService_RenameCat(t *testing.T) {
 		svc := NewCatsService(fakeCatsLister{})
 
 		_, err := svc.RenameCat(context.Background(), "not-a-uuid", ownerID.String(), "Tekir")
+		if !errors.Is(err, ErrInvalidCatID) {
+			t.Fatalf("expected ErrInvalidCatID, got %v", err)
+		}
+	})
+}
+
+// TestCatsService_DeleteCat covers issue #200's owner-initiated, terminal
+// soft delete: only the cat's own owning account may do it, a malformed or
+// unknown id is rejected the same way every other cat-mutation endpoint
+// rejects one, and a repeat call against an already-deleted cat succeeds as
+// an idempotent no-op rather than an error — mirroring
+// TestCatsService_DeleteOwnUpdate_RetryAfterDeleteIsIdempotent exactly.
+func TestCatsService_DeleteCat(t *testing.T) {
+	id := uuid.New()
+	ownerID := uuid.New()
+	otherID := uuid.New()
+
+	t.Run("owner deletes", func(t *testing.T) {
+		var captured repository.SoftDeleteCatParams
+		svc := NewCatsService(fakeCatsLister{
+			softDeleteRow:      pgtype.UUID{Bytes: id, Valid: true},
+			capturedSoftDelete: &captured,
+		})
+
+		if err := svc.DeleteCat(context.Background(), id.String(), ownerID.String()); err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if uuid.UUID(captured.ID.Bytes) != id {
+			t.Errorf("expected SoftDeleteCat to target cat %s, got %s", id, uuid.UUID(captured.ID.Bytes))
+		}
+		if uuid.UUID(captured.CreatedByUserID.Bytes) != ownerID {
+			t.Errorf("expected SoftDeleteCat to check owner %s, got %s", ownerID, uuid.UUID(captured.CreatedByUserID.Bytes))
+		}
+	})
+
+	t.Run("non-owner is rejected", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{
+			softDeleteErr: pgx.ErrNoRows,
+			ownershipForDeleteRow: repository.GetCatOwnershipForDeleteRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+				Status:          "active",
+			},
+		})
+
+		err := svc.DeleteCat(context.Background(), id.String(), otherID.String())
+		if !errors.Is(err, ErrNotCatOwner) {
+			t.Fatalf("expected ErrNotCatOwner, got %v", err)
+		}
+	})
+
+	t.Run("retry after delete is idempotent", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{
+			softDeleteErr: pgx.ErrNoRows,
+			ownershipForDeleteRow: repository.GetCatOwnershipForDeleteRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+				Status:          "deleted",
+			},
+		})
+
+		if err := svc.DeleteCat(context.Background(), id.String(), ownerID.String()); err != nil {
+			t.Fatalf("expected a retry against an already-deleted cat to succeed as a no-op, got %v", err)
+		}
+	})
+
+	t.Run("unknown cat", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{
+			softDeleteErr:         pgx.ErrNoRows,
+			ownershipForDeleteErr: pgx.ErrNoRows,
+		})
+
+		err := svc.DeleteCat(context.Background(), id.String(), ownerID.String())
+		if !errors.Is(err, ErrCatNotFound) {
+			t.Fatalf("expected ErrCatNotFound, got %v", err)
+		}
+	})
+
+	t.Run("malformed cat id", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{})
+
+		err := svc.DeleteCat(context.Background(), "not-a-uuid", ownerID.String())
 		if !errors.Is(err, ErrInvalidCatID) {
 			t.Fatalf("expected ErrInvalidCatID, got %v", err)
 		}
