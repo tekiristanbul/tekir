@@ -1755,6 +1755,30 @@ func TestCatsHandler_DeleteUpdate_WrongAuthor_Returns403(t *testing.T) {
 	}
 }
 
+// TestCatsHandler_DeleteUpdate_HoldsCover_Returns409 proves the blocked
+// delete surfaces as an explicit 409 conflict, per the product decision
+// that a cover image must never disappear implicitly as a side effect of
+// deleting its source update.
+func TestCatsHandler_DeleteUpdate_HoldsCover_Returns409(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		deleteErr: pgx.ErrNoRows,
+		correctionCheckRow: repository.GetUpdateForCorrectionCheckRow{
+			AuthorUserID: pgtype.UUID{Bytes: uuid.MustParse(defaultTestUserID), Valid: true},
+			Kind:         "ordinary",
+			CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			HoldsCover:   true,
+		},
+	}), testMaxUploadBytes)
+
+	rec := httptest.NewRecorder()
+	req := newDeleteUpdateRequest(uuid.New().String(), uuid.New().String())
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCatsHandler_DeleteUpdate_RequiresBearer(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 	rec := httptest.NewRecorder()

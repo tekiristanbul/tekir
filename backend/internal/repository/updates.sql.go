@@ -243,15 +243,19 @@ func (q *Queries) CreateUpdateStatus(ctx context.Context, arg CreateUpdateStatus
 }
 
 const deleteOwnUpdate = `-- name: DeleteOwnUpdate :one
-update updates
+update updates u
 set deleted_at = $1
-where id = $2
-  and cat_id = $3
-  and author_user_id = $4
-  and kind = 'ordinary'
-  and deleted_at is null
-  and created_at > $5::timestamptz
-returning id, deleted_at
+where u.id = $2
+  and u.cat_id = $3
+  and u.author_user_id = $4
+  and u.kind = 'ordinary'
+  and u.deleted_at is null
+  and u.created_at > $5::timestamptz
+  and not exists (
+    select 1 from cats c
+    where c.id = u.cat_id and c.primary_photo_id = u.media_id
+  )
+returning u.id, u.deleted_at
 `
 
 type DeleteOwnUpdateParams struct {
@@ -269,7 +273,14 @@ type DeleteOwnUpdateRow struct {
 
 // same authorization/concurrency/expiry shape as CorrectOrdinaryUpdate
 // above; soft-delete only (see migration 00020's design note) — never a
-// real row removal.
+// real row removal. the not-exists guard additionally refuses to delete an
+// update whose attached media is still the cat's current cover
+// (cats.primary_photo_id): the product decision is that a cover image must
+// never disappear implicitly as a side effect of deleting its source
+// update, so the owner must pick a different cover (PATCH .../cover) first
+// and retry. GetUpdateForCorrectionCheck's own holds_cover column mirrors
+// this exact condition so a zero-rows outcome caused by it disambiguates
+// as an explicit conflict rather than falling through to "not found".
 func (q *Queries) DeleteOwnUpdate(ctx context.Context, arg DeleteOwnUpdateParams) (DeleteOwnUpdateRow, error) {
 	row := q.db.QueryRow(ctx, deleteOwnUpdate,
 		arg.DeletedAt,
@@ -345,9 +356,12 @@ func (q *Queries) GetUpdateByIdempotencyKey(ctx context.Context, arg GetUpdateBy
 }
 
 const getUpdateForCorrectionCheck = `-- name: GetUpdateForCorrectionCheck :one
-select id, cat_id, author_user_id, kind, needs_help, created_at, deleted_at
-from updates
-where id = $1 and cat_id = $2
+select
+  u.id, u.cat_id, u.author_user_id, u.kind, u.needs_help, u.created_at, u.deleted_at,
+  coalesce(c.primary_photo_id = u.media_id, false) as holds_cover
+from updates u
+join cats c on c.id = u.cat_id
+where u.id = $1 and u.cat_id = $2
 `
 
 type GetUpdateForCorrectionCheckParams struct {
@@ -363,16 +377,20 @@ type GetUpdateForCorrectionCheckRow struct {
 	NeedsHelp    bool               `json:"needs_help"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+	HoldsCover   bool               `json:"holds_cover"`
 }
 
 // called only when CorrectOrdinaryUpdate/DeleteOwnUpdate affects 0 rows, to
 // disambiguate why: wrong cat_id/unknown id (404), someone else's update
 // (403), a legacy needs-help subtype row (404 — not a correctable resource
 // at all), an already-deleted row (treated as an idempotent-success retry
-// by the service, not an error), a window that has closed (410), or — for
-// a correction only (issue #101) — a request whose post-state would carry
-// neither a status nor the help flag (400; needs_help is selected so the
-// service can tell this apart from the other zero-rows causes).
+// by the service, not an error), a window that has closed (410), a delete
+// blocked because the update's media is the cat's current cover (409 —
+// holds_cover, checked only by the delete path; mirrors DeleteOwnUpdate's
+// own not-exists guard exactly), or — for a correction only (issue #101) —
+// a request whose post-state would carry neither a status nor the help
+// flag (400; needs_help is selected so the service can tell this apart
+// from the other zero-rows causes).
 func (q *Queries) GetUpdateForCorrectionCheck(ctx context.Context, arg GetUpdateForCorrectionCheckParams) (GetUpdateForCorrectionCheckRow, error) {
 	row := q.db.QueryRow(ctx, getUpdateForCorrectionCheck, arg.ID, arg.CatID)
 	var i GetUpdateForCorrectionCheckRow
@@ -384,6 +402,7 @@ func (q *Queries) GetUpdateForCorrectionCheck(ctx context.Context, arg GetUpdate
 		&i.NeedsHelp,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.HoldsCover,
 	)
 	return i, err
 }

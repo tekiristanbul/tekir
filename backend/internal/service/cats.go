@@ -132,6 +132,17 @@ var ErrCorrectionWindowExpired = errors.New("correction window expired")
 // see otherwise.
 var ErrMediaNotFound = errors.New("media not found")
 
+// ErrUpdateHoldsCover means the caller asked to delete their own ordinary
+// update (DeleteOwnUpdate), and it would otherwise be eligible, but its
+// attached media is still the cat's current cover (cats.primary_photo_id).
+// Per the product decision, a cover image must never disappear implicitly
+// as a side effect of deleting its source update — the owner must first
+// promote a different gallery entry via PATCH /v1/cats/{cat_id}/cover, then
+// retry the delete. Surfaced as 409, distinct from every other delete
+// failure: the update and its media both still exist and the caller is
+// still its author, only the cover conflict blocks this specific write.
+var ErrUpdateHoldsCover = errors.New("update holds cat's current cover")
+
 // updateCorrectionWindow is the fixed mvp grace period during which an
 // ordinary update's author may correct or delete it (docs/product/updates.md,
 // issue #80) — never configurable per-request or per-account.
@@ -1579,6 +1590,12 @@ func (s *CatsService) resolveCorrectionFailure(ctx context.Context, catID, updat
 	}
 	if !check.CreatedAt.Time.After(windowStart) {
 		return false, ErrCorrectionWindowExpired
+	}
+	// holds_cover only ever blocks a delete — CorrectOrdinaryUpdate carries
+	// no such guard, so this never fires for a correction's own zero-rows
+	// disambiguation.
+	if !correction && check.HoldsCover {
+		return false, ErrUpdateHoldsCover
 	}
 	// every row-state condition the conditional update itself checks held
 	// true here, yet it still affected zero rows. For a correction (issue

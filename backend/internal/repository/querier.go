@@ -230,7 +230,14 @@ type Querier interface {
 	DeleteFollow(ctx context.Context, arg DeleteFollowParams) error
 	// same authorization/concurrency/expiry shape as CorrectOrdinaryUpdate
 	// above; soft-delete only (see migration 00020's design note) — never a
-	// real row removal.
+	// real row removal. the not-exists guard additionally refuses to delete an
+	// update whose attached media is still the cat's current cover
+	// (cats.primary_photo_id): the product decision is that a cover image must
+	// never disappear implicitly as a side effect of deleting its source
+	// update, so the owner must pick a different cover (PATCH .../cover) first
+	// and retry. GetUpdateForCorrectionCheck's own holds_cover column mirrors
+	// this exact condition so a zero-rows outcome caused by it disambiguates
+	// as an explicit conflict rather than falling through to "not found".
 	DeleteOwnUpdate(ctx context.Context, arg DeleteOwnUpdateParams) (DeleteOwnUpdateRow, error)
 	// issue #71: called inside AuthService.linkDevice's transaction,
 	// immediately before BackfillFollowsUserID. Deletes this device's
@@ -293,10 +300,13 @@ type Querier interface {
 	// disambiguate why: wrong cat_id/unknown id (404), someone else's update
 	// (403), a legacy needs-help subtype row (404 — not a correctable resource
 	// at all), an already-deleted row (treated as an idempotent-success retry
-	// by the service, not an error), a window that has closed (410), or — for
-	// a correction only (issue #101) — a request whose post-state would carry
-	// neither a status nor the help flag (400; needs_help is selected so the
-	// service can tell this apart from the other zero-rows causes).
+	// by the service, not an error), a window that has closed (410), a delete
+	// blocked because the update's media is the cat's current cover (409 —
+	// holds_cover, checked only by the delete path; mirrors DeleteOwnUpdate's
+	// own not-exists guard exactly), or — for a correction only (issue #101) —
+	// a request whose post-state would carry neither a status nor the help
+	// flag (400; needs_help is selected so the service can tell this apart
+	// from the other zero-rows causes).
 	GetUpdateForCorrectionCheck(ctx context.Context, arg GetUpdateForCorrectionCheckParams) (GetUpdateForCorrectionCheckRow, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	GetUserByPhone(ctx context.Context, phone string) (User, error)
@@ -339,6 +349,17 @@ type Querier interface {
 	// ListCatUpdates' own author_display_name: left-joined and nullable because
 	// a linked account may never have set one (00015), never because the
 	// uploader is unknown (media.uploaded_by_user_id is not null).
+	// the where clause's exists/not-exists pair hides media whose only owning
+	// update has been soft-deleted (deleted update media must vanish from the
+	// archive same as it vanished from the timeline): a row survives when
+	// either no update ever attached this media (the cat's own creation photo,
+	// see Store.CreateCatWithMedia, or a future non-update write path) or at
+	// least one update still attaching it remains non-deleted. this is a
+	// read-time filter only — the cat_media row itself is never touched, so
+	// historical data stays intact for audit/recovery. the cover can never
+	// reach the "hidden" branch: DeleteOwnUpdate refuses to delete an update
+	// that owns the cat's current cover, so a live cover's owning update is
+	// never soft-deleted out from under it.
 	ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]ListCatMediaRow, error)
 	// joins the vocabulary (and its group) so cat detail can render a display
 	// label without a separate vocabulary fetch. intentionally not filtered by

@@ -203,29 +203,46 @@ returning id, created_at, updated_at, comment, needs_help, needs_help_expires_at
 -- name: DeleteOwnUpdate :one
 -- same authorization/concurrency/expiry shape as CorrectOrdinaryUpdate
 -- above; soft-delete only (see migration 00020's design note) — never a
--- real row removal.
-update updates
+-- real row removal. the not-exists guard additionally refuses to delete an
+-- update whose attached media is still the cat's current cover
+-- (cats.primary_photo_id): the product decision is that a cover image must
+-- never disappear implicitly as a side effect of deleting its source
+-- update, so the owner must pick a different cover (PATCH .../cover) first
+-- and retry. GetUpdateForCorrectionCheck's own holds_cover column mirrors
+-- this exact condition so a zero-rows outcome caused by it disambiguates
+-- as an explicit conflict rather than falling through to "not found".
+update updates u
 set deleted_at = sqlc.arg(deleted_at)
-where id = sqlc.arg(id)
-  and cat_id = sqlc.arg(cat_id)
-  and author_user_id = sqlc.arg(author_user_id)
-  and kind = 'ordinary'
-  and deleted_at is null
-  and created_at > sqlc.arg(window_start)::timestamptz
-returning id, deleted_at;
+where u.id = sqlc.arg(id)
+  and u.cat_id = sqlc.arg(cat_id)
+  and u.author_user_id = sqlc.arg(author_user_id)
+  and u.kind = 'ordinary'
+  and u.deleted_at is null
+  and u.created_at > sqlc.arg(window_start)::timestamptz
+  and not exists (
+    select 1 from cats c
+    where c.id = u.cat_id and c.primary_photo_id = u.media_id
+  )
+returning u.id, u.deleted_at;
 
 -- name: GetUpdateForCorrectionCheck :one
 -- called only when CorrectOrdinaryUpdate/DeleteOwnUpdate affects 0 rows, to
 -- disambiguate why: wrong cat_id/unknown id (404), someone else's update
 -- (403), a legacy needs-help subtype row (404 — not a correctable resource
 -- at all), an already-deleted row (treated as an idempotent-success retry
--- by the service, not an error), a window that has closed (410), or — for
--- a correction only (issue #101) — a request whose post-state would carry
--- neither a status nor the help flag (400; needs_help is selected so the
--- service can tell this apart from the other zero-rows causes).
-select id, cat_id, author_user_id, kind, needs_help, created_at, deleted_at
-from updates
-where id = sqlc.arg(id) and cat_id = sqlc.arg(cat_id);
+-- by the service, not an error), a window that has closed (410), a delete
+-- blocked because the update's media is the cat's current cover (409 —
+-- holds_cover, checked only by the delete path; mirrors DeleteOwnUpdate's
+-- own not-exists guard exactly), or — for a correction only (issue #101) —
+-- a request whose post-state would carry neither a status nor the help
+-- flag (400; needs_help is selected so the service can tell this apart
+-- from the other zero-rows causes).
+select
+  u.id, u.cat_id, u.author_user_id, u.kind, u.needs_help, u.created_at, u.deleted_at,
+  coalesce(c.primary_photo_id = u.media_id, false) as holds_cover
+from updates u
+join cats c on c.id = u.cat_id
+where u.id = sqlc.arg(id) and u.cat_id = sqlc.arg(cat_id);
 
 -- name: ListUpdateStatuses :many
 -- issue #105: read back a row's existing statuses inside

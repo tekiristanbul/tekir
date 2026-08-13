@@ -1318,6 +1318,232 @@ func TestStore_ListCatUpdates_ExcludesSoftDeleted(t *testing.T) {
 	}
 }
 
+// createOwnedUpdateWithMedia creates an ordinary update authored by userID,
+// carrying mediaID, through Store.CreateOrdinaryUpdate — the write path
+// that also archives the media into cat_media (see
+// TestStore_CreateOrdinaryUpdate_ArchivesAttachedMedia) — rather than the
+// bare CreateUpdate createTestOwnedUpdate uses, which never touches
+// cat_media at all.
+func createOwnedUpdateWithMedia(t *testing.T, ctx context.Context, store *repository.Store, catID, userID, mediaID pgtype.UUID, createdAt time.Time) pgtype.UUID {
+	t.Helper()
+	row, err := store.CreateOrdinaryUpdate(ctx, repository.CreateOrdinaryUpdateParams{
+		ID:           pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		CatID:        catID,
+		AuthorUserID: userID,
+		CreatedAt:    pgtype.Timestamptz{Time: createdAt, Valid: true},
+		Statuses:     []string{"seen"},
+		MediaID:      mediaID,
+	})
+	if err != nil {
+		t.Fatalf("create owned update with media: %v", err)
+	}
+	return row.ID
+}
+
+func createTestMedia(t *testing.T, ctx context.Context, store *repository.Store, userID pgtype.UUID) pgtype.UUID {
+	t.Helper()
+	media, err := store.CreateMedia(ctx, repository.CreateMediaParams{
+		ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, ObjectKey: uuid.NewString() + ".jpg",
+		Url: "/v1/media/objects/" + uuid.NewString() + ".jpg", ContentType: "image/jpeg", ByteSize: 100,
+		UploadedByUserID: userID,
+	})
+	if err != nil {
+		t.Fatalf("create media: %v", err)
+	}
+	return media.ID
+}
+
+// TestStore_ListCatMedia_ExcludesSoftDeletedUpdateMedia is the read-side
+// half of the issue's fix: media attached only through a soft-deleted
+// update must vanish from the archive the same way the update itself
+// vanishes from the timeline, while media attached through a still-live
+// update remains.
+func TestStore_ListCatMedia_ExcludesSoftDeletedUpdateMedia(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "media filter target")
+	userID := createTestUser(t, ctx, store)
+	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+
+	deletedMediaID := createTestMedia(t, ctx, store, userID)
+	deletedUpdateID := createOwnedUpdateWithMedia(t, ctx, store, catID, userID, deletedMediaID, base)
+
+	liveMediaID := createTestMedia(t, ctx, store, userID)
+	createOwnedUpdateWithMedia(t, ctx, store, catID, userID, liveMediaID, base.Add(time.Minute))
+
+	rows, err := store.ListCatMedia(ctx, catID)
+	if err != nil {
+		t.Fatalf("ListCatMedia before delete: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 archive rows before delete, got %d", len(rows))
+	}
+
+	if _, err := store.DeleteOwnUpdate(ctx, repository.DeleteOwnUpdateParams{
+		ID:           deletedUpdateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		DeletedAt:    pgtype.Timestamptz{Time: base.Add(2 * time.Minute), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: base.Add(-time.Minute), Valid: true},
+	}); err != nil {
+		t.Fatalf("delete update owning deletedMediaID: %v", err)
+	}
+
+	rows, err = store.ListCatMedia(ctx, catID)
+	if err != nil {
+		t.Fatalf("ListCatMedia after delete: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly 1 archive row after delete, got %d", len(rows))
+	}
+	if rows[0].MediaID != liveMediaID {
+		t.Errorf("expected only the live update's media %v to remain, got %v", liveMediaID, rows[0].MediaID)
+	}
+}
+
+// TestStore_ListCatMedia_MediaStaysVisibleWhenAnyOwningUpdateIsLive covers
+// the defensive branch of the exclusion filter: media attached to more
+// than one update for the same cat stays visible as long as at least one
+// owning update is still live, even after another owning update carrying
+// the same media is soft-deleted.
+func TestStore_ListCatMedia_MediaStaysVisibleWhenAnyOwningUpdateIsLive(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "shared media target")
+	userID := createTestUser(t, ctx, store)
+	base := time.Date(2026, 4, 2, 9, 0, 0, 0, time.UTC)
+
+	sharedMediaID := createTestMedia(t, ctx, store, userID)
+	firstUpdateID := createOwnedUpdateWithMedia(t, ctx, store, catID, userID, sharedMediaID, base)
+	createOwnedUpdateWithMedia(t, ctx, store, catID, userID, sharedMediaID, base.Add(time.Minute))
+
+	if _, err := store.DeleteOwnUpdate(ctx, repository.DeleteOwnUpdateParams{
+		ID:           firstUpdateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		DeletedAt:    pgtype.Timestamptz{Time: base.Add(2 * time.Minute), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: base.Add(-time.Minute), Valid: true},
+	}); err != nil {
+		t.Fatalf("delete first owning update: %v", err)
+	}
+
+	rows, err := store.ListCatMedia(ctx, catID)
+	if err != nil {
+		t.Fatalf("ListCatMedia: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected the shared media's single archive row to remain, got %d rows", len(rows))
+	}
+	if rows[0].MediaID != sharedMediaID {
+		t.Errorf("expected the shared media %v to remain visible, got %v", sharedMediaID, rows[0].MediaID)
+	}
+}
+
+// TestStore_DeleteOwnUpdate_BlockedWhenMediaIsCover proves the product
+// decision at the database level: an update whose attached media is still
+// the cat's current cover (cats.primary_photo_id) can't be deleted — the
+// conditional update affects zero rows, and GetUpdateForCorrectionCheck's
+// holds_cover column tells the caller why, distinct from every other
+// zero-rows cause.
+func TestStore_DeleteOwnUpdate_BlockedWhenMediaIsCover(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "cover-holding update")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+
+	coverMediaID := createTestMedia(t, ctx, store, userID)
+	updateID := createOwnedUpdateWithMedia(t, ctx, store, catID, userID, coverMediaID, createdAt)
+
+	if err := store.SetCatCoverPhoto(ctx, repository.SetCatCoverPhotoParams{ID: catID, PrimaryPhotoID: coverMediaID}); err != nil {
+		t.Fatalf("promote update media to cover: %v", err)
+	}
+
+	_, err := store.DeleteOwnUpdate(ctx, repository.DeleteOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		DeletedAt:    pgtype.Timestamptz{Time: createdAt.Add(time.Minute), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: createdAt.Add(-time.Minute), Valid: true},
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected pgx.ErrNoRows for a delete blocked by the cover guard, got %v", err)
+	}
+
+	check, err := store.GetUpdateForCorrectionCheck(ctx, repository.GetUpdateForCorrectionCheckParams{ID: updateID, CatID: catID})
+	if err != nil {
+		t.Fatalf("correction check: %v", err)
+	}
+	if !check.HoldsCover {
+		t.Error("expected holds_cover=true for an update whose media is still the cat's cover")
+	}
+	if check.DeletedAt.Valid {
+		t.Error("expected the update to remain undeleted after the blocked attempt")
+	}
+
+	// the row itself is untouched — no implicit delete, no implicit cover
+	// change, only the write this specific call attempted was refused.
+	mediaRows, err := store.ListCatMedia(ctx, catID)
+	if err != nil {
+		t.Fatalf("ListCatMedia: %v", err)
+	}
+	if len(mediaRows) != 1 || mediaRows[0].MediaID != coverMediaID || !mediaRows[0].IsCover {
+		t.Errorf("expected the cover to remain %v, untouched and still flagged is_cover, got %+v", coverMediaID, mediaRows)
+	}
+}
+
+// TestStore_DeleteOwnUpdate_SucceedsAfterCoverChanged proves the guard is
+// specifically tied to the current cover, not a permanent lock on an
+// update that ever held one: once the owner promotes a different gallery
+// entry to cover, the previously blocked delete succeeds normally.
+func TestStore_DeleteOwnUpdate_SucceedsAfterCoverChanged(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	catID := upsertTestCat(t, ctx, store, "cover changed then delete")
+	userID := createTestUser(t, ctx, store)
+	createdAt := time.Date(2026, 4, 4, 9, 0, 0, 0, time.UTC)
+
+	oldCoverMediaID := createTestMedia(t, ctx, store, userID)
+	updateID := createOwnedUpdateWithMedia(t, ctx, store, catID, userID, oldCoverMediaID, createdAt)
+	if err := store.SetCatCoverPhoto(ctx, repository.SetCatCoverPhotoParams{ID: catID, PrimaryPhotoID: oldCoverMediaID}); err != nil {
+		t.Fatalf("promote update media to cover: %v", err)
+	}
+
+	// confirm the delete is blocked before the cover moves.
+	if _, err := store.DeleteOwnUpdate(ctx, repository.DeleteOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		DeletedAt:    pgtype.Timestamptz{Time: createdAt.Add(time.Minute), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: createdAt.Add(-time.Minute), Valid: true},
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected the delete to be blocked before the cover changes, got %v", err)
+	}
+
+	newCoverMediaID := createTestMedia(t, ctx, store, userID)
+	if err := store.SetCatCoverPhoto(ctx, repository.SetCatCoverPhotoParams{ID: catID, PrimaryPhotoID: newCoverMediaID}); err != nil {
+		t.Fatalf("change cover away: %v", err)
+	}
+
+	row, err := store.DeleteOwnUpdate(ctx, repository.DeleteOwnUpdateParams{
+		ID:           updateID,
+		CatID:        catID,
+		AuthorUserID: userID,
+		DeletedAt:    pgtype.Timestamptz{Time: createdAt.Add(2 * time.Minute), Valid: true},
+		WindowStart:  pgtype.Timestamptz{Time: createdAt.Add(-time.Minute), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("expected the delete to succeed once the cover moved away, got %v", err)
+	}
+	if row.ID != updateID {
+		t.Errorf("expected deleted row id %v, got %v", updateID, row.ID)
+	}
+}
+
 // TestStore_CreateOrdinaryUpdate_DuplicateIdempotencyKeyRejected proves
 // migration 00021's partial unique index (author_user_id, idempotency_key)
 // where idempotency_key is not null and kind = 'ordinary' actually rejects a
