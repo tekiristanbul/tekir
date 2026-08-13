@@ -62,6 +62,7 @@ type Medium struct {
 	UploadedByDeviceID pgtype.UUID        `json:"uploaded_by_device_id"`
 	IdempotencyKey     pgtype.Text        `json:"idempotency_key"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	Muted              bool               `json:"muted"`
 }
 
 type Notification struct {

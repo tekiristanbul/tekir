@@ -269,16 +269,21 @@ class CatDetailApi {
   /// reports raw request-body bytes leaving the device, driving the
   /// composer's own upload-percentage overlay. The server tells a photo and
   /// a video apart by the multipart body's own content, never by this
-  /// filename.
+  /// filename. [muted] (issue #194) is the composer's own mute/unmute
+  /// toggle state, sent unconditionally regardless of media type — the
+  /// server defaults it true on its own when omitted, but the composer
+  /// always has an explicit value to send.
   Future<String> uploadMedia({
     required Uint8List mediaBytes,
     required String mediaFilename,
     required String idempotencyKey,
+    required bool muted,
     void Function(int sent, int total)? onSendProgress,
   }) async {
     try {
       final formData = FormData.fromMap({
         'file': MultipartFile.fromBytes(mediaBytes, filename: mediaFilename),
+        'muted': muted.toString(),
       });
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '/v1/media',

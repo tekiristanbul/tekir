@@ -102,6 +102,7 @@ class _FakeCatDetailApi implements CatDetailApi {
   Object? uploadError;
   CatUpdateEntry? nextResult;
   String uploadedMediaId = 'media-1';
+  bool? lastMediaMuted;
 
   @override
   Future<CatDetail> fetchDetail(String catId) async => _detail;
@@ -134,11 +135,13 @@ class _FakeCatDetailApi implements CatDetailApi {
     required Uint8List mediaBytes,
     required String mediaFilename,
     required String idempotencyKey,
+    required bool muted,
     void Function(int sent, int total)? onSendProgress,
   }) async {
     uploadMediaCalls++;
     lastMediaBytes = mediaBytes;
     lastMediaFilename = mediaFilename;
+    lastMediaMuted = muted;
     final event = uploadProgressEvent;
     if (event != null) onSendProgress?.call(event.$1, event.$2);
     if (uploadGate != null) await uploadGate!.future;
@@ -473,6 +476,55 @@ void main() {
 
       expect(find.byKey(const Key('removePhotoButton')), findsNothing);
       expect(find.text('Ekle'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a picked video defaults to muted, with a visible mute/unmute toggle '
+    'before submit (issue #194)',
+    (tester) async {
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'clip.mp4',
+        path: 'clip.mp4',
+        mimeType: 'video/mp4',
+      );
+      await _pump(tester, api: _FakeCatDetailApi());
+      await _openComposer(tester);
+
+      await tester.tap(find.text('Ekle'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Galeriden ekle'));
+      await tester.pumpAndSettle();
+
+      // The selected state must be visible before upload, not just
+      // inferable from the icon.
+      expect(find.text('Video sessiz paylaşılacak'), findsOneWidget);
+      expect(find.byIcon(Icons.volume_off), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('toggleMutedButton')));
+      await tester.pump();
+
+      expect(find.text('Video sesli paylaşılacak'), findsOneWidget);
+      expect(find.byIcon(Icons.volume_up), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'the mute/unmute toggle never renders for a picked photo (issue #194)',
+    (tester) async {
+      fakePlatform.nextFile = XFile.fromData(
+        _validPngBytes,
+        name: 'photo.png',
+        path: 'photo.png',
+      );
+      await _pump(tester, api: _FakeCatDetailApi());
+      await _openComposer(tester);
+
+      await _pickPhoto(tester);
+
+      expect(find.byKey(const Key('toggleMutedButton')), findsNothing);
+      expect(find.text('Video sessiz paylaşılacak'), findsNothing);
     },
   );
 

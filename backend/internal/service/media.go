@@ -334,8 +334,9 @@ func (p *mediaPipeline) upload(ctx context.Context, processed processedMedia) (k
 
 // Media is the minimal shape a client needs back from an upload.
 type Media struct {
-	ID  string
-	URL string
+	ID    string
+	URL   string
+	Muted bool
 }
 
 // MediaStore is satisfied by repository.Store; kept as an interface so
@@ -364,8 +365,12 @@ func NewMediaService(db MediaStore, store ObjectStore, maxBytes, maxVideoBytes i
 // (optional, installation/abuse-control association only) recorded
 // alongside it. idempotencyKey, when non-nil, makes a retried upload with
 // the same key return the original result instead of creating a second
-// media row or a second stored object.
-func (s *MediaService) Upload(ctx context.Context, userID, deviceID string, idempotencyKey *string, raw []byte) (Media, error) {
+// media row or a second stored object. muted (issue #194) is the
+// uploader's own choice — the handler defaults it true when the client
+// sends nothing, so a short-form video defaults to muted unless the
+// composer's toggle explicitly opts into audio; meaningless for an image
+// but stored the same way regardless.
+func (s *MediaService) Upload(ctx context.Context, userID, deviceID string, idempotencyKey *string, raw []byte, muted bool) (Media, error) {
 	uid, err := uuid.Parse(userID)
 	if err != nil {
 		return Media{}, err
@@ -409,6 +414,7 @@ func (s *MediaService) Upload(ctx context.Context, userID, deviceID string, idem
 		UploadedByUserID:   ownerUUID,
 		UploadedByDeviceID: authorDeviceID,
 		IdempotencyKey:     idemKey,
+		Muted:              muted,
 	})
 	if err != nil {
 		return s.recoverFromCreateFailure(ctx, err, key, ownerUUID, idemKey)
@@ -450,5 +456,5 @@ func (s *MediaService) recoverFromCreateFailure(ctx context.Context, createErr e
 }
 
 func toMedia(row repository.Medium) Media {
-	return Media{ID: uuid.UUID(row.ID.Bytes).String(), URL: row.Url}
+	return Media{ID: uuid.UUID(row.ID.Bytes).String(), URL: row.Url, Muted: row.Muted}
 }

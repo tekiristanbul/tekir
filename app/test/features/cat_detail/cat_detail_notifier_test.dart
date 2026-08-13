@@ -80,6 +80,7 @@ class _FakeCatDetailApi implements CatDetailApi {
     required Uint8List mediaBytes,
     required String mediaFilename,
     required String idempotencyKey,
+    required bool muted,
     void Function(int sent, int total)? onSendProgress,
   }) => throw UnimplementedError();
 

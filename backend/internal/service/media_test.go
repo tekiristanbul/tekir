@@ -381,7 +381,7 @@ func TestMediaService_Upload_HappyPath(t *testing.T) {
 	}
 	svc := NewMediaService(mediaStore, store, 1<<20, 1<<20)
 
-	media, err := svc.Upload(context.Background(), userIDFor(t), "", nil, validJPEGBytes(t))
+	media, err := svc.Upload(context.Background(), userIDFor(t), "", nil, validJPEGBytes(t), true)
 	if err != nil {
 		t.Fatalf("Upload: %v", err)
 	}
@@ -396,6 +396,38 @@ func TestMediaService_Upload_HappyPath(t *testing.T) {
 	}
 }
 
+// TestMediaService_Upload_PersistsCallerSuppliedMuted proves muted is
+// forwarded to CreateMedia and reflected back on the returned Media exactly
+// as the caller (the handler, which owns the "default true" decision)
+// passed it in — the service itself applies no default of its own.
+func TestMediaService_Upload_PersistsCallerSuppliedMuted(t *testing.T) {
+	for _, muted := range []bool{true, false} {
+		store := &fakeObjectStore{}
+		var captured repository.CreateMediaParams
+		mediaStore := &fakeMediaStore{
+			createRow: repository.Medium{
+				ID:    pgtype.UUID{Bytes: [16]byte{4}, Valid: true},
+				Url:   "/v1/media/objects/generated.mp4",
+				Muted: muted,
+			},
+			captured:       &captured,
+			idempotencyErr: pgx.ErrNoRows,
+		}
+		svc := NewMediaService(mediaStore, store, 1<<20, 1<<20)
+
+		media, err := svc.Upload(context.Background(), userIDFor(t), "", nil, validJPEGBytes(t), muted)
+		if err != nil {
+			t.Fatalf("Upload(muted=%v): %v", muted, err)
+		}
+		if captured.Muted != muted {
+			t.Errorf("expected CreateMedia to receive Muted=%v, got %v", muted, captured.Muted)
+		}
+		if media.Muted != muted {
+			t.Errorf("expected returned Media.Muted=%v, got %v", muted, media.Muted)
+		}
+	}
+}
+
 func TestMediaService_Upload_IdempotentRetryReturnsExisting(t *testing.T) {
 	store := &fakeObjectStore{}
 	existing := repository.Medium{
@@ -406,7 +438,7 @@ func TestMediaService_Upload_IdempotentRetryReturnsExisting(t *testing.T) {
 	svc := NewMediaService(mediaStore, store, 1<<20, 1<<20)
 
 	key := "retry-key"
-	media, err := svc.Upload(context.Background(), userIDFor(t), "", &key, validJPEGBytes(t))
+	media, err := svc.Upload(context.Background(), userIDFor(t), "", &key, validJPEGBytes(t), true)
 	if err != nil {
 		t.Fatalf("Upload: %v", err)
 	}
@@ -426,7 +458,7 @@ func TestMediaService_Upload_CompensatesOnDBFailure(t *testing.T) {
 	}
 	svc := NewMediaService(mediaStore, store, 1<<20, 1<<20)
 
-	if _, err := svc.Upload(context.Background(), userIDFor(t), "", nil, validJPEGBytes(t)); err == nil {
+	if _, err := svc.Upload(context.Background(), userIDFor(t), "", nil, validJPEGBytes(t), true); err == nil {
 		t.Fatal("expected error")
 	}
 	if len(store.puts) != 1 {
@@ -471,7 +503,7 @@ func TestMediaService_Upload_RaceOnIdempotencyKeyRecoversExisting(t *testing.T) 
 	}
 	svc := NewMediaService(wrapped, store, 1<<20, 1<<20)
 
-	media, err := svc.Upload(context.Background(), userIDFor(t), "", &key, validJPEGBytes(t))
+	media, err := svc.Upload(context.Background(), userIDFor(t), "", &key, validJPEGBytes(t), true)
 	if err != nil {
 		t.Fatalf("Upload: %v", err)
 	}

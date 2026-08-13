@@ -69,6 +69,7 @@ select
   u.needs_help_expires_at,
   um.url as photo_url,
   um.content_type as media_content_type,
+  um.muted as media_muted,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
@@ -76,7 +77,7 @@ left join media um on um.id = u.media_id
 where u.author_user_id = sqlc.arg(author_user_id)
   and u.idempotency_key = sqlc.arg(idempotency_key)
   and u.kind = 'ordinary'
-group by u.id, um.url, um.content_type;
+group by u.id, um.url, um.content_type, um.muted;
 
 -- name: BackfillUpdatesAuthorUserID :exec
 -- issue #65: called inside AuthService.linkDevice's transaction, once a
@@ -116,7 +117,9 @@ on conflict (update_id, status) do nothing;
 -- #153's video support) is the same row's media.content_type, null under
 -- the same conditions as photo_url — the client uses it to tell an
 -- attached video (a "video/*" content type) apart from a photo so it can
--- render a video player instead of an image widget.
+-- render a video player instead of an image widget. media_muted (issue
+-- #194) is the same row's media.muted, null under the same conditions —
+-- every video playback surface honors it.
 select
   u.id,
   u.kind,
@@ -130,6 +133,7 @@ select
   u.needs_help_expires_at,
   um.url as photo_url,
   um.content_type as media_content_type,
+  um.muted as media_muted,
   coalesce(array_agg(s.status order by s.status) filter (where s.status is not null), '{}')::text[] as statuses
 from updates u
 left join update_statuses s on s.update_id = u.id
@@ -142,7 +146,7 @@ where u.cat_id = sqlc.arg(cat_id)
     or u.created_at < sqlc.narg(before_created_at)::timestamptz
     or (u.created_at = sqlc.narg(before_created_at)::timestamptz and u.seq < sqlc.narg(before_seq)::bigint)
   )
-group by u.id, au.display_name, um.url, um.content_type
+group by u.id, au.display_name, um.url, um.content_type, um.muted
 order by u.created_at desc, u.seq desc
 limit sqlc.arg(row_limit)::int;
 

@@ -108,6 +108,7 @@ class CatUpdateComposerState {
     this.mediaBytes,
     this.mediaFilename,
     this.mediaContentType,
+    this.mediaMuted = true,
     this.uploadProgress,
   });
 
@@ -146,6 +147,13 @@ class CatUpdateComposerState {
   /// Whether [mediaBytes] — when set — is a video rather than a photo.
   bool get isVideoMedia => mediaContentType?.startsWith('video/') ?? false;
 
+  /// Whether a video attachment will publish with sound (issue #194's
+  /// product decision: short-form videos default to muted, with an
+  /// explicit opt-in to audio via the composer's own toggle). Defaults
+  /// true — meaningless for a photo attachment, and sent to `POST
+  /// /v1/media` unconditionally regardless of media type.
+  final bool mediaMuted;
+
   /// 0..1 while the picked media's multipart upload is leaving the device
   /// — mirrors `AddCatState.uploadProgress` exactly. Null whenever no
   /// upload is in flight.
@@ -169,6 +177,7 @@ class CatUpdateComposerState {
     Uint8List? mediaBytes,
     String? mediaFilename,
     String? mediaContentType,
+    bool? mediaMuted,
     bool clearMedia = false,
     double? uploadProgress,
     bool clearUploadProgress = false,
@@ -185,6 +194,7 @@ class CatUpdateComposerState {
       mediaContentType: clearMedia
           ? null
           : (mediaContentType ?? this.mediaContentType),
+      mediaMuted: clearMedia ? true : (mediaMuted ?? this.mediaMuted),
       uploadProgress: clearUploadProgress
           ? null
           : (uploadProgress ?? this.uploadProgress),
@@ -348,6 +358,9 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
       mediaBytes: bytes,
       mediaFilename: picked.name,
       mediaContentType: picked.mimeType ?? fallbackContentType,
+      // issue #194: every fresh pick starts muted, regardless of what a
+      // previously picked (and since replaced) video's toggle was left at.
+      mediaMuted: true,
       clearError: true,
     );
   }
@@ -357,6 +370,14 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   void removeMedia() {
     if (state.isSubmitting) return;
     state = state.copyWith(clearMedia: true, clearError: true);
+  }
+
+  /// Toggles whether the picked video will publish with sound (issue
+  /// #194) — the composer's mute/unmute control, visible before upload.
+  /// Meaningless while no video is picked, but harmless to call regardless.
+  void toggleMuted() {
+    if (state.isSubmitting) return;
+    state = state.copyWith(mediaMuted: !state.mediaMuted);
   }
 
   /// Clears any selection, draft comment, and stale error from a previous
@@ -456,6 +477,7 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
                   state.mediaFilename ??
                   (state.isVideoMedia ? 'video.mp4' : 'photo.jpg'),
               idempotencyKey: _mediaIdempotencyKey,
+              muted: state.mediaMuted,
               onSendProgress: (sent, total) {
                 if (total <= 0 || !state.isSubmitting) return;
                 state = state.copyWith(

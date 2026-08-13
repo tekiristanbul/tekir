@@ -23,9 +23,10 @@ type fakeMediaUploader struct {
 	capturedUserID         *string
 	capturedDeviceID       *string
 	capturedIdempotencyKey **string
+	capturedMuted          *bool
 }
 
-func (f fakeMediaUploader) Upload(_ context.Context, userID, deviceID string, idempotencyKey *string, _ []byte) (service.Media, error) {
+func (f fakeMediaUploader) Upload(_ context.Context, userID, deviceID string, idempotencyKey *string, _ []byte, muted bool) (service.Media, error) {
 	if f.capturedUserID != nil {
 		*f.capturedUserID = userID
 	}
@@ -34,6 +35,9 @@ func (f fakeMediaUploader) Upload(_ context.Context, userID, deviceID string, id
 	}
 	if f.capturedIdempotencyKey != nil {
 		*f.capturedIdempotencyKey = idempotencyKey
+	}
+	if f.capturedMuted != nil {
+		*f.capturedMuted = muted
 	}
 	return f.media, f.err
 }
@@ -82,6 +86,70 @@ func TestMediaHandler_Upload_Success(t *testing.T) {
 	}
 	if capturedUserID != defaultTestUserID {
 		t.Errorf("expected ownership resolved from bearer context (%s), got %q", defaultTestUserID, capturedUserID)
+	}
+}
+
+// TestMediaHandler_Upload_MutedDefaultsTrue proves a video (or any) upload
+// that sends no "muted" form field is treated as muted (issue #194's
+// product decision: short-form videos default to muted).
+func TestMediaHandler_Upload_MutedDefaultsTrue(t *testing.T) {
+	var captured bool
+	uploader := fakeMediaUploader{capturedMuted: &captured}
+	h := NewMediaHandler(uploader, 1<<20)
+
+	req := withBearerToken(newMultipartFileRequest("/v1/media", "file", "video.mp4", []byte("fake-bytes"), nil))
+	rec := httptest.NewRecorder()
+	mediaRouterFor(h).ServeHTTP(rec, req)
+
+	if !captured {
+		t.Errorf("expected muted to default true when the form field is absent, got %v", captured)
+	}
+}
+
+// TestMediaHandler_Upload_MutedRespectsExplicitField proves the composer's
+// toggle can opt a video into audio by sending "muted=false", and can
+// re-affirm the default explicitly with "muted=true".
+func TestMediaHandler_Upload_MutedRespectsExplicitField(t *testing.T) {
+	cases := []struct {
+		field string
+		want  bool
+	}{
+		{"false", false},
+		{"true", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field, func(t *testing.T) {
+			var captured bool
+			uploader := fakeMediaUploader{capturedMuted: &captured}
+			h := NewMediaHandler(uploader, 1<<20)
+
+			req := withBearerToken(newMultipartFileRequest("/v1/media", "file", "video.mp4", []byte("fake-bytes"), map[string]string{"muted": tc.field}))
+			rec := httptest.NewRecorder()
+			mediaRouterFor(h).ServeHTTP(rec, req)
+
+			if captured != tc.want {
+				t.Errorf("expected muted=%v for form field %q, got %v", tc.want, tc.field, captured)
+			}
+		})
+	}
+}
+
+// TestMediaHandler_Upload_ResponseIncludesMuted proves the created media's
+// stored muted flag (as MediaUploader.Upload returns it, not the request's
+// own field) is what the response actually echoes back.
+func TestMediaHandler_Upload_ResponseIncludesMuted(t *testing.T) {
+	uploader := fakeMediaUploader{media: service.Media{ID: "media-1", URL: "/v1/media/objects/x.mp4", Muted: false}}
+	h := NewMediaHandler(uploader, 1<<20)
+
+	req := withBearerToken(newMultipartFileRequest("/v1/media", "file", "video.mp4", []byte("fake-bytes"), map[string]string{"muted": "false"}))
+	rec := httptest.NewRecorder()
+	mediaRouterFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"muted":false`)) {
+		t.Errorf("expected response body to echo muted:false, got %s", rec.Body.String())
 	}
 }
 

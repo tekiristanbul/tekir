@@ -573,7 +573,7 @@ func TestCatsHandler_Media(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
 		exists: true,
 		mediaRows: []repository.ListCatMediaRow{
-			{ID: pgtype.UUID{Bytes: coverID, Valid: true}, Url: "https://placecats.com/millie/300/200", ContentType: "image/jpeg", CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, IsCover: true, UploaderDisplayName: pgtype.Text{String: "asli", Valid: true}},
+			{ID: pgtype.UUID{Bytes: coverID, Valid: true}, Url: "https://placecats.com/millie/300/200", ContentType: "image/jpeg", Muted: true, CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, IsCover: true, UploaderDisplayName: pgtype.Text{String: "asli", Valid: true}},
 		},
 	}), testMaxUploadBytes)
 
@@ -600,6 +600,9 @@ func TestCatsHandler_Media(t *testing.T) {
 	}
 	if body[0].MediaContentType != "image/jpeg" {
 		t.Errorf("unexpected media_content_type: %q", body[0].MediaContentType)
+	}
+	if !body[0].MediaMuted {
+		t.Error("expected media_muted true")
 	}
 	if !body[0].IsCover {
 		t.Error("expected is_cover true")
@@ -786,6 +789,7 @@ func TestCatsHandler_UpdateHistory_PhotoURL(t *testing.T) {
 				Statuses:         []string{"seen"},
 				PhotoUrl:         pgtype.Text{String: "https://placecats.com/millie/300/200", Valid: true},
 				MediaContentType: pgtype.Text{String: "image/jpeg", Valid: true},
+				MediaMuted:       pgtype.Bool{Bool: true, Valid: true},
 			},
 		},
 	}), testMaxUploadBytes)
@@ -806,6 +810,9 @@ func TestCatsHandler_UpdateHistory_PhotoURL(t *testing.T) {
 	}
 	if body.Items[0].MediaContentType == nil || *body.Items[0].MediaContentType != "image/jpeg" {
 		t.Errorf("expected media_content_type set, got %v", body.Items[0].MediaContentType)
+	}
+	if body.Items[0].MediaMuted == nil || *body.Items[0].MediaMuted != true {
+		t.Errorf("expected media_muted set, got %v", body.Items[0].MediaMuted)
 	}
 }
 
