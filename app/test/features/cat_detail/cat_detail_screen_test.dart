@@ -100,6 +100,12 @@ class _FakeCatMediaApi implements CatDetailApi {
   String? capturedSetCoverCatId;
   String? capturedSetCoverMediaId;
 
+  // renameCat (issue #227) — same scoped convention as setCoverPhoto above.
+  CatDetail? renameResult;
+  Object? renameError;
+  String? capturedRenameCatId;
+  String? capturedRenameName;
+
   @override
   Future<CatDetail> fetchDetail(String catId) => throw UnimplementedError();
 
@@ -147,6 +153,14 @@ class _FakeCatMediaApi implements CatDetailApi {
     capturedSetCoverCatId = catId;
     capturedSetCoverMediaId = mediaId;
     return setCoverResult!;
+  }
+
+  @override
+  Future<CatDetail> renameCat(String catId, String name) async {
+    capturedRenameCatId = catId;
+    capturedRenameName = name;
+    if (renameError != null) throw renameError!;
+    return renameResult!;
   }
 }
 
@@ -1344,6 +1358,205 @@ void main() {
         expect(api.capturedSetCoverMediaId, 'm2');
         // the full-screen view pops back to the medya grid on success.
         expect(find.text('ana fotoğraf yap'), findsNothing);
+      },
+    );
+  });
+
+  group('rename affordance (issue #227)', () {
+    CatDetail detailWith({required bool isOwner}) => CatDetail(
+      id: _catId,
+      name: 'tekir',
+      lat: 41.0256,
+      lng: 28.9744,
+      areaLabel: null,
+      primaryPhoto: null,
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastUpdateAt: null,
+      isOwner: isOwner,
+    );
+
+    Future<void> openSheet(WidgetTester tester) async {
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+      'owner: the name is tappable with a faint rename glyph beside it',
+      (tester) async {
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+        );
+
+        expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
+      },
+    );
+
+    testWidgets('non-owner (another signed-in account, or a guest): no rename '
+        'affordance at all — is_owner is false either way, and the client '
+        'never distinguishes the two', (tester) async {
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: detailWith(isOwner: false),
+          updates: const [],
+          hasLoadedOnce: true,
+        ),
+      );
+
+      expect(find.byIcon(Icons.edit_outlined), findsNothing);
+    });
+
+    testWidgets(
+      'empty/whitespace-only input is rejected before ever calling the api',
+      (tester) async {
+        final api = _FakeCatMediaApi();
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          api: api,
+        );
+
+        await openSheet(tester);
+        await tester.enterText(find.byType(TextField), '   ');
+        await tester.tap(find.text('Kaydet'));
+        await tester.pump();
+
+        expect(find.text('Bir isim gir'), findsOneWidget);
+        expect(api.capturedRenameName, isNull);
+      },
+    );
+
+    testWidgets(
+      'a successful rename updates the name on screen without a manual refresh',
+      (tester) async {
+        final api = _FakeCatMediaApi()
+          ..renameResult = CatDetail(
+            id: _catId,
+            name: 'boncuk',
+            lat: 41.0256,
+            lng: 28.9744,
+            areaLabel: null,
+            primaryPhoto: null,
+            createdAt: DateTime.utc(2026, 1, 1),
+            lastUpdateAt: null,
+            isOwner: true,
+          );
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          api: api,
+        );
+
+        await openSheet(tester);
+        await tester.enterText(find.byType(TextField), 'boncuk');
+        await tester.tap(find.text('Kaydet'));
+        await tester.pump();
+        await tester.pump();
+
+        expect(api.capturedRenameCatId, _catId);
+        expect(api.capturedRenameName, 'boncuk');
+        expect(find.text('boncuk'), findsWidgets);
+        expect(find.text('tekir'), findsNothing);
+        // the sheet closes on success — its own save button is gone.
+        expect(find.text('Kaydet'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      '403 (not the owner) surfaces as an error and leaves the old name in place',
+      (tester) async {
+        final api = _FakeCatMediaApi()
+          ..renameError = const RenameCatForbiddenException();
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          api: api,
+        );
+
+        await openSheet(tester);
+        await tester.enterText(find.byType(TextField), 'boncuk');
+        await tester.tap(find.text('Kaydet'));
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          find.text('Sunucuya ulaşılamadı, birazdan tekrar dene.'),
+          findsOneWidget,
+        );
+        expect(find.text('tekir'), findsWidgets);
+      },
+    );
+
+    testWidgets(
+      '404 (cat not found) surfaces as an error and leaves the old name in place',
+      (tester) async {
+        final api = _FakeCatMediaApi()
+          ..renameError = const CatNotFoundException();
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          api: api,
+        );
+
+        await openSheet(tester);
+        await tester.enterText(find.byType(TextField), 'boncuk');
+        await tester.tap(find.text('Kaydet'));
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          find.text('Sunucuya ulaşılamadı, birazdan tekrar dene.'),
+          findsOneWidget,
+        );
+        expect(find.text('tekir'), findsWidgets);
+      },
+    );
+
+    testWidgets(
+      'a network failure surfaces its own distinct error and leaves the old '
+      'name in place',
+      (tester) async {
+        final api = _FakeCatMediaApi()
+          ..renameError = const UpdateNetworkException();
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          api: api,
+        );
+
+        await openSheet(tester);
+        await tester.enterText(find.byType(TextField), 'boncuk');
+        await tester.tap(find.text('Kaydet'));
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.text('Bağlantı sorunu, tekrar dene.'), findsOneWidget);
+        expect(find.text('tekir'), findsWidgets);
       },
     );
   });

@@ -355,6 +355,110 @@ void main() {
       );
     });
   });
+
+  group('CatDetailApi.renameCat (issue #227)', () {
+    final renamedResponse = {
+      'id': 'cat-1',
+      'name': 'tekir',
+      'area': {'lat': 41.0256, 'lng': 28.9744},
+      'area_label': null,
+      'primary_photo': null,
+      'created_at': '2026-01-01T00:00:00Z',
+      'last_update_at': null,
+      'is_owner': true,
+    };
+
+    test('patches the correct path with the trimmed name', () async {
+      final adapter = _FakeAdapter(statusCode: 200, bodyJson: renamedResponse);
+      final api = _apiWith(adapter);
+
+      await api.renameCat('cat-1', 'tekir');
+
+      expect(adapter.lastOptions?.path, '/v1/cats/cat-1');
+      expect(adapter.lastOptions?.method, 'PATCH');
+      final sentBody = jsonDecode(adapter.lastRequestBody!) as Map;
+      expect(sentBody['name'], 'tekir');
+    });
+
+    test('parses a 200 response into the refreshed CatDetail', () async {
+      final adapter = _FakeAdapter(statusCode: 200, bodyJson: renamedResponse);
+      final api = _apiWith(adapter);
+
+      final detail = await api.renameCat('cat-1', 'tekir');
+
+      expect(detail.name, 'tekir');
+      expect(detail.isOwner, isTrue);
+    });
+
+    test('400 maps to RenameCatValidationException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 400, bodyJson: {'error': 'invalid name'}),
+      );
+
+      await expectLater(
+        api.renameCat('cat-1', ''),
+        throwsA(isA<RenameCatValidationException>()),
+      );
+    });
+
+    test('401 maps to UpdateUnauthorizedException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 401, bodyJson: {'error': 'unauthorized'}),
+      );
+
+      await expectLater(
+        api.renameCat('cat-1', 'tekir'),
+        throwsA(isA<UpdateUnauthorizedException>()),
+      );
+    });
+
+    test('403 maps to RenameCatForbiddenException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 403, bodyJson: {'error': 'not the owner'}),
+      );
+
+      await expectLater(
+        api.renameCat('cat-1', 'tekir'),
+        throwsA(isA<RenameCatForbiddenException>()),
+      );
+    });
+
+    test('404 maps to CatNotFoundException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 404, bodyJson: {'error': 'cat not found'}),
+      );
+
+      await expectLater(
+        api.renameCat('cat-1', 'tekir'),
+        throwsA(isA<CatNotFoundException>()),
+      );
+    });
+
+    test('500 maps to UpdateServerException (retryable)', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 500, bodyJson: {'error': 'internal error'}),
+      );
+
+      await expectLater(
+        api.renameCat('cat-1', 'tekir'),
+        throwsA(isA<UpdateServerException>()),
+      );
+    });
+
+    test(
+      'a connection failure (no response) maps to UpdateNetworkException',
+      () async {
+        final dio = Dio(BaseOptions(baseUrl: 'http://localhost:8080'));
+        dio.httpClientAdapter = _ThrowingAdapter();
+        final api = CatDetailApi(ApiClient(dio: dio));
+
+        await expectLater(
+          api.renameCat('cat-1', 'tekir'),
+          throwsA(isA<UpdateNetworkException>()),
+        );
+      },
+    );
+  });
 }
 
 class _ThrowingAdapter implements HttpClientAdapter {

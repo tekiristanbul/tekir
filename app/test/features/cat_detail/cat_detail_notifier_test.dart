@@ -6,6 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/data/cat_detail_api.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
+import 'package:app/features/discover/ui/discover_notifier.dart';
+import 'package:app/features/map/data/cat_marker.dart';
+import 'package:app/features/map/ui/cats_map_notifier.dart';
 
 const _catId = 'cat-1';
 
@@ -51,6 +54,13 @@ class _FakeCatDetailApi implements CatDetailApi {
   Object? setCoverError;
   String? capturedSetCoverCatId;
   String? capturedSetCoverMediaId;
+
+  // Captures the renameCat tests' own arguments/response — same scoped
+  // convention as setCoverPhoto above (issue #227).
+  CatDetail? renameResult;
+  Object? renameError;
+  String? capturedRenameCatId;
+  String? capturedRenameName;
 
   @override
   Future<CatDetail> fetchDetail(String catId) async {
@@ -106,6 +116,14 @@ class _FakeCatDetailApi implements CatDetailApi {
     capturedSetCoverMediaId = mediaId;
     if (setCoverError != null) throw setCoverError!;
     return setCoverResult!;
+  }
+
+  @override
+  Future<CatDetail> renameCat(String catId, String name) async {
+    capturedRenameCatId = catId;
+    capturedRenameName = name;
+    if (renameError != null) throw renameError!;
+    return renameResult!;
   }
 }
 
@@ -409,6 +427,113 @@ void main() {
       );
       final state = container.read(catDetailProvider(_catId));
       expect(state.detail?.primaryPhoto, _detail.primaryPhoto);
+    });
+  });
+
+  group('renameCat (issue #227)', () {
+    test('replaces detail with the server-refreshed name', () async {
+      final api = _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+      );
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      final renamed = CatDetail(
+        id: _catId,
+        name: 'boncuk',
+        lat: 41.0256,
+        lng: 28.9744,
+        areaLabel: _detail.areaLabel,
+        primaryPhoto: _detail.primaryPhoto,
+        createdAt: _detail.createdAt,
+        lastUpdateAt: _detail.lastUpdateAt,
+        isOwner: true,
+      );
+      api.renameResult = renamed;
+
+      await notifier.renameCat('boncuk');
+
+      expect(api.capturedRenameCatId, _catId);
+      expect(api.capturedRenameName, 'boncuk');
+      final state = container.read(catDetailProvider(_catId));
+      expect(state.detail?.name, 'boncuk');
+    });
+
+    test('invalidates catsMapProvider and discoverProvider, the same shape '
+        'setCoverPhoto uses for catMediaProvider', () async {
+      final api = _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+      );
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      // Push both providers into a non-default state first, so a reset
+      // back to their build()-time default is observable evidence that
+      // renameCat actually invalidated them.
+      container
+          .read(catsMapProvider.notifier)
+          .selectCat(
+            const CatMarker(
+              id: 'other-cat',
+              primaryPhoto: '',
+              lat: 41.0,
+              lng: 29.0,
+            ),
+          );
+      container
+          .read(discoverProvider.notifier)
+          .selectTab(DiscoverTab.following);
+      expect(container.read(catsMapProvider).selectedMarker, isNotNull);
+      expect(
+        container.read(discoverProvider).selectedTab,
+        DiscoverTab.following,
+      );
+
+      api.renameResult = CatDetail(
+        id: _catId,
+        name: 'boncuk',
+        lat: 41.0256,
+        lng: 28.9744,
+        areaLabel: _detail.areaLabel,
+        primaryPhoto: _detail.primaryPhoto,
+        createdAt: _detail.createdAt,
+        lastUpdateAt: _detail.lastUpdateAt,
+        isOwner: true,
+      );
+
+      await notifier.renameCat('boncuk');
+
+      expect(container.read(catsMapProvider).selectedMarker, isNull);
+      expect(container.read(discoverProvider).selectedTab, DiscoverTab.nearby);
+    });
+
+    test('a failure propagates to the caller, state left untouched', () async {
+      final api = _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+      );
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      api.renameError = const RenameCatForbiddenException();
+
+      await expectLater(
+        () => notifier.renameCat('boncuk'),
+        throwsA(isA<RenameCatForbiddenException>()),
+      );
+      final state = container.read(catDetailProvider(_catId));
+      expect(state.detail?.name, _detail.name);
     });
   });
 

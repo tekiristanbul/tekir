@@ -168,6 +168,10 @@ class _FakeCatDetailApi implements CatDetailApi {
   @override
   Future<CatDetail> setCoverPhoto(String catId, String mediaId) =>
       throw UnimplementedError();
+
+  @override
+  Future<CatDetail> renameCat(String catId, String name) =>
+      throw UnimplementedError();
 }
 
 // Same technique as cat_detail_screen_test.dart's fixed notifier: a build()
