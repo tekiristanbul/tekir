@@ -24,10 +24,20 @@ steps:
     needs:
       - approve-plan
 
+  # Runs the repository's own tests before a human is asked to approve
+  # anything: no agent, no model, a non-zero exit fails the run.
+  - name: verify
+    type: command
+    run: |
+      cd backend && go test ./...
+      cd ../app && flutter pub get && dart format --set-exit-if-changed . && flutter test
+    needs:
+      - implement
+
   - name: review
     agent: reviewer
     needs:
-      - implement
+      - verify
 
   - name: approve-change
     type: approval
