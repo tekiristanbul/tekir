@@ -192,6 +192,19 @@ class CatUpdateComposerState {
   }
 }
 
+/// The mixed gallery picker (issue #196's [CatUpdateComposerNotifier.
+/// pickMedia]) doesn't always resolve `XFile.mimeType` for a picked file —
+/// unlike [CatUpdateComposerNotifier.pickPhoto]/`pickVideo`, which already
+/// know which type they asked for. Falls back to the extension of the two
+/// containers `POST /v1/media` ([[api]]) actually accepts as video; anything
+/// else falls back to image, matching `pickPhoto`'s own fallback.
+const _videoExtensions = {'mp4', 'mov', 'm4v'};
+
+String _guessContentTypeFromName(String name) {
+  final ext = name.split('.').last.toLowerCase();
+  return _videoExtensions.contains(ext) ? 'video/mp4' : 'image/jpeg';
+}
+
 /// Drives issue #43's write path from its single remaining entry point:
 /// the composition sheet's multi-select + optional comment, opened by the
 /// screen's one "+ update" action (binding design docs/design/screens/
@@ -257,12 +270,13 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     state = state.copyWith(comment: value);
   }
 
-  /// Picks a photo from the given source — the sheet offers a choice
-  /// between [ImageSource.camera] and [ImageSource.gallery] (issue #153;
-  /// mirrors [AddCatNotifier.pickPhoto] exactly, including reading bytes
-  /// via `XFile.readAsBytes` for flutter web compatibility). Replaces
-  /// whatever media was already picked, if any (photo or video) — the
-  /// sheet's picker affordance doubles as "replace" once media is showing.
+  /// Picks a photo from the given source (issue #196 narrowed the sheet's
+  /// own use of this to camera capture only — the gallery flow moved to
+  /// [pickMedia]). Mirrors [AddCatNotifier.pickPhoto] exactly, including
+  /// reading bytes via `XFile.readAsBytes` for flutter web compatibility.
+  /// Replaces whatever media was already picked, if any (photo or video) —
+  /// the sheet's picker affordance doubles as "replace" once media is
+  /// showing.
   Future<void> pickPhoto(ImageSource source) async {
     if (state.isSubmitting) return;
     final generation = _generation;
@@ -291,6 +305,29 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     await _setPickedMedia(
       picked,
       fallbackContentType: 'video/mp4',
+      generation: generation,
+    );
+  }
+
+  /// Picks a photo or video from the gallery in one action (issue #196):
+  /// the platform's own mixed-type picker (the iOS `PHPicker`, the Android
+  /// Photo Picker) lets the user choose either from a single flow, so the
+  /// sheet's gallery entry point no longer needs separate photo/video
+  /// actions the way camera capture still does (see [pickPhoto]/
+  /// [pickVideo] — there is no equivalent unified capture call for the
+  /// camera source in `image_picker`). Otherwise mirrors [pickPhoto]
+  /// exactly, including replacing whatever media was already picked. A
+  /// gallery-picked video is not client-side duration-capped the way
+  /// [pickVideo] caps camera capture — the server's own duration check
+  /// ([[api]]'s `POST /v1/media`) still applies regardless of entry point.
+  Future<void> pickMedia() async {
+    if (state.isSubmitting) return;
+    final generation = _generation;
+    final picked = await ImagePicker().pickMedia();
+    if (picked == null) return;
+    await _setPickedMedia(
+      picked,
+      fallbackContentType: _guessContentTypeFromName(picked.name),
       generation: generation,
     );
   }

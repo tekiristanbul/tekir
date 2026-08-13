@@ -38,7 +38,9 @@ class CatUpdateSheet extends ConsumerStatefulWidget {
   ConsumerState<CatUpdateSheet> createState() => _CatUpdateSheetState();
 }
 
-enum _MediaPick { cameraPhoto, cameraVideo, galleryPhoto, galleryVideo }
+enum _MediaEntry { camera, gallery }
+
+enum _CameraCapture { photo, video }
 
 class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
   final TextEditingController _commentController = TextEditingController();
@@ -98,12 +100,19 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
     if (ok && mounted) Navigator.of(context).pop(true);
   }
 
-  /// Offers the four ways to attach media (issue #153's video support):
-  /// photo or video, each from the camera or the gallery. A single flat
-  /// list rather than a two-step (kind, then source) flow — four options
-  /// fit one screen without an extra tap.
+  /// Offers only the two entry points issue #196 approved — `Kameradan
+  /// ekle` and `Galeriden ekle` — so the user picks *where* media comes
+  /// from, not its type. The gallery entry point hands straight to
+  /// `image_picker`'s own mixed photo/video picker ([pickMedia]), which
+  /// already lets the user choose either type in that one native flow. The
+  /// camera entry point still needs one more, camera-only tap between
+  /// photo and video capture: unlike the gallery, `image_picker` has no
+  /// unified camera call that can capture either — [pickPhoto] and
+  /// [pickVideo] launch the platform camera locked to one mode each, and
+  /// building a custom capture ui to fake a merged one is explicitly out
+  /// of this issue's scope.
   Future<void> _chooseMediaSource() async {
-    final choice = await showModalBottomSheet<_MediaPick>(
+    final entry = await showModalBottomSheet<_MediaEntry>(
       context: context,
       builder: (sheetContext) => SafeArea(
         child: Column(
@@ -111,43 +120,58 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
           children: [
             ListTile(
               leading: const Icon(Icons.camera_alt),
-              title: const Text('Kameradan fotoğraf çek'),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_MediaPick.cameraPhoto),
-            ),
-            ListTile(
-              leading: const Icon(Icons.videocam),
-              title: const Text('Kameradan video çek'),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_MediaPick.cameraVideo),
+              title: const Text('Kameradan ekle'),
+              onTap: () => Navigator.of(sheetContext).pop(_MediaEntry.camera),
             ),
             ListTile(
               leading: const Icon(Icons.photo_library),
-              title: const Text('Galeriden fotoğraf seç'),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_MediaPick.galleryPhoto),
-            ),
-            ListTile(
-              leading: const Icon(Icons.video_library),
-              title: const Text('Galeriden video seç'),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_MediaPick.galleryVideo),
+              title: const Text('Galeriden ekle'),
+              onTap: () => Navigator.of(sheetContext).pop(_MediaEntry.gallery),
             ),
           ],
         ),
       ),
     );
-    if (choice == null || !mounted) return;
+    if (entry == null || !mounted) return;
     final notifier = ref.read(catUpdateComposerProvider(widget.catId).notifier);
-    switch (choice) {
-      case _MediaPick.cameraPhoto:
+    switch (entry) {
+      case _MediaEntry.camera:
+        await _captureFromCamera(notifier);
+      case _MediaEntry.gallery:
+        await notifier.pickMedia();
+    }
+  }
+
+  /// The camera-only follow-up `_chooseMediaSource` falls back to (see its
+  /// own doc for why): photo or video capture, each a separate native
+  /// camera launch.
+  Future<void> _captureFromCamera(CatUpdateComposerNotifier notifier) async {
+    final capture = await showModalBottomSheet<_CameraCapture>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Fotoğraf çek'),
+              onTap: () => Navigator.of(sheetContext).pop(_CameraCapture.photo),
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam),
+              title: const Text('Video çek'),
+              onTap: () => Navigator.of(sheetContext).pop(_CameraCapture.video),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (capture == null || !mounted) return;
+    switch (capture) {
+      case _CameraCapture.photo:
         await notifier.pickPhoto(ImageSource.camera);
-      case _MediaPick.cameraVideo:
+      case _CameraCapture.video:
         await notifier.pickVideo(ImageSource.camera);
-      case _MediaPick.galleryPhoto:
-        await notifier.pickPhoto(ImageSource.gallery);
-      case _MediaPick.galleryVideo:
-        await notifier.pickVideo(ImageSource.gallery);
     }
   }
 

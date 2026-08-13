@@ -238,6 +238,12 @@ class _FakeImagePickerPlatform extends ImagePickerPlatform {
     CameraDevice preferredCameraDevice = CameraDevice.rear,
     Duration? maxDuration,
   }) async => nextFile;
+
+  @override
+  Future<List<XFile>> getMedia({required MediaOptions options}) async {
+    final file = nextFile;
+    return file == null ? [] : [file];
+  }
 }
 
 const _authenticatedSession = SessionIdentity(
@@ -342,7 +348,7 @@ Future<void> _openComposer(WidgetTester tester) async {
 Future<void> _pickPhoto(WidgetTester tester) async {
   await tester.tap(find.text('Ekle'));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Galeriden fotoğraf seç'));
+  await tester.tap(find.text('Galeriden ekle'));
   await tester.pumpAndSettle();
 }
 
@@ -455,7 +461,7 @@ void main() {
 
       await tester.tap(find.text('Ekle'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Galeriden video seç'));
+      await tester.tap(find.text('Galeriden ekle'));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('pickedVideoPreview')), findsOneWidget);
@@ -467,6 +473,76 @@ void main() {
 
       expect(find.byKey(const Key('removePhotoButton')), findsNothing);
       expect(find.text('Ekle'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'only Kameradan ekle and Galeriden ekle are offered as media entry '
+    'points — no separate video action remains (issue #196)',
+    (tester) async {
+      await _pump(tester, api: _FakeCatDetailApi());
+      await _openComposer(tester);
+
+      await tester.tap(find.text('Ekle'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Kameradan ekle'), findsOneWidget);
+      expect(find.text('Galeriden ekle'), findsOneWidget);
+      expect(find.text('Galeriden fotoğraf seç'), findsNothing);
+      expect(find.text('Galeriden video seç'), findsNothing);
+      expect(find.text('Kameradan fotoğraf çek'), findsNothing);
+      expect(find.text('Kameradan video çek'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Kameradan ekle offers a camera-only photo/video choice, and picking '
+    '"Fotoğraf çek" captures a photo through the camera (issue #196)',
+    (tester) async {
+      fakePlatform.nextFile = XFile.fromData(
+        _validPngBytes,
+        name: 'photo.png',
+        path: 'photo.png',
+      );
+      await _pump(tester, api: _FakeCatDetailApi());
+      await _openComposer(tester);
+
+      await tester.tap(find.text('Ekle'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Kameradan ekle'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Fotoğraf çek'), findsOneWidget);
+      expect(find.text('Video çek'), findsOneWidget);
+
+      await tester.tap(find.text('Fotoğraf çek'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(Image), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Kameradan ekle, then "Video çek" captures a video through the camera '
+    '(issue #196)',
+    (tester) async {
+      fakePlatform.nextFile = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'clip.mp4',
+        path: 'clip.mp4',
+        mimeType: 'video/mp4',
+      );
+      await _pump(tester, api: _FakeCatDetailApi());
+      await _openComposer(tester);
+
+      await tester.tap(find.text('Ekle'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Kameradan ekle'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Video çek'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pickedVideoPreview')), findsOneWidget);
     },
   );
 
