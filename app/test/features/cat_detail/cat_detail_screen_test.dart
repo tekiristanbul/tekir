@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 import 'package:app/core/identity/session_identity.dart';
@@ -106,6 +107,10 @@ class _FakeCatMediaApi implements CatDetailApi {
   String? capturedRenameCatId;
   String? capturedRenameName;
 
+  // deleteCat (issue #228) — same scoped convention as renameCat above.
+  Object? deleteError;
+  String? capturedDeleteCatId;
+
   @override
   Future<CatDetail> fetchDetail(String catId) => throw UnimplementedError();
 
@@ -161,6 +166,12 @@ class _FakeCatMediaApi implements CatDetailApi {
     capturedRenameName = name;
     if (renameError != null) throw renameError!;
     return renameResult!;
+  }
+
+  @override
+  Future<void> deleteCat(String catId) async {
+    capturedDeleteCatId = catId;
+    if (deleteError != null) throw deleteError!;
   }
 }
 
@@ -1557,6 +1568,234 @@ void main() {
 
         expect(find.text('Bağlantı sorunu, tekrar dene.'), findsOneWidget);
         expect(find.text('tekir'), findsWidgets);
+      },
+    );
+  });
+
+  group('delete affordance (issue #228)', () {
+    CatDetail detailWith({required bool isOwner}) => CatDetail(
+      id: _catId,
+      name: 'tekir',
+      lat: 41.0256,
+      lng: 28.9744,
+      areaLabel: null,
+      primaryPhoto: null,
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastUpdateAt: null,
+      isOwner: isOwner,
+    );
+
+    // Unlike _pump above, this pushes the screen onto a real GoRouter with a
+    // previous route beneath it — the delete flow's own success path calls
+    // context.pop() (product-owner decision: back to whichever screen
+    // opened the cat detail view), which needs a real router in the tree
+    // and something to land on.
+    Future<void> pumpRouted(
+      WidgetTester tester,
+      CatDetailState state, {
+      _FakeCatMediaApi? api,
+    }) async {
+      final router = GoRouter(
+        initialLocation: '/previous',
+        routes: [
+          GoRoute(
+            path: '/previous',
+            builder: (context, state) =>
+                const Scaffold(body: Text('önceki ekran')),
+          ),
+          GoRoute(
+            path: '/cats/:id',
+            builder: (context, state) => const CatDetailScreen(catId: _catId),
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            catDetailProvider(
+              _catId,
+            ).overrideWith(() => _FixedCatDetailNotifier(_catId, state)),
+            sessionIdentityServiceProvider.overrideWithValue(
+              _GuestSessionIdentityService(),
+            ),
+            catDetailApiProvider.overrideWithValue(api ?? _FakeCatMediaApi()),
+          ],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pump();
+      router.push('/cats/$_catId');
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('owner: a delete affordance sits beside the rename glyph', (
+      tester,
+    ) async {
+      await pumpRouted(
+        tester,
+        CatDetailState(
+          detail: detailWith(isOwner: true),
+          updates: const [],
+          hasLoadedOnce: true,
+        ),
+      );
+
+      expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+    });
+
+    testWidgets('non-owner (another signed-in account, or a guest): no delete '
+        'affordance at all — is_owner is false either way, and the client '
+        'never distinguishes the two', (tester) async {
+      await pumpRouted(
+        tester,
+        CatDetailState(
+          detail: detailWith(isOwner: false),
+          updates: const [],
+          hasLoadedOnce: true,
+        ),
+      );
+
+      expect(find.byIcon(Icons.delete_outline), findsNothing);
+    });
+
+    testWidgets(
+      'cancelling the confirmation leaves the cat in place and never calls '
+      'the api',
+      (tester) async {
+        final api = _FakeCatMediaApi();
+        await pumpRouted(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          api: api,
+        );
+
+        await tester.tap(find.byIcon(Icons.delete_outline));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text(
+            'Bu kediyi silmek istediğine emin misin? Bu işlem geri alınamaz.',
+          ),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.text('Vazgeç'));
+        await tester.pumpAndSettle();
+
+        expect(api.capturedDeleteCatId, isNull);
+        expect(find.text('tekir'), findsWidgets);
+        expect(find.text('önceki ekran'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a successful delete calls the api, leaves the cat detail screen, and '
+      'shows the turkish success toast',
+      (tester) async {
+        final api = _FakeCatMediaApi();
+        await pumpRouted(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          api: api,
+        );
+
+        await tester.tap(find.byIcon(Icons.delete_outline));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Sil'));
+        await tester.pumpAndSettle();
+
+        expect(api.capturedDeleteCatId, _catId);
+        // back on whichever screen opened the cat detail view — never a
+        // forced destination (product-owner decision).
+        expect(find.text('önceki ekran'), findsOneWidget);
+        expect(find.text('Kedi silindi.'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      '403 (not the owner) surfaces as an error and leaves the cat in place',
+      (tester) async {
+        final api = _FakeCatMediaApi()
+          ..deleteError = const DeleteCatForbiddenException();
+        await pumpRouted(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          api: api,
+        );
+
+        await tester.tap(find.byIcon(Icons.delete_outline));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Sil'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Kedi silinemedi, tekrar dene.'), findsOneWidget);
+        expect(find.text('tekir'), findsWidgets);
+        expect(find.text('önceki ekran'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      '404 (cat not found) surfaces as an error and leaves the cat in place',
+      (tester) async {
+        final api = _FakeCatMediaApi()
+          ..deleteError = const CatNotFoundException();
+        await pumpRouted(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          api: api,
+        );
+
+        await tester.tap(find.byIcon(Icons.delete_outline));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Sil'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Kedi silinemedi, tekrar dene.'), findsOneWidget);
+        expect(find.text('tekir'), findsWidgets);
+        expect(find.text('önceki ekran'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a network failure surfaces as an error and leaves the cat in place',
+      (tester) async {
+        final api = _FakeCatMediaApi()
+          ..deleteError = const UpdateNetworkException();
+        await pumpRouted(
+          tester,
+          CatDetailState(
+            detail: detailWith(isOwner: true),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          api: api,
+        );
+
+        await tester.tap(find.byIcon(Icons.delete_outline));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Sil'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Kedi silinemedi, tekrar dene.'), findsOneWidget);
+        expect(find.text('tekir'), findsWidgets);
+        expect(find.text('önceki ekran'), findsNothing);
       },
     );
   });

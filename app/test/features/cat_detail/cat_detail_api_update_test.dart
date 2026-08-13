@@ -459,6 +459,76 @@ void main() {
       },
     );
   });
+
+  group('CatDetailApi.deleteCat (issue #228)', () {
+    test('deletes the correct path', () async {
+      final adapter = _FakeAdapter(statusCode: 204, bodyJson: const {});
+      final api = _apiWith(adapter);
+
+      await api.deleteCat('cat-1');
+
+      expect(adapter.lastOptions?.path, '/v1/cats/cat-1');
+      expect(adapter.lastOptions?.method, 'DELETE');
+    });
+
+    test('401 maps to UpdateUnauthorizedException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 401, bodyJson: {'error': 'unauthorized'}),
+      );
+
+      await expectLater(
+        api.deleteCat('cat-1'),
+        throwsA(isA<UpdateUnauthorizedException>()),
+      );
+    });
+
+    test('403 maps to DeleteCatForbiddenException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 403, bodyJson: {'error': 'not the owner'}),
+      );
+
+      await expectLater(
+        api.deleteCat('cat-1'),
+        throwsA(isA<DeleteCatForbiddenException>()),
+      );
+    });
+
+    test('404 maps to CatNotFoundException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 404, bodyJson: {'error': 'cat not found'}),
+      );
+
+      await expectLater(
+        api.deleteCat('cat-1'),
+        throwsA(isA<CatNotFoundException>()),
+      );
+    });
+
+    test('500 maps to UpdateServerException (retryable)', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 500, bodyJson: {'error': 'internal error'}),
+      );
+
+      await expectLater(
+        api.deleteCat('cat-1'),
+        throwsA(isA<UpdateServerException>()),
+      );
+    });
+
+    test(
+      'a connection failure (no response) maps to UpdateNetworkException',
+      () async {
+        final dio = Dio(BaseOptions(baseUrl: 'http://localhost:8080'));
+        dio.httpClientAdapter = _ThrowingAdapter();
+        final api = CatDetailApi(ApiClient(dio: dio));
+
+        await expectLater(
+          api.deleteCat('cat-1'),
+          throwsA(isA<UpdateNetworkException>()),
+        );
+      },
+    );
+  });
 }
 
 class _ThrowingAdapter implements HttpClientAdapter {
