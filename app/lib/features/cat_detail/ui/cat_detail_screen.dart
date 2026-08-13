@@ -18,6 +18,7 @@ import '../data/cat_detail.dart';
 import 'cat_detail_notifier.dart';
 import 'cat_update_composer_notifier.dart';
 import 'cat_update_sheet.dart';
+import 'edit_cat_name_sheet.dart';
 import 'update_correction_sheet.dart';
 
 const _statusLabelsTr = {
@@ -355,10 +356,33 @@ class _CoverPhotoCounter extends StatelessWidget {
 /// that count has no backing field yet (docs/design/screens/cat-profile.html's
 /// own recorded "açık kalan" item) — so only the placement moves here, the
 /// count is not invented.
+///
+/// [CatDetail.isOwner] (issue #227) additionally gates a rename affordance
+/// on the name itself — a non-owner never receives the trigger at all,
+/// mirroring exactly how the media archive withholds (rather than
+/// disables) its own owner-only "ana fotoğraf yap" affordance. Placement
+/// and interaction mirror [ProfileScreen]'s own display-name edit
+/// verbatim (product-owner review): the name becomes tappable with a small
+/// faint edit glyph beside it, opening [EditCatNameSheet] as a
+/// root-navigator bottom sheet.
 class _IdentityBlock extends StatelessWidget {
   const _IdentityBlock({required this.detail});
 
   final CatDetail detail;
+
+  Future<void> _openEditCatName(BuildContext context) async {
+    await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      // CatDetailScreen is reached by a push from a persistent shell tab
+      // (app_shell.dart) with its own nested Navigator — without this, the
+      // sheet paints underneath the shell's persistent add-cat fab,
+      // mirroring ProfileScreen's/map_screen.dart's identical fix.
+      useRootNavigator: true,
+      builder: (_) =>
+          EditCatNameSheet(catId: detail.id, currentName: detail.name),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -372,7 +396,31 @@ class _IdentityBlock extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(detail.name, style: Theme.of(context).textTheme.headlineSmall),
+          if (detail.isOwner)
+            InkWell(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              onTap: () => _openEditCatName(context),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      detail.name,
+                      style: Theme.of(context).textTheme.headlineSmall,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.s2),
+                  const Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: AppColors.faint,
+                  ),
+                ],
+              ),
+            )
+          else
+            Text(detail.name, style: Theme.of(context).textTheme.headlineSmall),
           if (detail.areaLabel != null) ...[
             const SizedBox(height: 3),
             Row(

@@ -121,6 +121,10 @@ class _FakeCatDetailApi implements CatDetailApi {
   @override
   Future<CatDetail> setCoverPhoto(String catId, String mediaId) =>
       throw UnimplementedError();
+
+  @override
+  Future<CatDetail> renameCat(String catId, String name) =>
+      throw UnimplementedError();
 }
 
 /// Mutable holder for the sheet's pop result — `showModalBottomSheet`'s

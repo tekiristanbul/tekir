@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../discover/ui/discover_notifier.dart';
+import '../../map/ui/cats_map_notifier.dart';
 import '../data/cat_detail.dart';
 import '../data/cat_detail_api.dart';
 
@@ -226,6 +228,22 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
         .setCoverPhoto(catId, mediaId);
     state = state.copyWith(detail: updated);
     ref.invalidate(catMediaProvider(catId));
+  }
+
+  /// Renames the cat (issue #227) — a recovery path for a naming mistake
+  /// made at creation time. Only the cat's own owner ever sees the
+  /// affordance that calls this; the server re-checks ownership regardless
+  /// of what the client believes. Replaces [CatDetailState.detail] with the
+  /// server-refreshed detail (its own name) and invalidates
+  /// [catsMapProvider]/[discoverProvider] — the same shape [setCoverPhoto]
+  /// above uses for [catMediaProvider] — so the map and discover surfaces
+  /// pick up the new name on their next load rather than staying stale
+  /// until some unrelated refetch.
+  Future<void> renameCat(String name) async {
+    final updated = await ref.read(catDetailApiProvider).renameCat(catId, name);
+    state = state.copyWith(detail: updated);
+    ref.invalidate(catsMapProvider);
+    ref.invalidate(discoverProvider);
   }
 }
 

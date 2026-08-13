@@ -109,6 +109,25 @@ class SetCoverValidationException implements Exception {
   const SetCoverValidationException();
 }
 
+/// Thrown when `PATCH /v1/cats/{cat_id}` answers 403 — the caller isn't the
+/// cat's own owner (issue #227). Not collapsed into [CatNotFoundException]:
+/// the cat's detail read already tells any caller, including a guest,
+/// whether they own it via `is_owner`, so confirming "this exists, but
+/// isn't yours" leaks nothing the caller couldn't already see — mirrors
+/// [SetCoverForbiddenException]'s exact reasoning.
+class RenameCatForbiddenException implements Exception {
+  const RenameCatForbiddenException();
+}
+
+/// Thrown when `PATCH /v1/cats/{cat_id}` answers 400 — name is empty once
+/// trimmed (issue #227). The rename sheet already rejects this
+/// client-side before ever calling this method (via [sanitizeCatName]);
+/// this mainly guards against a stale client/server contract rather than a
+/// routine path.
+class RenameCatValidationException implements Exception {
+  const RenameCatValidationException();
+}
+
 class CatDetailApi {
   CatDetailApi(this._apiClient);
 
@@ -183,6 +202,42 @@ class CatDetailApi {
         return const UpdateUnauthorizedException();
       case 403:
         return const SetCoverForbiddenException();
+      case 404:
+        return const CatNotFoundException();
+    }
+    if (status != null) return const UpdateServerException();
+    return const UpdateNetworkException();
+  }
+
+  /// Renames catId (issue #227) — a recovery path for a naming mistake made
+  /// at creation time. Only the cat's own owner may do this — the caller is
+  /// responsible for making sure a session exists first (see [AuthGate]);
+  /// the server re-checks ownership regardless of what the client's own
+  /// `is_owner` believes. name is sent as-is (the rename sheet trims and
+  /// rejects empty input before ever calling this); the server trims again
+  /// regardless. Returns the refreshed [CatDetail], same shape
+  /// [setCoverPhoto] already gives the caller who just made a change.
+  Future<CatDetail> renameCat(String catId, String name) async {
+    try {
+      final response = await _apiClient.dio.patch<Map<String, dynamic>>(
+        '/v1/cats/$catId',
+        data: {'name': name},
+      );
+      return CatDetail.fromJson(response.data!);
+    } on DioException catch (e) {
+      throw _mapRenameCatError(e);
+    }
+  }
+
+  Exception _mapRenameCatError(DioException e) {
+    final status = e.response?.statusCode;
+    switch (status) {
+      case 400:
+        return const RenameCatValidationException();
+      case 401:
+        return const UpdateUnauthorizedException();
+      case 403:
+        return const RenameCatForbiddenException();
       case 404:
         return const CatNotFoundException();
     }
