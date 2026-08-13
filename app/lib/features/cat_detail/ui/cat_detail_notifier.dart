@@ -245,6 +245,24 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
     ref.invalidate(catsMapProvider);
     ref.invalidate(discoverProvider);
   }
+
+  /// Deletes the cat (issue #228) — a terminal soft delete (#200): no
+  /// restore exists. Only the cat's own owner ever sees the affordance
+  /// that calls this; the server re-checks ownership regardless of what
+  /// the client believes. Unlike [renameCat]/[setCoverPhoto] there is no
+  /// refreshed detail to fold back into [CatDetailState] — the caller
+  /// navigates off this screen on success. [catsMapProvider]/
+  /// [discoverProvider] are not invalidated here (unlike [renameCat]
+  /// above): both are `NotifierProvider`s whose `build()` fetches
+  /// nothing, so invalidating would empty the map/discover screens
+  /// instead of updating them (issue #230). Removing the cat from their
+  /// own already-loaded state in place keeps them correct without that
+  /// defect.
+  Future<void> deleteCat() async {
+    await ref.read(catDetailApiProvider).deleteCat(catId);
+    ref.read(catsMapProvider.notifier).removeCat(catId);
+    ref.read(discoverProvider.notifier).removeCat(catId);
+  }
 }
 
 final catDetailProvider =

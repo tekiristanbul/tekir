@@ -30,6 +30,10 @@ class _FakeSessionIdentityService implements SessionIdentityService {
 }
 
 class _FakeFollowsApi implements FollowsApi {
+  _FakeFollowsApi([this.follows = const []]);
+
+  final List<CatMarker> follows;
+
   @override
   Future<void> follow(String catId) async {}
 
@@ -37,7 +41,7 @@ class _FakeFollowsApi implements FollowsApi {
   Future<void> unfollow(String catId) async {}
 
   @override
-  Future<List<CatMarker>> fetchFollows() async => const [];
+  Future<List<CatMarker>> fetchFollows() async => follows;
 }
 
 class _FakeLocationService extends DiscoverLocationService {
@@ -82,13 +86,14 @@ const _resolved = DiscoverLocationResolved(lat: 41.0, lng: 29.0);
 ProviderContainer _buildContainer({
   required _FakeLocationService location,
   required _FakeDiscoverApi discoverApi,
+  _FakeFollowsApi? followsApi,
 }) {
   final container = ProviderContainer(
     overrides: [
       sessionIdentityServiceProvider.overrideWithValue(
         _FakeSessionIdentityService(),
       ),
-      followsApiProvider.overrideWithValue(_FakeFollowsApi()),
+      followsApiProvider.overrideWithValue(followsApi ?? _FakeFollowsApi()),
       discoverLocationServiceProvider.overrideWithValue(location),
       discoverApiProvider.overrideWithValue(discoverApi),
     ],
@@ -236,4 +241,72 @@ void main() {
       expect(location.calls, 0);
     },
   );
+
+  group('removeCat (issue #228)', () {
+    test(
+      'drops the cat from nearby, needsHelp, and following in place',
+      () async {
+        final location = _FakeLocationService(_resolved);
+        final api = _FakeDiscoverApi([
+          const DiscoverPage(
+            items: [
+              DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 5),
+              DiscoverCat(id: 'cat-2', primaryPhoto: '', distanceMeters: 10),
+            ],
+          ),
+          const DiscoverPage(
+            items: [
+              DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 5),
+            ],
+          ),
+        ]);
+        final followsApi = _FakeFollowsApi(const [
+          CatMarker(id: 'cat-1', primaryPhoto: '', lat: 41.0, lng: 29.0),
+        ]);
+        final container = _buildContainer(
+          location: location,
+          discoverApi: api,
+          followsApi: followsApi,
+        );
+        addTearDown(container.dispose);
+
+        final notifier = container.read(discoverProvider.notifier);
+        await notifier.ensureNearbyLoaded();
+        await notifier.ensureNeedsHelpLoaded();
+        await notifier.loadFollowing();
+
+        notifier.removeCat('cat-1');
+
+        final state = container.read(discoverProvider);
+        expect(state.nearby.cats.map((c) => c.id), ['cat-2']);
+        expect(state.needsHelp.cats, isEmpty);
+        expect(state.following.cats, isEmpty);
+      },
+    );
+
+    test('is a no-op when the cat is absent from every tab — never an '
+        'invalidate/refetch', () async {
+      final location = _FakeLocationService(_resolved);
+      final api = _FakeDiscoverApi([
+        const DiscoverPage(
+          items: [
+            DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 5),
+          ],
+        ),
+      ]);
+      final container = _buildContainer(location: location, discoverApi: api);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(discoverProvider.notifier);
+      await notifier.ensureNearbyLoaded();
+
+      notifier.removeCat('does-not-exist');
+
+      expect(container.read(discoverProvider).nearby.cats, hasLength(1));
+      // An invalidate would have reset build()'s state and lost
+      // hasLoadedOnce — removeCat's own no-op path must not.
+      expect(container.read(discoverProvider).nearby.hasLoadedOnce, isTrue);
+      expect(api.calls, 1);
+    });
+  });
 }
