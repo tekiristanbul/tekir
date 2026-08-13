@@ -1,7 +1,6 @@
-import 'dart:typed_data';
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
@@ -198,6 +197,68 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   @override
   Stream<VideoEvent> videoEventsFor(int playerId) =>
       const Stream<VideoEvent>.empty();
+}
+
+/// A configurable [VideoPlayerPlatform] for the thumbnail-decode tests
+/// below (issue #198): unlike [_FakeVideoPlayerPlatform] above, whose
+/// stream never emits, this one can complete a controller's initialize()
+/// successfully (the default) or make it fail ([initializeError]), and
+/// records every play()/pause() call so [_VideoThumbnail]'s "force a real
+/// frame instead of a blank texture" behavior is directly observable.
+class _ScriptedVideoPlayerPlatform extends VideoPlayerPlatform {
+  _ScriptedVideoPlayerPlatform({this.initializeError});
+
+  final Object? initializeError;
+  int _nextPlayerId = 0;
+  final List<int> playCalls = [];
+  final List<int> pauseCalls = [];
+
+  @override
+  Future<void> init() async {}
+
+  @override
+  Future<void> dispose(int playerId) async {}
+
+  @override
+  Future<int?> createWithOptions(VideoCreationOptions options) async =>
+      _nextPlayerId++;
+
+  @override
+  Stream<VideoEvent> videoEventsFor(int playerId) {
+    final error = initializeError;
+    if (error != null) {
+      return Stream<VideoEvent>.error(error);
+    }
+    return Stream<VideoEvent>.value(
+      VideoEvent(
+        eventType: VideoEventType.initialized,
+        duration: const Duration(seconds: 3),
+        size: const Size(640, 360),
+      ),
+    );
+  }
+
+  @override
+  Future<void> play(int playerId) async {
+    playCalls.add(playerId);
+  }
+
+  @override
+  Future<void> pause(int playerId) async {
+    pauseCalls.add(playerId);
+  }
+
+  @override
+  Future<void> setLooping(int playerId, bool looping) async {}
+
+  @override
+  Future<void> setVolume(int playerId, double volume) async {}
+
+  @override
+  Future<void> setPlaybackSpeed(int playerId, double speed) async {}
+
+  @override
+  Widget buildView(int playerId) => const SizedBox.shrink();
 }
 
 void main() {
@@ -882,6 +943,132 @@ void main() {
 
         expect(find.byType(CachedNetworkImage), findsNothing);
         expect(find.byIcon(Icons.play_circle_fill), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'medya tab: a video thumbnail forces a real decoded frame instead of '
+      'staying blank once its controller finishes initializing (issue #198)',
+      (tester) async {
+        final platform = _ScriptedVideoPlayerPlatform();
+        VideoPlayerPlatform.instance = platform;
+        addTearDown(
+          () => VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform(),
+        );
+
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: CatDetail(
+              id: _catId,
+              name: 'tekir',
+              lat: 41.0256,
+              lng: 28.9744,
+              areaLabel: null,
+              primaryPhoto: null,
+              createdAt: DateTime.utc(2026, 1, 1),
+              lastUpdateAt: null,
+              mediaCount: 1,
+            ),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          media: [
+            CatMediaItem(
+              id: 'm1',
+              url: 'https://example.com/clip.mp4',
+              isCover: false,
+              createdAt: DateTime.utc(2026, 1, 1),
+              mediaContentType: 'video/mp4',
+            ),
+          ],
+        );
+
+        await tester.drag(find.byType(ListView), const Offset(0, -400));
+        await tester.pump();
+        await tester.tap(find.text('medya'));
+        await tester.pump();
+        await tester.pump();
+        // lets the initialize()/play()/pause() chain _VideoThumbnail kicks
+        // off once initialize's stream event lands actually run to completion.
+        await tester.pump();
+        await tester.pump();
+
+        // The blank/white-cover bug (issue #198) was that a video's
+        // texture never advanced past an empty frame because nothing ever
+        // called play() — initialize() alone only decodes metadata. This
+        // is the fix's own mechanism: play() then pause() right after
+        // initialize completes, so the platform player actually decodes
+        // and holds a real frame.
+        expect(platform.playCalls, isNotEmpty);
+        expect(platform.pauseCalls, isNotEmpty);
+      },
+    );
+
+    testWidgets(
+      'medya tab: a video thumbnail falls back to the branded placeholder, '
+      'never a blank frame, when decoding genuinely fails (issue #198)',
+      (tester) async {
+        final platform = _ScriptedVideoPlayerPlatform(
+          initializeError: PlatformException(
+            code: 'VideoError',
+            message: 'decode failed',
+          ),
+        );
+        VideoPlayerPlatform.instance = platform;
+        addTearDown(
+          () => VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform(),
+        );
+
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: CatDetail(
+              id: _catId,
+              name: 'tekir',
+              lat: 41.0256,
+              lng: 28.9744,
+              areaLabel: null,
+              primaryPhoto: null,
+              createdAt: DateTime.utc(2026, 1, 1),
+              lastUpdateAt: null,
+              mediaCount: 1,
+            ),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+          media: [
+            CatMediaItem(
+              id: 'm1',
+              url: 'https://example.com/clip.mp4',
+              isCover: false,
+              createdAt: DateTime.utc(2026, 1, 1),
+              mediaContentType: 'video/mp4',
+            ),
+          ],
+        );
+
+        await tester.drag(find.byType(ListView), const Offset(0, -400));
+        await tester.pump();
+        await tester.tap(find.text('medya'));
+        await tester.pump();
+        await tester.pump();
+        await tester.pump();
+        await tester.pump();
+
+        // A failed decode gets the same branded fallback a failed photo
+        // load already uses (never a blank texture) — scoped to the grid
+        // so this doesn't also match the screen's own top cover, which
+        // renders the identical icon for its own unrelated "no photo"
+        // state in this fixture.
+        expect(
+          find.descendant(
+            of: find.byType(GridView),
+            matching: find.byIcon(Icons.pets),
+          ),
+          findsOneWidget,
+        );
+        expect(platform.playCalls, isEmpty);
       },
     );
 

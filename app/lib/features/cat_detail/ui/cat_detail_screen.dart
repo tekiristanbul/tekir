@@ -1643,6 +1643,15 @@ class _TimelineThumbnail extends StatelessWidget {
 /// play-glyph overlay so it reads apart from a plain photo. Never decoded
 /// from local bytes before upload (see [_MediaPicker]'s own doc for why);
 /// this only ever renders an already-uploaded, network-hosted video.
+///
+/// [VideoPlayerController.initialize] alone only decodes the container's
+/// metadata (duration, size) — the platform player's own texture stays
+/// blank/white until playback actually advances at least once (issue #198:
+/// this is what made an uploaded video's thumbnail look broken/unfinished).
+/// [_VideoThumbnailState] forces a real frame by playing for an instant and
+/// immediately pausing right after initialize completes, and falls back to
+/// [_HeroPlaceholder]'s non-loading state — never a blank texture — if
+/// initialization itself fails.
 class _VideoThumbnail extends StatefulWidget {
   const _VideoThumbnail({required this.url});
 
@@ -1683,10 +1692,31 @@ class _VideoThumbnailState extends State<_VideoThumbnail> {
     final screenHeight = MediaQuery.sizeOf(context).height;
     if (top >= screenHeight || top + box.size.height <= 0) return;
     final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    final initialize = _initializeAndDecodeFirstFrame(controller);
+    // A failure can land before this widget's next build ever gives
+    // FutureBuilder a chance to attach its own listener below — without
+    // this, that race reports as an unhandled async error (a real
+    // decode failure would still surface correctly, just noisily).
+    // ignore() only suppresses that report; FutureBuilder's own listener
+    // still sees the same error once it attaches.
+    initialize.ignore();
     setState(() {
       _controller = controller;
-      _initialize = controller.initialize();
+      _initialize = initialize;
     });
+  }
+
+  // initialize() alone decodes the container's metadata, not a pixel
+  // frame — the platform player's own texture stays blank until playback
+  // actually advances (see this class's own doc). Playing for an instant
+  // and immediately pausing forces a real frame to decode, which then
+  // stays on screen paused as the thumbnail.
+  Future<void> _initializeAndDecodeFirstFrame(
+    VideoPlayerController controller,
+  ) async {
+    await controller.initialize();
+    await controller.play();
+    await controller.pause();
   }
 
   @override
@@ -1710,6 +1740,13 @@ class _VideoThumbnailState extends State<_VideoThumbnail> {
             FutureBuilder<void>(
               future: _initialize,
               builder: (context, snapshot) {
+                // A genuinely failed decode (issue #198's fallback
+                // requirement) gets the same non-loading placeholder a
+                // failed photo load already uses — never a blank texture
+                // built from a controller that never actually initialized.
+                if (snapshot.hasError) {
+                  return const _HeroPlaceholder();
+                }
                 if (snapshot.connectionState != ConnectionState.done) {
                   return const _HeroPlaceholder(loading: true);
                 }
