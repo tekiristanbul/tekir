@@ -34,6 +34,19 @@ class CatMarker {
 
   bool get needsHelp => activeAlert != null;
 
+  CatMarker copyWith({String? name}) {
+    return CatMarker(
+      id: id,
+      name: name ?? this.name,
+      primaryPhoto: primaryPhoto,
+      lat: lat,
+      lng: lng,
+      areaLabel: areaLabel,
+      activeAlert: activeAlert,
+      lastUpdateAt: lastUpdateAt,
+    );
+  }
+
   factory CatMarker.fromJson(Map<String, dynamic> json) {
     final area = json['area'] as Map<String, dynamic>;
     final rawLastUpdate = json['last_update_at'] as String?;
