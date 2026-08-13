@@ -125,6 +125,9 @@ class _FakeCatDetailApi implements CatDetailApi {
   @override
   Future<CatDetail> renameCat(String catId, String name) =>
       throw UnimplementedError();
+
+  @override
+  Future<void> deleteCat(String catId) => throw UnimplementedError();
 }
 
 /// Mutable holder for the sheet's pop result — `showModalBottomSheet`'s

@@ -3,12 +3,33 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:app/core/identity/session_identity.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/data/cat_detail_api.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
 import 'package:app/features/discover/ui/discover_notifier.dart';
 import 'package:app/features/map/data/cat_marker.dart';
 import 'package:app/features/map/ui/cats_map_notifier.dart';
+
+// discoverProvider's own build() (unrelated to this notifier's own scope)
+// listens to sessionProvider, which resolves this real service by default —
+// a guest fake keeps the delegation test below from touching secure storage.
+class _GuestSessionIdentityService implements SessionIdentityService {
+  @override
+  SessionIdentity? get cached => null;
+
+  @override
+  Future<SessionIdentity?> restore() async => null;
+
+  @override
+  Future<SessionIdentity?> refreshIfExpired() async => null;
+
+  @override
+  Future<void> save(SessionIdentity identity) async {}
+
+  @override
+  Future<void> logout({String? deviceToken}) async {}
+}
 
 const _catId = 'cat-1';
 
@@ -61,6 +82,11 @@ class _FakeCatDetailApi implements CatDetailApi {
   Object? renameError;
   String? capturedRenameCatId;
   String? capturedRenameName;
+
+  // Captures the deleteCat tests' own arguments — same scoped convention
+  // as renameCat above (issue #228).
+  Object? deleteError;
+  String? capturedDeleteCatId;
 
   @override
   Future<CatDetail> fetchDetail(String catId) async {
@@ -125,6 +151,34 @@ class _FakeCatDetailApi implements CatDetailApi {
     if (renameError != null) throw renameError!;
     return renameResult!;
   }
+
+  @override
+  Future<void> deleteCat(String catId) async {
+    capturedDeleteCatId = catId;
+    if (deleteError != null) throw deleteError!;
+  }
+}
+
+/// Records every removeCat call instead of touching real map state — proves
+/// [CatDetailNotifier.deleteCat] delegates to it, without needing to drive
+/// [CatsMapNotifier] through a real bounds fetch first. [CatsMapNotifier]'s
+/// own removal semantics (in-place, no-op when absent) are covered directly
+/// by cats_map_notifier_test.dart.
+class _SpyCatsMapNotifier extends CatsMapNotifier {
+  final removedIds = <String>[];
+
+  @override
+  void removeCat(String catId) => removedIds.add(catId);
+}
+
+/// Same convention as [_SpyCatsMapNotifier] above, for [DiscoverNotifier] —
+/// its own removal semantics are covered directly by
+/// discover_notifier_test.dart.
+class _SpyDiscoverNotifier extends DiscoverNotifier {
+  final removedIds = <String>[];
+
+  @override
+  void removeCat(String catId) => removedIds.add(catId);
 }
 
 ProviderContainer _containerWith(_FakeCatDetailApi api) {
@@ -535,6 +589,76 @@ void main() {
       );
       final state = container.read(catDetailProvider(_catId));
       expect(state.detail?.name, _detail.name);
+    });
+  });
+
+  group('deleteCat (issue #228)', () {
+    test('calls the api with the cat\'s id', () async {
+      final api = _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+      );
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      await notifier.deleteCat();
+
+      expect(api.capturedDeleteCatId, _catId);
+    });
+
+    test(
+      'delegates to catsMapProvider.removeCat and discoverProvider.removeCat '
+      '— never invalidate (issue #230\'s defect), which this notifier\'s own '
+      'in-place removeCat methods (see their own tests) exist to avoid',
+      () async {
+        final api = _FakeCatDetailApi(
+          detail: _detail,
+          updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+        );
+        final mapNotifier = _SpyCatsMapNotifier();
+        final discoverNotifier = _SpyDiscoverNotifier();
+        final container = ProviderContainer(
+          overrides: [
+            catDetailApiProvider.overrideWithValue(api),
+            sessionIdentityServiceProvider.overrideWithValue(
+              _GuestSessionIdentityService(),
+            ),
+            catsMapProvider.overrideWith(() => mapNotifier),
+            discoverProvider.overrideWith(() => discoverNotifier),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        final notifier = container.read(catDetailProvider(_catId).notifier);
+        await notifier.load();
+
+        await notifier.deleteCat();
+
+        expect(mapNotifier.removedIds, [_catId]);
+        expect(discoverNotifier.removedIds, [_catId]);
+      },
+    );
+
+    test('a failure propagates to the caller', () async {
+      final api = _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+      );
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      api.deleteError = const DeleteCatForbiddenException();
+
+      await expectLater(
+        () => notifier.deleteCat(),
+        throwsA(isA<DeleteCatForbiddenException>()),
+      );
     });
   });
 

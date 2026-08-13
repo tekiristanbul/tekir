@@ -128,6 +128,16 @@ class RenameCatValidationException implements Exception {
   const RenameCatValidationException();
 }
 
+/// Thrown when `DELETE /v1/cats/{cat_id}` answers 403 — the caller isn't
+/// the cat's own owner (issue #200/#228). Not collapsed into
+/// [CatNotFoundException]: the cat's detail read already tells any caller,
+/// including a guest, whether they own it via `is_owner`, so confirming
+/// "this exists, but isn't yours" leaks nothing the caller couldn't
+/// already see — mirrors [RenameCatForbiddenException]'s exact reasoning.
+class DeleteCatForbiddenException implements Exception {
+  const DeleteCatForbiddenException();
+}
+
 class CatDetailApi {
   CatDetailApi(this._apiClient);
 
@@ -238,6 +248,37 @@ class CatDetailApi {
         return const UpdateUnauthorizedException();
       case 403:
         return const RenameCatForbiddenException();
+      case 404:
+        return const CatNotFoundException();
+    }
+    if (status != null) return const UpdateServerException();
+    return const UpdateNetworkException();
+  }
+
+  /// Deletes catId permanently, from the caller's perspective (issue #228)
+  /// — the one recovery path for a cat added by mistake, per #200's
+  /// terminal soft delete: no restore exists. Only the cat's own owner
+  /// may do this — the caller is responsible for making sure a session
+  /// exists first (see [AuthGate]); the server re-checks ownership
+  /// regardless of what the client's own `is_owner` believes. A retry
+  /// against an already-deleted cat also succeeds (204) server-side — see
+  /// the backend's idempotent-retry note — so this never throws for that
+  /// case.
+  Future<void> deleteCat(String catId) async {
+    try {
+      await _apiClient.dio.delete<void>('/v1/cats/$catId');
+    } on DioException catch (e) {
+      throw _mapDeleteCatError(e);
+    }
+  }
+
+  Exception _mapDeleteCatError(DioException e) {
+    final status = e.response?.statusCode;
+    switch (status) {
+      case 401:
+        return const UpdateUnauthorizedException();
+      case 403:
+        return const DeleteCatForbiddenException();
       case 404:
         return const CatNotFoundException();
     }

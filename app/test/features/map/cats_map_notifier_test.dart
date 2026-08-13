@@ -173,6 +173,72 @@ void main() {
     expect(container.read(catsMapProvider).selectedMarker, isNull);
   });
 
+  group('removeCat (issue #228)', () {
+    const otherCat = CatMarker(
+      id: 'cat-2',
+      primaryPhoto: '',
+      lat: 41.03,
+      lng: 28.98,
+    );
+
+    test('drops exactly the matching marker, in place', () async {
+      final api = _ControllableCatsApi();
+      final container = ProviderContainer(
+        overrides: [catsApiProvider.overrideWithValue(api)],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catsMapProvider.notifier);
+      final future = notifier.fetchForBounds(_boundsA);
+      api.resolve(_boundsA, const [_cat, otherCat]);
+      await future;
+
+      notifier.removeCat(_cat.id);
+
+      expect(container.read(catsMapProvider).markers, [otherCat]);
+    });
+
+    test('clears selectedMarker only when it is the removed cat', () async {
+      final api = _ControllableCatsApi();
+      final container = ProviderContainer(
+        overrides: [catsApiProvider.overrideWithValue(api)],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catsMapProvider.notifier);
+      final future = notifier.fetchForBounds(_boundsA);
+      api.resolve(_boundsA, const [_cat, otherCat]);
+      await future;
+
+      notifier.selectCat(otherCat);
+
+      notifier.removeCat(_cat.id);
+      expect(container.read(catsMapProvider).selectedMarker, otherCat);
+
+      notifier.removeCat(otherCat.id);
+      expect(container.read(catsMapProvider).selectedMarker, isNull);
+    });
+
+    test('is a no-op when the cat is absent — never an invalidate/refetch', () {
+      final api = _ControllableCatsApi();
+      final container = ProviderContainer(
+        overrides: [catsApiProvider.overrideWithValue(api)],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catsMapProvider.notifier);
+      notifier.selectCat(_cat);
+
+      notifier.removeCat('does-not-exist');
+
+      expect(container.read(catsMapProvider).markers, isEmpty);
+      // Still selected — an invalidate would have reset build()'s state and
+      // cleared this too; removeCat's own no-op path must not.
+      expect(container.read(catsMapProvider).selectedMarker, _cat);
+      expect(api._pending, isEmpty);
+    });
+  });
+
   test('renameCat patches the matching marker in place, leaving the rest of '
       'the loaded viewport untouched (issue #230)', () async {
     const other = CatMarker(id: 'cat-2', primaryPhoto: '', lat: 41, lng: 29);

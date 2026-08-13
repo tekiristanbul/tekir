@@ -157,6 +157,21 @@ class CatsMapNotifier extends Notifier<CatsMapState> {
           : selected,
     );
   }
+
+  /// Drops [catId]'s marker from state in place (issue #228's delete
+  /// flow) — never a re-fetch/invalidate, since this notifier's own
+  /// build() fetches nothing: invalidating would empty the map instead of
+  /// updating it (the #230 defect the delete flow deliberately avoids
+  /// repeating). Also clears [CatsMapState.selectedMarker] when it's the
+  /// removed cat, so a stale preview sheet can't stay open over a marker
+  /// that's no longer there. No-op when the cat isn't present.
+  void removeCat(String catId) {
+    if (!state.markers.any((m) => m.id == catId)) return;
+    state = state.copyWith(
+      markers: state.markers.where((m) => m.id != catId).toList(),
+      clearSelectedMarker: state.selectedMarker?.id == catId,
+    );
+  }
 }
 
 final catsMapProvider = NotifierProvider<CatsMapNotifier, CatsMapState>(

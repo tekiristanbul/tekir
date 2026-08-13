@@ -342,6 +342,40 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
       ),
     );
   }
+
+  /// Drops [catId] from every tab's already-loaded list in place (issue
+  /// #228's delete flow) — never invalidate/re-fetch, since this
+  /// notifier's own build() fetches nothing: invalidating would empty
+  /// nearby/needsHelp/following instead of updating them (the #230 defect
+  /// the delete flow deliberately avoids repeating). No-op when the cat
+  /// isn't present in any of the three tabs.
+  void removeCat(String catId) {
+    final nextNearby = state.nearby.cats.any((c) => c.id == catId)
+        ? state.nearby.copyWith(
+            cats: state.nearby.cats.where((c) => c.id != catId).toList(),
+          )
+        : state.nearby;
+    final nextNeedsHelp = state.needsHelp.cats.any((c) => c.id == catId)
+        ? state.needsHelp.copyWith(
+            cats: state.needsHelp.cats.where((c) => c.id != catId).toList(),
+          )
+        : state.needsHelp;
+    final nextFollowing = state.following.cats.any((c) => c.id == catId)
+        ? state.following.copyWith(
+            cats: state.following.cats.where((c) => c.id != catId).toList(),
+          )
+        : state.following;
+    if (identical(nextNearby, state.nearby) &&
+        identical(nextNeedsHelp, state.needsHelp) &&
+        identical(nextFollowing, state.following)) {
+      return;
+    }
+    state = state.copyWith(
+      nearby: nextNearby,
+      needsHelp: nextNeedsHelp,
+      following: nextFollowing,
+    );
+  }
 }
 
 final discoverProvider = NotifierProvider<DiscoverNotifier, DiscoverState>(

@@ -365,6 +365,10 @@ class _CoverPhotoCounter extends StatelessWidget {
 /// verbatim (product-owner review): the name becomes tappable with a small
 /// faint edit glyph beside it, opening [EditCatNameSheet] as a
 /// root-navigator bottom sheet.
+///
+/// [CatDetail.isOwner] (issue #228) also gates a trailing delete
+/// affordance on this same row, next to the rename glyph (product-owner
+/// review) — see [_DeleteCatButton].
 class _IdentityBlock extends StatelessWidget {
   const _IdentityBlock({required this.detail});
 
@@ -396,31 +400,42 @@ class _IdentityBlock extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (detail.isOwner)
-            InkWell(
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              onTap: () => _openEditCatName(context),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: Text(
-                      detail.name,
-                      style: Theme.of(context).textTheme.headlineSmall,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.s2),
-                  const Icon(
-                    Icons.edit_outlined,
-                    size: 18,
-                    color: AppColors.faint,
-                  ),
-                ],
+          Row(
+            children: [
+              Expanded(
+                child: detail.isOwner
+                    ? InkWell(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        onTap: () => _openEditCatName(context),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                detail.name,
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.headlineSmall,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.s2),
+                            const Icon(
+                              Icons.edit_outlined,
+                              size: 18,
+                              color: AppColors.faint,
+                            ),
+                          ],
+                        ),
+                      )
+                    : Text(
+                        detail.name,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
               ),
-            )
-          else
-            Text(detail.name, style: Theme.of(context).textTheme.headlineSmall),
+              if (detail.isOwner) _DeleteCatButton(catId: detail.id),
+            ],
+          ),
           if (detail.areaLabel != null) ...[
             const SizedBox(height: 3),
             Row(
@@ -443,6 +458,94 @@ class _IdentityBlock extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// The cat's own owner delete affordance (issue #228) — `DELETE
+/// /v1/cats/{cat_id}` shipped in #200, but nothing in the app reached it
+/// until now. Sits beside the rename glyph on [_IdentityBlock]'s own name
+/// row (product-owner review), gated by [CatDetail.isOwner] exactly like
+/// [EditCatNameSheet]'s own trigger. Confirmed before ever calling the
+/// api — deletion is terminal, #200: no restore exists — via the same
+/// confirm-dialog copy/shape [UpdateCorrectionSheet]'s own delete uses.
+/// On success the screen pops off the stack (product-owner decision: back
+/// to whichever screen opened it, never a forced destination); the
+/// map/discover surfaces drop the cat from their own already-loaded state
+/// in place rather than through a reload — see
+/// [CatDetailNotifier.deleteCat].
+class _DeleteCatButton extends ConsumerStatefulWidget {
+  const _DeleteCatButton({required this.catId});
+
+  final String catId;
+
+  @override
+  ConsumerState<_DeleteCatButton> createState() => _DeleteCatButtonState();
+}
+
+class _DeleteCatButtonState extends ConsumerState<_DeleteCatButton> {
+  bool _isDeleting = false;
+
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Kediyi sil'),
+        content: const Text(
+          'Bu kediyi silmek istediğine emin misin? Bu işlem geri alınamaz.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Vazgeç'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.help),
+            child: const Text('Sil'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isDeleting = true);
+    try {
+      await ref.read(catDetailProvider(widget.catId).notifier).deleteCat();
+      if (!mounted) return;
+      // Captured before popping — this screen's own context is on its way
+      // out, but MaterialApp's ScaffoldMessenger is shared app-wide, so the
+      // toast still lands once the previous screen is back on top.
+      final messenger = ScaffoldMessenger.of(context);
+      context.pop();
+      messenger.showSnackBar(const SnackBar(content: Text('Kedi silindi.')));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isDeleting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kedi silinemedi, tekrar dene.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: kTapMin,
+      height: kTapMin,
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        iconSize: 18,
+        icon: _isDeleting
+            ? const InlineSpinner(
+                size: 16,
+                color: AppColors.help,
+                trackColor: AppColors.line,
+              )
+            : const Icon(Icons.delete_outline, color: AppColors.help),
+        tooltip: 'Kediyi sil',
+        onPressed: _isDeleting ? null : _confirmDelete,
       ),
     );
   }
