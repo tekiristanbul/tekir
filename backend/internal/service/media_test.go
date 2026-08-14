@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"math"
 	"math/rand"
 	"testing"
 
@@ -113,6 +115,75 @@ func writePNGChunk(buf *bytes.Buffer, typ string, data []byte) {
 	var sum [4]byte
 	binary.BigEndian.PutUint32(sum[:], crc.Sum32())
 	buf.Write(sum[:])
+}
+
+// quadrantJPEGBytes returns a width x height jpeg whose four quadrants are
+// distinct, high-saturation solid colors (NW=red, NE=green, SW=blue,
+// SE=yellow) — enough visual asymmetry on both axes to prove exactly how a
+// decoded image was rotated/flipped by checking which color ends up in
+// which corner, not just that "some" transform happened. width/height
+// should each be a multiple of 8 and at least 16 so every quadrant survives
+// jpeg's 8x8 DCT blocks as a solid, unambiguous color away from its edges.
+func quadrantJPEGBytes(t *testing.T, width, height int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, quadrantColor(x, y, width, height))
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatalf("encode quadrant test jpeg: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func quadrantColor(x, y, width, height int) color.RGBA {
+	switch {
+	case x < width/2 && y < height/2:
+		return color.RGBA{R: 220, G: 20, B: 20, A: 255} // NW: red
+	case x >= width/2 && y < height/2:
+		return color.RGBA{R: 20, G: 200, B: 20, A: 255} // NE: green
+	case x < width/2 && y >= height/2:
+		return color.RGBA{R: 20, G: 20, B: 220, A: 255} // SW: blue
+	default:
+		return color.RGBA{R: 230, G: 230, B: 20, A: 255} // SE: yellow
+	}
+}
+
+// jpegBytesWithOrientation returns quadrantJPEGBytes(t, width, height) with
+// a synthetic APP1/EXIF segment spliced in right after SOI, declaring the
+// given Orientation tag value — image/jpeg's encoder can't write EXIF at
+// all, so there's no stdlib path to produce this fixture.
+func jpegBytesWithOrientation(t *testing.T, orientation uint16, width, height int) []byte {
+	t.Helper()
+	raw := quadrantJPEGBytes(t, width, height)
+	if len(raw) < 2 || raw[0] != 0xFF || raw[1] != 0xD8 {
+		t.Fatalf("fixture is not a valid jpeg (bad SOI)")
+	}
+
+	tiff := make([]byte, 26)
+	copy(tiff[0:2], "II")
+	binary.LittleEndian.PutUint16(tiff[2:4], 42)
+	binary.LittleEndian.PutUint32(tiff[4:8], 8)        // IFD0 offset
+	binary.LittleEndian.PutUint16(tiff[8:10], 1)       // one entry
+	binary.LittleEndian.PutUint16(tiff[10:12], 0x0112) // tag: Orientation
+	binary.LittleEndian.PutUint16(tiff[12:14], 3)      // type: SHORT
+	binary.LittleEndian.PutUint32(tiff[14:18], 1)      // count: 1
+	binary.LittleEndian.PutUint16(tiff[18:20], orientation)
+	// tiff[20:26] left zero: value-field padding + "no next IFD".
+
+	payload := append([]byte("Exif\x00\x00"), tiff...)
+	segLen := len(payload) + 2 // includes the length field itself
+	app1 := []byte{0xFF, 0xE1, byte(segLen >> 8), byte(segLen)}
+	app1 = append(app1, payload...)
+
+	out := make([]byte, 0, len(raw)+len(app1))
+	out = append(out, raw[:2]...) // SOI
+	out = append(out, app1...)
+	out = append(out, raw[2:]...)
+	return out
 }
 
 // mp4Bytes builds a minimal but structurally valid ISO-base-media-file
@@ -367,6 +438,150 @@ func TestMediaPipeline_Process_AcceptsJPEGAndPNG(t *testing.T) {
 	}
 	if pngResult.contentType != "image/png" || pngResult.extension != "png" {
 		t.Errorf("unexpected png result: %+v", pngResult)
+	}
+}
+
+// quadrantLabels samples the interior of each of img's four quadrants and
+// reports which of quadrantJPEGBytes's four reference colors each is
+// closest to (jpeg's lossy compression means an exact color match can't be
+// assumed).
+func quadrantLabels(t *testing.T, img image.Image) (nw, ne, sw, se string) {
+	t.Helper()
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	at := func(fx, fy float64) string {
+		x := b.Min.X + int(float64(w)*fx)
+		y := b.Min.Y + int(float64(h)*fy)
+		return closestQuadrantLabel(img.At(x, y))
+	}
+	return at(0.25, 0.25), at(0.75, 0.25), at(0.25, 0.75), at(0.75, 0.75)
+}
+
+func closestQuadrantLabel(c color.Color) string {
+	r, g, b, _ := c.RGBA()
+	r8, g8, b8 := int(r>>8), int(g>>8), int(b>>8)
+	refs := []struct {
+		label   string
+		r, g, b int
+	}{
+		{"red", 220, 20, 20},
+		{"green", 20, 200, 20},
+		{"blue", 20, 20, 220},
+		{"yellow", 230, 230, 20},
+	}
+	best := ""
+	bestDist := math.MaxInt
+	for _, ref := range refs {
+		dr, dg, db := r8-ref.r, g8-ref.g, b8-ref.b
+		if dist := dr*dr + dg*dg + db*db; dist < bestDist {
+			bestDist = dist
+			best = ref.label
+		}
+	}
+	return best
+}
+
+// TestMediaPipeline_Process_CorrectsExifOrientation proves process applies
+// each of EXIF's 8 defined Orientation values as a real pixel transform
+// (not just accepting the file) — checked by feeding in a quadrant-colored
+// fixture per orientation value and confirming both which color ends up in
+// which corner and that width/height are swapped for the 4 orientations
+// that amount to a 90-degree turn. Orientation 1 (already upright), 3
+// (180°), 6 (90° cw) and 8 (90° ccw, aka 270° cw) are the issue's required
+// cases; 2/4/5/7 (the mirrored variants) are covered too since the
+// correction table handles them identically and it costs nothing extra to
+// pin them down.
+func TestMediaPipeline_Process_CorrectsExifOrientation(t *testing.T) {
+	cases := []struct {
+		orientation                    uint16
+		wantNW, wantNE, wantSW, wantSE string
+		wantSwappedDims                bool
+	}{
+		{1, "red", "green", "blue", "yellow", false},
+		{2, "green", "red", "yellow", "blue", false},
+		{3, "yellow", "blue", "green", "red", false},
+		{4, "blue", "yellow", "red", "green", false},
+		{5, "red", "blue", "green", "yellow", true},
+		{6, "blue", "red", "yellow", "green", true},
+		{7, "yellow", "green", "blue", "red", true},
+		{8, "green", "yellow", "red", "blue", true},
+	}
+
+	const srcW, srcH = 16, 8
+	p := newMediaPipeline(&fakeObjectStore{}, 1<<20, 0)
+
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("orientation_%d", tc.orientation), func(t *testing.T) {
+			raw := jpegBytesWithOrientation(t, tc.orientation, srcW, srcH)
+			result, err := p.process(raw)
+			if err != nil {
+				t.Fatalf("process: %v", err)
+			}
+
+			img, _, err := image.Decode(bytes.NewReader(result.data))
+			if err != nil {
+				t.Fatalf("decode processed output: %v", err)
+			}
+
+			wantW, wantH := srcW, srcH
+			if tc.wantSwappedDims {
+				wantW, wantH = srcH, srcW
+			}
+			if b := img.Bounds(); b.Dx() != wantW || b.Dy() != wantH {
+				t.Errorf("dimensions: got %dx%d, want %dx%d", b.Dx(), b.Dy(), wantW, wantH)
+			}
+
+			nw, ne, sw, se := quadrantLabels(t, img)
+			if nw != tc.wantNW || ne != tc.wantNE || sw != tc.wantSW || se != tc.wantSE {
+				t.Errorf("quadrants: got (nw=%s ne=%s sw=%s se=%s), want (nw=%s ne=%s sw=%s se=%s)",
+					nw, ne, sw, se, tc.wantNW, tc.wantNE, tc.wantSW, tc.wantSE)
+			}
+		})
+	}
+}
+
+// TestMediaPipeline_Process_StripsExifOrientationAfterCorrecting proves the
+// re-encoded output carries no orientation tag of its own once process has
+// physically rotated its pixels — otherwise a downstream renderer that does
+// honor EXIF (unlike this pipeline's own decode step) would rotate an
+// already-corrected image a second time.
+func TestMediaPipeline_Process_StripsExifOrientationAfterCorrecting(t *testing.T) {
+	p := newMediaPipeline(&fakeObjectStore{}, 1<<20, 0)
+	raw := jpegBytesWithOrientation(t, 6, 16, 8)
+	result, err := p.process(raw)
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if orientation := jpegExifOrientation(result.data); orientation != 1 {
+		t.Errorf("expected re-encoded output to carry no orientation tag (default 1), got %d", orientation)
+	}
+}
+
+// TestJpegExifOrientation_DefaultsToUprightWhenAbsentOrInvalid proves a
+// missing EXIF segment, non-jpeg input, or an out-of-range tag value are all
+// treated as "nothing to correct" rather than an error — process must still
+// accept and store such an image unmodified.
+func TestJpegExifOrientation_DefaultsToUprightWhenAbsentOrInvalid(t *testing.T) {
+	if got := jpegExifOrientation(quadrantJPEGBytes(t, 16, 8)); got != 1 {
+		t.Errorf("expected default orientation 1 for a jpeg with no EXIF, got %d", got)
+	}
+	if got := jpegExifOrientation([]byte("not a jpeg")); got != 1 {
+		t.Errorf("expected default orientation 1 for non-jpeg bytes, got %d", got)
+	}
+	if got := jpegExifOrientation(jpegBytesWithOrientation(t, 0, 16, 8)); got != 1 {
+		t.Errorf("expected out-of-range orientation value to default to 1, got %d", got)
+	}
+}
+
+// TestJpegExifOrientation_ParsesEachDefinedValue proves the parser itself
+// (independent of process's correction step) reads back exactly the value a
+// fixture declares, for every value the EXIF spec defines.
+func TestJpegExifOrientation_ParsesEachDefinedValue(t *testing.T) {
+	for orientation := uint16(1); orientation <= 8; orientation++ {
+		raw := jpegBytesWithOrientation(t, orientation, 16, 8)
+		if got := jpegExifOrientation(raw); got != orientation {
+			t.Errorf("orientation %d: got %d", orientation, got)
+		}
 	}
 }
 
