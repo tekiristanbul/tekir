@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+import 'package:app/core/geo/istanbul_bounds.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/map/data/location_service.dart';
 import 'package:app/features/map/ui/cats_map_notifier.dart';
@@ -282,6 +283,36 @@ void main() {
       // raw transport errors are never user-visible (contract global rule).
       expect(find.textContaining('Exception'), findsNothing);
     });
+  });
+
+  group('initial fallback viewport (issue #235)', () {
+    const state = CatsMapState(hasLoadedOnce: true);
+
+    testWidgets('a real location opens at the close, walking-distance zoom', (
+      tester,
+    ) async {
+      await _pumpSettledLocation(tester, _harness(state: state));
+      await tester.pump();
+
+      final map = tester.widget<GoogleMap>(find.byType(GoogleMap));
+      expect(map.initialCameraPosition.zoom, 17.0);
+    });
+
+    testWidgets(
+      'the istanbul fallback opens broad, not zoomed to a single point',
+      (tester) async {
+        await _pumpSettledLocation(
+          tester,
+          _harness(state: state, fallbackLocation: true),
+        );
+        await tester.pump();
+
+        final map = tester.widget<GoogleMap>(find.byType(GoogleMap));
+        expect(map.initialCameraPosition.target, istanbulFallback);
+        expect(map.initialCameraPosition.zoom, istanbulFallbackZoom);
+        expect(map.initialCameraPosition.zoom, lessThan(17.0));
+      },
+    );
   });
 
   group('EmptyRadiusCard.titleFor', () {
