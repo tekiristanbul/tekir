@@ -55,7 +55,7 @@ func TestCloudflareModerator_ModerateText_Allow(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer "+testCloudflareAPIToken {
 			t.Errorf("unexpected authorization header: %q", got)
 		}
-		w.Write(cloudflareEnvelope(`{"decision":"allow","categories":[]}`))
+		_, _ = w.Write(cloudflareEnvelope(`{"decision":"allow","categories":[]}`))
 	}))
 	defer srv.Close()
 
@@ -71,7 +71,7 @@ func TestCloudflareModerator_ModerateText_Allow(t *testing.T) {
 
 func TestCloudflareModerator_ModerateText_Reject(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(cloudflareEnvelope(`{"decision":"reject","categories":["hate"]}`))
+		_, _ = w.Write(cloudflareEnvelope(`{"decision":"reject","categories":["hate"]}`))
 	}))
 	defer srv.Close()
 
@@ -110,7 +110,7 @@ func TestCloudflareModerator_MalformedResultFailsClosed(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Write([]byte(tc.body))
+				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer srv.Close()
 
@@ -131,7 +131,7 @@ func TestCloudflareModerator_RetriesTransientFailures(t *testing.T) {
 				w.WriteHeader(status)
 				return
 			}
-			w.Write(cloudflareEnvelope(`{"decision":"allow","categories":[]}`))
+			_, _ = w.Write(cloudflareEnvelope(`{"decision":"allow","categories":[]}`))
 		}))
 
 		m := newTestCloudflareModerator(t, srv.URL)
@@ -215,7 +215,7 @@ func TestCloudflareModerator_TimeoutRetried(t *testing.T) {
 			time.Sleep(300 * time.Millisecond)
 			return
 		}
-		w.Write(cloudflareEnvelope(`{"decision":"allow","categories":[]}`))
+		_, _ = w.Write(cloudflareEnvelope(`{"decision":"allow","categories":[]}`))
 	}))
 	defer srv.Close()
 
@@ -271,7 +271,7 @@ func TestCloudflareModerator_ModerateImage_SendsDataURIAndQuestion(t *testing.T)
 		if err := json.Unmarshal(raw, &received); err != nil {
 			t.Errorf("unmarshal request body: %v", err)
 		}
-		w.Write(cloudflareEnvelope(`{"decision":"allow","categories":[]}`))
+		_, _ = w.Write(cloudflareEnvelope(`{"decision":"allow","categories":[]}`))
 	}))
 	defer srv.Close()
 
@@ -307,7 +307,7 @@ func TestCloudflareModerator_ModerateImage_SendsDataURIAndQuestion(t *testing.T)
 // real provider while every fake-backed test still passed.
 func TestCloudflareModerator_ReadsChatChoiceContent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"success":true,"errors":[],"result":{"choices":[{"message":{"content":"{\"decision\":\"reject\",\"categories\":[\"graphic_violence\"]}","reasoning_content":"the model's scratch pad, which must never be read as the answer"}}]}}`))
+		_, _ = w.Write([]byte(`{"success":true,"errors":[],"result":{"choices":[{"message":{"content":"{\"decision\":\"reject\",\"categories\":[\"graphic_violence\"]}","reasoning_content":"the model's scratch pad, which must never be read as the answer"}}]}}`))
 	}))
 	defer srv.Close()
 
