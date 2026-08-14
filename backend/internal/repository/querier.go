@@ -65,6 +65,12 @@ type Querier interface {
 	// an author retracting their mark in-window before dispatch cancels the
 	// send — that is the mark itself, not the cat's aggregate help state.
 	ClaimNotificationOutboxBatch(ctx context.Context, rowLimit int32) ([]ClaimNotificationOutboxBatchRow, error)
+	// cats.primary_photo_id references media, so every cover pointing at media
+	// about to be deleted has to be cleared first. This deliberately reaches
+	// beyond the account's own cats: a cat someone else owns can have this
+	// account's photo as its cover, and that photo is going away. That cat
+	// keeps existing, without a cover, rather than being deleted along with it.
+	ClearCoversReferencingAccountMedia(ctx context.Context, userID pgtype.UUID) error
 	// issue #84: retires a token fcm permanently rejected (unregistered/
 	// invalid). The `and push_token = sqlc.arg(push_token)` guard makes the
 	// retirement safe against a concurrent refresh: if the client registered
@@ -259,6 +265,38 @@ type Querier interface {
 	// afterwards via UpdateUserDisplayName once the new-account minimum-profile
 	// step collects it.
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	// Both directions: the blocks this account made, and the blocks other
+	// accounts made against it (which have nothing left to hide).
+	DeleteAccountBlocks(ctx context.Context, userID pgtype.UUID) error
+	DeleteAccountCatMedia(ctx context.Context, userID pgtype.UUID) error
+	DeleteAccountCats(ctx context.Context, userID pgtype.UUID) error
+	// The account's own follows, and everyone else's follows of its cats —
+	// those cats are about to stop existing.
+	DeleteAccountFollows(ctx context.Context, userID pgtype.UUID) error
+	DeleteAccountMedia(ctx context.Context, userID pgtype.UUID) error
+	// A notification is reachable through three different roots this deletion
+	// removes: the account's own devices, its cats, and the updates it wrote.
+	DeleteAccountNotifications(ctx context.Context, userID pgtype.UUID) error
+	// Keyed by phone, not by user: leaving a consumed/pending code behind would
+	// follow the number to whoever registers it next.
+	DeleteAccountOtpCodes(ctx context.Context, phone string) error
+	// Queued fan-out for updates/cats that are about to stop existing. Dropped
+	// rather than processed: delivering a push for a deleted cat would deep-link
+	// into a 404.
+	DeleteAccountOutbox(ctx context.Context, userID pgtype.UUID) error
+	// The access token stays valid until it expires (it is a stateless jwt);
+	// without a refresh token the session cannot be renewed past that, and the
+	// user row it names is gone, so every account-scoped read fails first.
+	DeleteAccountRefreshTokens(ctx context.Context, userID pgtype.UUID) error
+	// Reports the account filed, plus reports pointing at content this deletion
+	// removes. The latter are not "the account's data", but a report whose
+	// target no longer exists can never be reviewed and target_id carries no
+	// foreign key to clean it up later (see docs/architecture/db.md).
+	DeleteAccountReports(ctx context.Context, userID pgtype.UUID) error
+	DeleteAccountUpdateStatuses(ctx context.Context, userID pgtype.UUID) error
+	// Both roots at once: what the account wrote anywhere, and everything
+	// written on the cats it owned.
+	DeleteAccountUpdates(ctx context.Context, userID pgtype.UUID) error
 	// unblocking is a hard delete (the follows lifecycle, not reports'
 	// open/resolved one): a block carries no state worth keeping once it is
 	// lifted. deleting a row that isn't there is not an error — unblock is
@@ -289,6 +327,14 @@ type Querier interface {
 	// against follows_user_cat_uq: after this delete, at most one
 	// not-yet-owned row remains per cat for this device.
 	DeleteRedundantDeviceFollows(ctx context.Context, arg DeleteRedundantDeviceFollowsParams) error
+	DeleteUser(ctx context.Context, userID pgtype.UUID) error
+	// A device is an installation, not a person: it can go on being used as a
+	// guest, and a future account can link it again. So the association and the
+	// credential are revoked rather than the row deleted — deleting it would
+	// also break the notifications/follows history of whoever uses that phone
+	// next, and leave the running app with a device token the server has never
+	// heard of.
+	DetachAccountDevices(ctx context.Context, userID pgtype.UUID) error
 	// traits are fetched separately via ListCatTraits (join against the traits
 	// vocabulary) rather than aggregated in here, so each trait can carry its
 	// display_name without hand-rolling composite-type aggregation in sql. the
@@ -373,6 +419,22 @@ type Querier interface {
 	// UnlinkDeviceFromUser (below) can clear that link on logout so the same
 	// installation can later link to a different account.
 	LinkDeviceToUser(ctx context.Context, arg LinkDeviceToUserParams) error
+	// issue #242: in-app account deletion (apple guideline 5.1.1(v)). Every
+	// statement here is scoped to one account and runs inside a single
+	// transaction (Store.DeleteAccount), in foreign-key-safe order. Deletion is
+	// terminal: there is no deactivate/restore state anywhere in this file.
+	//
+	// What "the account's data" means here follows the product decision on
+	// #242: the account row and its identity, its auth state, its follows, the
+	// updates it authored, the media it uploaded, and the cats it created —
+	// and, because a cat cannot survive without its owner in 0.4, everything
+	// attached to those cats, including other accounts' contributions to them
+	// (explicitly accepted in the issue; owner transfer is out of scope).
+	// The object-store keys to delete after the transaction commits. Collected
+	// first, while the rows still exist: once the media rows are gone there is
+	// nothing left to derive them from, and an orphaned object is a privacy
+	// problem, not just wasted storage.
+	ListAccountObjectKeys(ctx context.Context, userID pgtype.UUID) ([]string, error)
 	// issue #82: powers GET /v1/cats/discover?filter=needs_help — the same
 	// nearest-first, keyset-paginated shape as ListCatsByDistance above, plus
 	// one more predicate: only a cat whose latest needs-help update is both

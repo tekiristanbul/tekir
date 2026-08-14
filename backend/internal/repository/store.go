@@ -300,3 +300,58 @@ func (s *Store) CorrectOwnUpdate(ctx context.Context, arg CorrectOwnUpdateParams
 // through Store's embedded *Queries — no statuses replacement is needed
 // either, since a deleted update's statuses are simply never read again
 // (ListCatUpdates filters on updates.deleted_at, not update_statuses).
+
+// DeleteAccount removes one account and everything the product decision on
+// issue #242 defines as its data, in one transaction and in foreign-key-safe
+// order (see db/queries/account_deletion.sql for what each step covers and
+// why). It returns the object-store keys of the media it deleted, collected
+// before the rows went away — the caller removes those objects afterwards,
+// best-effort, because object storage cannot participate in this
+// transaction.
+//
+// Retry-safe by construction: every statement is an unconditional delete of
+// rows matching this account, so a second call after a partial failure (or
+// after a successful one) simply matches nothing. There is no intermediate
+// "deleting" state for a retry to get stuck behind.
+func (s *Store) DeleteAccount(ctx context.Context, userID pgtype.UUID, phone string) ([]string, error) {
+	var objectKeys []string
+	err := s.withTx(ctx, func(q *Queries) error {
+		keys, err := q.ListAccountObjectKeys(ctx, userID)
+		if err != nil {
+			return err
+		}
+		objectKeys = keys
+
+		// Order matters: children before parents, and anything referencing
+		// media before the media rows themselves.
+		steps := []func(context.Context, pgtype.UUID) error{
+			q.DeleteAccountNotifications,
+			q.DeleteAccountOutbox,
+			q.DeleteAccountUpdateStatuses,
+			q.DeleteAccountUpdates,
+			q.DeleteAccountFollows,
+			q.DeleteAccountReports,
+			q.DeleteAccountBlocks,
+			q.ClearCoversReferencingAccountMedia,
+			q.DeleteAccountCatMedia,
+			q.DeleteAccountCats,
+			q.DeleteAccountMedia,
+			q.DetachAccountDevices,
+			q.DeleteAccountRefreshTokens,
+		}
+		for _, step := range steps {
+			if err := step(ctx, userID); err != nil {
+				return err
+			}
+		}
+
+		if err := q.DeleteAccountOtpCodes(ctx, phone); err != nil {
+			return err
+		}
+		return q.DeleteUser(ctx, userID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return objectKeys, nil
+}

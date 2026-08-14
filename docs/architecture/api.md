@@ -206,6 +206,23 @@ retries/duplicates are idempotent (issue #233 acceptance): a second `POST` from 
 
 `status` starts `open` and can only become `resolved` through direct maintainer action against the table itself — no endpoint in this version reads or writes it, since 0.4 ships no moderator/admin dashboard (see "out of scope" below and [[trust]]). Error taxonomy: `400` malformed body/unknown `target_type`/malformed `target_id`/invalid `reason`/missing `note` on `other`, `401` missing/invalid bearer, `404` an unknown or soft-deleted target.
 
+### account deletion
+
+```
+DELETE /v1/me  (Bearer required)  → 204
+                                  (implemented — issue #242)
+```
+
+in-app account deletion (apple guideline 5.1.1(v), docs/product/privacy.md). the request carries no account id at all: the caller is resolved from `Authorization: Bearer` and can only ever delete itself, so there is no shape in which one account asks to delete another. deletion is terminal — there is no deactivate/restore state anywhere in this version.
+
+idempotent: an account that is already gone answers `204` too. that is what makes the client's ordering safe — it clears local credentials only after a confirmed success, so a retry after a dropped response must not fail. any other outcome answers `500` and the client keeps its session rather than signing the user out of an account that still exists.
+
+what is removed, in one database transaction (see [[db]] and `db/queries/account_deletion.sql`): the user row and its phone identity, refresh tokens, otp codes for that number, the account's follows, the updates it authored anywhere, the media it uploaded, and the cats it created — along with everything attached to those cats, including other accounts' contributions to them (owner transfer is explicitly out of scope for 0.4). devices are detached and revoked rather than deleted: a device is an installation, not a person, and it stays usable as a guest.
+
+object-store files for the deleted media are removed after the transaction commits, best-effort — object storage cannot join that transaction. a failure there leaves an unreferenced object, which is logged for operational follow-up but does not fail the deletion: the rows naming it are already gone, so nothing is left for a retry to find, and reporting failure would tell the user their account survived when it did not.
+
+the access token stays technically valid until it expires (it is a stateless jwt), but the account it names no longer exists, so every account-scoped read fails and no refresh token remains to renew it.
+
 ### blocks
 
 ```

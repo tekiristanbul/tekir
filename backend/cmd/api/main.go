@@ -149,7 +149,10 @@ func run() error {
 	blocksSvc := service.NewBlocksService(store)
 	blocksHandler := handler.NewBlocksHandler(blocksSvc)
 
-	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, notificationsHandler, profileHandler, reportsHandler, blocksHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
+	accountsSvc := service.NewAccountsService(store, objectStore)
+	accountsHandler := handler.NewAccountsHandler(accountsSvc)
+
+	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, notificationsHandler, profileHandler, reportsHandler, blocksHandler, accountsHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

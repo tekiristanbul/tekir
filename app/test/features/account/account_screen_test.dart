@@ -13,11 +13,26 @@ class _FakeAccountApi implements AccountApi {
   Object? nextError;
   int calls = 0;
 
+  Object? deleteError;
+  int deleteCalls = 0;
+
   @override
   Future<AccountInfo> fetchMe() async {
     calls++;
     if (nextError != null) throw nextError!;
     return nextInfo!;
+  }
+
+  @override
+  Future<void> deleteAccount() async {
+    deleteCalls++;
+    if (deleteError != null) throw deleteError!;
+    // The account is gone from here on: a reload lands on the guest shape.
+    nextInfo = const AccountInfo(
+      deviceId: 'device-1',
+      userId: null,
+      phoneVerified: false,
+    );
   }
 }
 
@@ -167,5 +182,98 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Giriş yapmadın'), findsOneWidget);
+  });
+
+  group('account deletion (issue #242)', () {
+    testWidgets('is offered to a signed-in account, never to a guest', (
+      tester,
+    ) async {
+      final api = _FakeAccountApi()
+        ..nextInfo = const AccountInfo(
+          deviceId: 'd1',
+          userId: 'user-1',
+          phoneVerified: true,
+        );
+      await _pump(tester, accountApi: api);
+      expect(find.text('Hesabımı sil'), findsOneWidget);
+
+      api.nextInfo = const AccountInfo(
+        deviceId: 'd1',
+        userId: null,
+        phoneVerified: false,
+      );
+      await tester.tap(find.text('Çıkış yap'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Hesabımı sil'), findsNothing);
+    });
+
+    // Deleting is terminal, so it must not happen on a single tap.
+    testWidgets('asks for confirmation, and cancelling deletes nothing', (
+      tester,
+    ) async {
+      final api = _FakeAccountApi()
+        ..nextInfo = const AccountInfo(
+          deviceId: 'd1',
+          userId: 'user-1',
+          phoneVerified: true,
+        );
+      await _pump(tester, accountApi: api);
+
+      await tester.tap(find.text('Hesabımı sil'));
+      await tester.pumpAndSettle();
+      expect(find.text('Vazgeç'), findsOneWidget);
+
+      await tester.tap(find.text('Vazgeç'));
+      await tester.pumpAndSettle();
+
+      expect(api.deleteCalls, 0);
+      expect(find.text('Çıkış yap'), findsOneWidget);
+    });
+
+    testWidgets('confirming deletes and returns to the guest state', (
+      tester,
+    ) async {
+      final api = _FakeAccountApi()
+        ..nextInfo = const AccountInfo(
+          deviceId: 'd1',
+          userId: 'user-1',
+          phoneVerified: true,
+        );
+      await _pump(tester, accountApi: api);
+
+      await tester.tap(find.text('Hesabımı sil'));
+      await tester.pumpAndSettle();
+      // the dialog's own confirm button, not the screen's trigger
+      await tester.tap(find.widgetWithText(TextButton, 'Hesabımı sil').last);
+      await tester.pumpAndSettle();
+
+      expect(api.deleteCalls, 1);
+      expect(find.text('Giriş yapmadın'), findsOneWidget);
+    });
+
+    // A failed deletion must leave the user signed in: signing them out of
+    // an account that still exists would strand them with no way back.
+    testWidgets('a failure keeps the session and offers a retry', (
+      tester,
+    ) async {
+      final api = _FakeAccountApi()
+        ..nextInfo = const AccountInfo(
+          deviceId: 'd1',
+          userId: 'user-1',
+          phoneVerified: true,
+        )
+        ..deleteError = const AccountServerException();
+      await _pump(tester, accountApi: api);
+
+      await tester.tap(find.text('Hesabımı sil'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, 'Hesabımı sil').last);
+      await tester.pumpAndSettle();
+
+      expect(api.deleteCalls, 1);
+      expect(find.text('Hesap silinemedi, tekrar dene.'), findsOneWidget);
+      expect(find.text('Çıkış yap'), findsOneWidget);
+    });
   });
 }

@@ -72,10 +72,62 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   Future<void> _logout() => ref.read(accountProvider.notifier).logout();
 }
 
-class _AuthenticatedBody extends StatelessWidget {
+class _AuthenticatedBody extends ConsumerStatefulWidget {
   const _AuthenticatedBody({required this.onLogout});
 
   final Future<void> Function() onLogout;
+
+  @override
+  ConsumerState<_AuthenticatedBody> createState() => _AuthenticatedBodyState();
+}
+
+class _AuthenticatedBodyState extends ConsumerState<_AuthenticatedBody> {
+  bool _isDeleting = false;
+
+  /// issue #242 (apple guideline 5.1.1(v)): deletion is terminal and takes
+  /// the account's content with it, so the confirmation says so plainly.
+  /// The local session is cleared only after the server confirms — see
+  /// [AccountNotifier.deleteAccount] — so a failure leaves the user signed
+  /// in and able to retry.
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hesabımı sil'),
+        content: const Text(
+          'Hesabın ve eklediğin kediler, güncellemeler ve fotoğraflar '
+          'kalıcı olarak silinir. Bu işlem geri alınamaz.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Vazgeç'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.help),
+            child: const Text('Hesabımı sil'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isDeleting = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(accountProvider.notifier).deleteAccount();
+      if (!mounted) return;
+      setState(() => _isDeleting = false);
+      messenger.showSnackBar(const SnackBar(content: Text('Hesabın silindi.')));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isDeleting = false);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Hesap silinemedi, tekrar dene.')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -123,9 +175,24 @@ class _AuthenticatedBody extends StatelessWidget {
         SizedBox(
           height: kTapMin,
           child: OutlinedButton.icon(
-            onPressed: onLogout,
+            onPressed: _isDeleting ? null : widget.onLogout,
             icon: const Icon(Icons.logout, size: 18),
             label: const Text('Çıkış yap'),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.s5),
+        // Deliberately last and plain-text rather than an outlined button:
+        // the destructive action must not read as this screen's primary one
+        // (issue #242).
+        Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            height: kTapMin,
+            child: TextButton(
+              onPressed: _isDeleting ? null : _confirmDelete,
+              style: TextButton.styleFrom(foregroundColor: AppColors.help),
+              child: Text(_isDeleting ? 'Siliniyor…' : 'Hesabımı sil'),
+            ),
           ),
         ),
       ],

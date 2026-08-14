@@ -24,6 +24,12 @@ class AccountNetworkException implements Exception {
   const AccountNetworkException();
 }
 
+/// Thrown when `DELETE /v1/me` answers 401 — the session is missing or
+/// expired, so there is nothing to delete under this identity.
+class AccountUnauthorizedException implements Exception {
+  const AccountUnauthorizedException();
+}
+
 class AccountServerException implements Exception {
   const AccountServerException();
 }
@@ -45,6 +51,23 @@ class AccountApi {
       );
     } on DioException catch (e) {
       if (e.response?.statusCode != null) throw const AccountServerException();
+      throw const AccountNetworkException();
+    }
+  }
+
+  /// Terminal account deletion (issue #242, apple guideline 5.1.1(v)).
+  /// Returns normally only when the server confirms — the caller clears the
+  /// local session on that confirmation and never before, so a failure
+  /// leaves the user signed in to an account that still exists. Retrying a
+  /// call whose response was lost is safe: the server treats deleting an
+  /// already-deleted account as success.
+  Future<void> deleteAccount() async {
+    try {
+      await _apiClient.dio.delete<void>('/v1/me');
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 401) throw const AccountUnauthorizedException();
+      if (status != null) throw const AccountServerException();
       throw const AccountNetworkException();
     }
   }
