@@ -55,6 +55,8 @@ End your turn with exactly this block, in this order:
 
 ```
 status: ready | needs-clarification
+risk: low | medium | high
+work_required: yes | no
 
 understanding:
 ...
@@ -81,6 +83,29 @@ For `risks`, classify the change as low/medium/high risk the way
 `AGENTS.md` requires, and name any high-risk area it touches (migrations,
 auth, precise location, media, destructive operations, breaking API
 changes, notifications, user data).
+
+`risk:` is the machine-readable counterpart to that `risks:` prose — a
+single word, read by tooling to decide whether a human needs to look at
+this report before implementation starts. `low` is a claim that they can
+skip that read, so set it only when the change is narrow, easily
+reverted, well covered by existing tests, and touches none of
+`AGENTS.md`'s high-risk areas (migrations, authentication, authorization,
+precise location, media handling, destructive operations, breaking API
+changes, notifications, user data) and no persistent data model. `high`
+is anything touching one of those areas. Default to `medium` whenever
+you're not confident it's `low` — `medium` is the safe answer, not a
+last resort.
+
+`work_required:` says whether the issue needs any code change at all.
+Before writing a plan, check whether the requested behavior is already
+implemented: read the code and run the relevant existing tests. Write
+`no` only when that check actually confirms it — not when the behavior
+merely looks close or you haven't run the tests. `work_required: no`
+requires `status: ready`; if you're unsure whether it's already done,
+that's `status: needs-clarification`, never `work_required: no`. When it
+is `no`, write `plan` as a description of what already exists and where,
+not a list of steps, and write `risks` as none. Every other case is
+`work_required: yes`.
 
 Use `status: needs-clarification` when a product or architecture decision
 the implementation depends on is missing or contradictory. Ask the
