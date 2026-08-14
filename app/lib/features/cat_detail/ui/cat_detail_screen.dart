@@ -182,7 +182,7 @@ class _CatDetailBody extends ConsumerWidget {
     return ListView(
       padding: EdgeInsets.zero,
       children: [
-        _HeroPhoto(detail: detail, openSource: openSource),
+        _ProfileHeader(detail: detail, openSource: openSource),
         _IdentityBlock(detail: detail),
         Padding(
           // The extra bottom padding keeps the last timeline entry
@@ -222,93 +222,86 @@ class _CatDetailBody extends ConsumerWidget {
   }
 }
 
-/// The cover photo (binding design docs/design/screens/cat-profile.html):
-/// full width at a fixed 16:9, controlled crop (`cover`) — the ratio is
-/// never distorted and the height never depends on the source image.
-/// Tapping it opens the uncropped full-screen view; the design marks
-/// tappability with a media counter (camera icon + count), backed since
-/// issue #121 by [CatDetail.mediaCount] — the field the design's own
-/// bottom-right pill previously had no real source for. The name/area
-/// caption lives below the photo (see [_IdentityBlock]), not overlaid on
-/// it — only the back, follow glass controls, and the counter pill sit on
-/// the photo itself, matching the design's frames A/B.
-class _HeroPhoto extends StatelessWidget {
-  const _HeroPhoto({required this.detail, this.openSource});
+/// The cat's profile photo and the two controls that used to live on the
+/// old 16:9 cover (issue #236). The wide cover area is gone from the
+/// product: a portrait phone photo cropped to 16:9 lost most of the cat,
+/// and the cover/focal-point concept never matched how this product thinks
+/// about a cat's identity. What replaces it is a circular avatar — the
+/// same canonical image, `cover`-fit inside a circle so the aspect ratio is
+/// never distorted, only cropped square.
+///
+/// Back and follow move into a plain row above it, since without a photo
+/// behind them the glass treatment has nothing to sit on. Tapping the
+/// avatar still opens the uncropped full-screen view, and the media
+/// counter still marks that there is an archive behind it — now beside the
+/// name rather than as a pill on a photo.
+class _ProfileHeader extends StatelessWidget {
+  const _ProfileHeader({required this.detail, this.openSource});
 
   final CatDetail detail;
   final AnalyticsSource? openSource;
 
+  static const double _diameter = 132;
+
   @override
   Widget build(BuildContext context) {
     final photo = detail.primaryPhoto;
-    return AspectRatio(
-      aspectRatio: 16 / 9,
-      // The detector wraps the whole cover so the tap target isn't blocked
-      // by the scrim overlay; the back/follow buttons' own InkWells still
-      // win their area of the stack.
-      child: GestureDetector(
-        onTap: photo == null ? null : () => _openFullScreen(context, photo),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (photo == null)
-              const _HeroPlaceholder()
-            else
-              CachedNetworkImage(
-                imageUrl: photo,
-                fit: BoxFit.cover,
-                placeholder: (context, _) =>
-                    const _HeroPlaceholder(loading: true),
-                errorWidget: (context, _, _) => const _HeroPlaceholder(),
-              ),
-            // scrim: keeps the back/follow glass controls readable over any
-            // photo — top-only now that the caption has moved below.
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Color(0x47000000), Colors.transparent],
-                  stops: [0.0, 0.4],
-                ),
-              ),
-            ),
-            Positioned(
-              // The cover sits at the very top of the scroll, with no app
-              // bar above it — without the safe-area offset these glass
-              // controls sit under the status bar/notch instead of below
-              // it (issue #137), unlike every other back action on this
-              // screen (_MessageScreen, _FullScreenPhoto).
-              top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-              left: AppSpacing.s4,
-              child: _BackCircleButton(onGlass: true),
-            ),
-            Positioned(
-              top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-              right: AppSpacing.s4,
-              child: FollowButton(
-                catId: detail.id,
-                source: openSource,
-                glass: true,
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.s4,
+        MediaQuery.of(context).padding.top + AppSpacing.s3,
+        AppSpacing.s4,
+        0,
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              _BackCircleButton(),
+              const Spacer(),
+              // Still the icon-only round variant: it now sits on the
+              // screen's own background rather than on a photo, but keeping
+              // it round preserves the pairing with the back control beside
+              // it and keeps the header from growing a labelled button the
+              // old design never had here.
+              FollowButton(catId: detail.id, source: openSource, glass: true),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          GestureDetector(
+            onTap: photo == null ? null : () => _openFullScreen(context, photo),
+            child: ClipOval(
+              child: SizedBox(
+                width: _diameter,
+                height: _diameter,
+                child: photo == null
+                    ? const _HeroPlaceholder()
+                    : CachedNetworkImage(
+                        imageUrl: photo,
+                        fit: BoxFit.cover,
+                        placeholder: (context, _) =>
+                            const _HeroPlaceholder(loading: true),
+                        errorWidget: (context, _, _) =>
+                            const _HeroPlaceholder(),
+                      ),
               ),
             ),
-            if (detail.mediaCount > 0)
-              Positioned(
-                right: AppSpacing.s3,
-                bottom: AppSpacing.s2,
-                child: _CoverPhotoCounter(count: detail.mediaCount),
-              ),
+          ),
+          if (detail.mediaCount > 0) ...[
+            const SizedBox(height: AppSpacing.s3),
+            _MediaCountBadge(count: detail.mediaCount),
           ],
-        ),
+        ],
       ),
     );
   }
 
   /// The full-screen view (binding design, frame D): dark surface, the
-  /// photo `contain`ed with no crop, a single close action. "ana fotoğraf
-  /// yap" (issue #156) belongs to the media archive grid's own tiles,
-  /// which carry a media id this cover photo string alone doesn't — so
-  /// the cover's own view still carries no action but closing.
+  /// photo `contain`ed with no crop, a single close action. "profil
+  /// fotoğrafı yap" (issue #156, renamed by #236) belongs to the media
+  /// archive grid's own tiles, which carry a media id this profile photo
+  /// string alone doesn't — so the profile photo's own view still carries
+  /// no action but closing.
   void _openFullScreen(BuildContext context, String photo) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -319,12 +312,14 @@ class _HeroPhoto extends StatelessWidget {
   }
 }
 
-/// The cover's bottom-right "tappable for more" indicator (binding design):
-/// a camera glyph plus [count], the cat's [CatDetail.mediaCount] — never
-/// shown at zero, since a zero pill would only advertise an archive with
-/// nothing in it.
-class _CoverPhotoCounter extends StatelessWidget {
-  const _CoverPhotoCounter({required this.count});
+/// The "there is an archive behind this" indicator: a camera glyph plus
+/// [count], the cat's [CatDetail.mediaCount] — never shown at zero, since
+/// a zero pill would only advertise an archive with nothing in it. It used
+/// to sit bottom-right on the cover photo; with the cover gone (issue
+/// #236) it sits under the profile photo, keeping the same glyph so the
+/// affordance stays recognisable.
+class _MediaCountBadge extends StatelessWidget {
+  const _MediaCountBadge({required this.count});
 
   final int count;
 
@@ -722,7 +717,7 @@ class _SetCoverButton extends StatelessWidget {
                   ),
                 const SizedBox(width: 9),
                 Text(
-                  isCover ? 'ana fotoğraf' : 'ana fotoğraf yap',
+                  isCover ? 'profil fotoğrafı' : 'profil fotoğrafı yap',
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
@@ -763,14 +758,12 @@ class _HeroPlaceholder extends StatelessWidget {
 }
 
 class _BackCircleButton extends StatelessWidget {
-  const _BackCircleButton({this.onGlass = false});
-
-  final bool onGlass;
+  const _BackCircleButton();
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: onGlass ? Colors.white.withValues(alpha: 0.92) : AppColors.surface,
+      color: AppColors.surface,
       shape: const CircleBorder(),
       elevation: 2,
       child: InkWell(
@@ -1310,7 +1303,7 @@ class _MediaTile extends StatelessWidget {
                     borderRadius: BorderRadius.circular(7),
                   ),
                   child: const Text(
-                    'ana',
+                    'profil',
                     style: TextStyle(
                       fontSize: 9,
                       fontWeight: FontWeight.w800,
