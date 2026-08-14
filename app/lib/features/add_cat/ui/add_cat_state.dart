@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../../core/analytics/analytics.dart';
 import '../../map/data/location_service.dart';
 import '../data/add_cat_api.dart';
+import '../../../core/images/upload_budget.dart';
 
 /// The add-cat flow's two screens (prototype/app.js's `renderAddLoc`/
 /// `renderAddDetail`): location picker (with the non-blocking duplicate
@@ -243,7 +244,12 @@ class AddCatNotifier extends Notifier<AddCatState> {
   /// flutter.md: "image_picker for capture/selection", both, not gallery
   /// only) so a contributor can photograph a street cat on the spot.
   Future<void> pickPhoto(ImageSource source) async {
-    final picked = await ImagePicker().pickImage(source: source);
+    final picked = await ImagePicker().pickImage(
+      source: source,
+      maxWidth: uploadMaxDimension,
+      maxHeight: uploadMaxDimension,
+      imageQuality: uploadImageQuality,
+    );
     if (picked == null) return;
     final bytes = await picked.readAsBytes();
     state = state.copyWith(

@@ -28,6 +28,19 @@ class ApiClient {
 
   final Dio dio;
 
+  /// The read budget for a request that uploads media. The shared
+  /// [BaseOptions.receiveTimeout] is sized for a plain read; a media write
+  /// keeps the connection open while the backend decodes the image,
+  /// normalizes its orientation, re-encodes it, stores it, and (once issue
+  /// #241 ships) has it classified — all inside the same request.
+  ///
+  /// This is not a comfort setting. At the previous shared 5s the backend
+  /// logged `POST /v1/cats` failing at 5.1s with the client already gone
+  /// ("context canceled"), while a successful create on the same device
+  /// took 3.3s: creating a cat was a coin flip decided by photo size and
+  /// signal strength.
+  static const Duration mediaUploadTimeout = Duration(seconds: 60);
+
   static Dio _buildDio(
     Dio? existing,
     DeviceIdentityService? deviceSvc,
@@ -39,7 +52,10 @@ class ApiClient {
           BaseOptions(
             baseUrl: Env.apiBaseUrl,
             connectTimeout: const Duration(seconds: 5),
-            receiveTimeout: const Duration(seconds: 5),
+            // A read answers in well under a second; anything slower is a
+            // network the user is better off being told about.
+            receiveTimeout: const Duration(seconds: 10),
+            sendTimeout: const Duration(seconds: 30),
           ),
         );
     if (deviceSvc != null) {

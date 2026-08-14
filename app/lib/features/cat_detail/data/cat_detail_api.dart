@@ -401,7 +401,10 @@ class CatDetailApi {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '/v1/media',
         data: formData,
-        options: Options(headers: {'Idempotency-Key': idempotencyKey}),
+        options: Options(
+          headers: {'Idempotency-Key': idempotencyKey},
+          receiveTimeout: ApiClient.mediaUploadTimeout,
+        ),
         onSendProgress: onSendProgress,
       );
       final body = response.data;
