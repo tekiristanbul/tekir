@@ -499,9 +499,17 @@ func (c Config) ResolveModerationProvider() (string, error) {
 		if c.ModerationTextModel == "" {
 			missing = append(missing, "MODERATION_TEXT_MODEL")
 		}
-		if c.ModerationVisionModel == "" {
-			missing = append(missing, "MODERATION_VISION_MODEL")
-		}
+		// MODERATION_VISION_MODEL is deliberately optional. Empty means
+		// image moderation is switched off and photos publish unclassified,
+		// which is a configuration decision, not a silent failure: the api
+		// logs it at startup and text moderation stays fail-closed. It
+		// exists because no Workers AI request shape found so far actually
+		// delivers an image to a model on this account — a data uri is
+		// accepted and then ignored (identical answer and token count for a
+		// 1x1 test image and a 2.5 MB photo), a byte array is rejected by
+		// the schema, and a public url errors — so the alternative to a
+		// switch is either an unmoderated image path pretending to be
+		// moderated, or no cat creation at all.
 		if len(missing) > 0 {
 			return "", fmt.Errorf("MODERATION_PROVIDER=%s requires %s", ModerationProviderCloudflare, strings.Join(missing, ", "))
 		}

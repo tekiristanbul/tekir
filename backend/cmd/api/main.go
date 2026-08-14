@@ -97,6 +97,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Image moderation off is a real operational fact, not a detail: photos
+	// publish unclassified while names, comments and notes are still
+	// filtered. It is announced here so it can never be true silently.
+	if moderationProvider == config.ModerationProviderCloudflare && cfg.ModerationVisionModel == "" {
+		slog.Warn("image moderation disabled: MODERATION_VISION_MODEL is unset; photos and videos publish unclassified, text moderation unaffected")
+	}
 	frameExtractor := service.NewFFmpegFrameExtractor()
 	catsSvc := service.NewCatsService(store, service.WithCatsMediaPipeline(objectStore, cfg.MediaMaxBytes), service.WithCatsModerator(moderator))
 	catsHandler := handler.NewCatsHandler(catsSvc, cfg.MediaMaxBytes)

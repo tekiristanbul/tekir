@@ -525,14 +525,18 @@ func TestResolveModerationProvider(t *testing.T) {
 			c.ModerationTextModel = ""
 			return c
 		}(), wantErr: true, errNames: []string{"MODERATION_TEXT_MODEL"}},
-		{name: "cloudflare missing vision model", cfg: func() Config {
+		// The vision model is optional: empty resolves cleanly and switches
+		// image moderation off (CloudflareModerator.ModerateImage), which is
+		// a configuration decision the api announces at startup rather than
+		// a misconfiguration that should stop it.
+		{name: "cloudflare without a vision model resolves", cfg: func() Config {
 			c := cloudflare
 			c.AppEnv = AppEnvDevelopment
 			c.ModerationProvider = ModerationProviderCloudflare
 			c.ModerationVisionModel = ""
 			return c
-		}(), wantErr: true, errNames: []string{"MODERATION_VISION_MODEL"}},
-		{name: "cloudflare missing everything names all four", cfg: Config{AppEnv: AppEnvProduction, ModerationProvider: ModerationProviderCloudflare}, wantErr: true, errNames: []string{"CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "MODERATION_TEXT_MODEL", "MODERATION_VISION_MODEL"}},
+		}(), want: ModerationProviderCloudflare},
+		{name: "cloudflare missing everything names each one", cfg: Config{AppEnv: AppEnvProduction, ModerationProvider: ModerationProviderCloudflare}, wantErr: true, errNames: []string{"CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "MODERATION_TEXT_MODEL"}},
 	}
 
 	for _, tc := range cases {

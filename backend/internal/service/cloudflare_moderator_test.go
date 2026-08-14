@@ -254,8 +254,11 @@ func TestNewCloudflareModerator_Validation(t *testing.T) {
 	if _, err := service.NewCloudflareModerator(testCloudflareAccountID, testCloudflareAPIToken, "", testCloudflareVisionModel); err == nil {
 		t.Error("expected error for missing text model")
 	}
-	if _, err := service.NewCloudflareModerator(testCloudflareAccountID, testCloudflareAPIToken, testCloudflareTextModel, ""); err == nil {
-		t.Error("expected error for missing vision model")
+	// The vision model is optional: empty switches image moderation off
+	// (see TestCloudflareModerator_ImageModerationOffWhenNoVisionModel), so
+	// it must construct rather than reject.
+	if _, err := service.NewCloudflareModerator(testCloudflareAccountID, testCloudflareAPIToken, testCloudflareTextModel, ""); err != nil {
+		t.Errorf("an empty vision model must be accepted: %v", err)
 	}
 }
 
@@ -318,5 +321,48 @@ func TestCloudflareModerator_ReadsChatChoiceContent(t *testing.T) {
 	}
 	if decision.Allowed {
 		t.Fatalf("expected a rejection, got %+v", decision)
+	}
+}
+
+// Image moderation can be switched off by leaving MODERATION_VISION_MODEL
+// empty. That is a configuration decision, announced at startup, so it
+// allows rather than failing closed — and it must not touch the network.
+func TestCloudflareModerator_ImageModerationOffWhenNoVisionModel(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		_, _ = w.Write(cloudflareEnvelope(`{"decision":"reject","categories":["sexual"]}`))
+	}))
+	defer srv.Close()
+
+	m, err := service.NewCloudflareModerator(
+		testCloudflareAccountID,
+		testCloudflareAPIToken,
+		testCloudflareTextModel,
+		"", // no vision model: image moderation off
+		service.WithCloudflareModerationAPIBase(srv.URL),
+		service.WithCloudflareModerationRetryDelay(0),
+	)
+	if err != nil {
+		t.Fatalf("construct: %v", err)
+	}
+
+	decision, err := m.ModerateImage(context.Background(), "image/jpeg", []byte{1, 2, 3})
+	if err != nil {
+		t.Fatalf("ModerateImage: %v", err)
+	}
+	if !decision.Allowed {
+		t.Error("with image moderation off the photo must pass")
+	}
+	if called {
+		t.Error("no request may be made when image moderation is off")
+	}
+
+	// Text moderation still works, and still fails closed.
+	if _, err := m.ModerateText(context.Background(), "merhaba"); err != nil {
+		t.Fatalf("text moderation must be unaffected: %v", err)
+	}
+	if !called {
+		t.Error("expected the text call to reach the server")
 	}
 }

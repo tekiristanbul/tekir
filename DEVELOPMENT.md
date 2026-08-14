@@ -277,6 +277,22 @@ video moderation samples 3 deterministic frames (near start, middle, near end) v
 
 set `APP_ENV=production`, `MODERATION_PROVIDER=cloudflare`, and the four cloudflare values as deployment secrets (`CLOUDFLARE_API_TOKEN` is a secret; the model slugs are not). `fake`, unset, unknown, and partially configured providers are rejected at startup.
 
+### image moderation is currently off in production
+
+`MODERATION_VISION_MODEL` is deliberately unset in the production environment, which switches image moderation off: photos and videos publish unclassified while cat names, update comments and needs-help notes are still classified and still fail closed. The api logs this at startup so it can never be true silently.
+
+The reason is that no Workers AI request shape found so far actually delivers an image to a model on this account. Verified against the live api:
+
+| request | result |
+| --- | --- |
+| vision model, `image` as a `data:` uri | `200`, but the image is ignored — a 1x1 test image and a 2.5 MB photo return an identical answer and identical token counts |
+| vision model, raw base64 string | `Engine Not Ready` |
+| vision model, `image` as a byte array | `Type mismatch of '/image'` |
+| vision model, public https url | `Internal server error` |
+| text model (vision-capable), `image_url` content part, on `/ai/run` and on `/v1/chat/completions` | `200`, prompt tokens unchanged — the image is dropped |
+
+Until one of those is resolved, an enabled image path would either reject every photo (the model answers from the prompt alone, and answered "reject/animal_cruelty" for every input tried) or pass everything while claiming to moderate. Both are worse than being explicitly off.
+
 ### cloudflare smoke suite (release gate)
 
 normal ci runs only against the deterministic `fake` provider. before a release that ships or changes the `cloudflare` provider, run its separate, manually-triggered smoke suite against real cloudflare workers ai credentials to verify the configured model slugs, request schema, structured-result parsing, representative turkish text, a representative image input, and basic latency — this is a required release gate for 0.4, not an optional check. run it from `backend/`:
