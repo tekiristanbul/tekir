@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../data/cat_marker.dart';
+import '../../../core/images/decode_budget.dart';
 
 /// Marker-tap preview sheet (issue #21 prototype-parity correction):
 /// tapping a map marker opens this over the map instead of navigating
@@ -206,6 +207,7 @@ class _PreviewPhoto extends StatelessWidget {
         width: 92,
         height: 92,
         fit: BoxFit.cover,
+        memCacheWidth: decodeWidthFor(context, 92),
         placeholder: (context, _) => const SizedBox(
           width: 92,
           height: 92,

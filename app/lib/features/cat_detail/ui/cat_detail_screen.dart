@@ -19,6 +19,7 @@ import 'cat_detail_notifier.dart';
 import 'cat_update_composer_notifier.dart';
 import 'cat_update_sheet.dart';
 import 'edit_cat_name_sheet.dart';
+import '../../../core/images/decode_budget.dart';
 import '../../blocks/ui/block_action.dart';
 import '../../discover/ui/discover_notifier.dart';
 import '../../map/ui/cats_map_notifier.dart';
@@ -279,6 +280,7 @@ class _ProfileHeader extends StatelessWidget {
                     : CachedNetworkImage(
                         imageUrl: photo,
                         fit: BoxFit.cover,
+                        memCacheWidth: decodeWidthFor(context, _diameter),
                         placeholder: (context, _) =>
                             const _HeroPlaceholder(loading: true),
                         errorWidget: (context, _, _) =>
@@ -615,6 +617,13 @@ class _FullScreenPhotoState extends ConsumerState<_FullScreenPhoto> {
             child: CachedNetworkImage(
               imageUrl: widget.photo,
               fit: BoxFit.contain,
+              // The one place a photo is meant to be seen at size: still
+              // capped at the screen's own pixel width, since decoding
+              // beyond it buys nothing visible.
+              memCacheWidth: decodeWidthFor(
+                context,
+                MediaQuery.sizeOf(context).width,
+              ),
               placeholder: (context, _) => const InlineSpinner(
                 size: 28,
                 color: AppColors.primarySoft,
@@ -1087,7 +1096,7 @@ class _HistoryMediaSectionState extends ConsumerState<_HistoryMediaSection> {
               physics: const NeverScrollableScrollPhysics(),
               itemCount: items.length,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
+                crossAxisCount: _mediaGridColumns,
                 mainAxisSpacing: AppSpacing.s2,
                 crossAxisSpacing: AppSpacing.s2,
                 childAspectRatio: 1,
@@ -1247,6 +1256,11 @@ class _ProfileSegment extends StatelessWidget {
 /// design frame D) — never the cover's own view, a timeline thumbnail's, or
 /// a video entry's full-screen view (a video can never become the cover),
 /// and only when [isOwner].
+/// The media archive grid's column count. Named because [_MediaTile]'s
+/// decode budget is derived from it — a grid that changed shape without the
+/// budget following would silently start decoding at the wrong size again.
+const int _mediaGridColumns = 3;
+
 class _MediaTile extends StatelessWidget {
   const _MediaTile({
     required this.catId,
@@ -1285,6 +1299,10 @@ class _MediaTile extends StatelessWidget {
               CachedNetworkImage(
                 imageUrl: item.url,
                 fit: BoxFit.cover,
+                memCacheWidth: decodeWidthFor(
+                  context,
+                  MediaQuery.sizeOf(context).width / _mediaGridColumns,
+                ),
                 placeholder: (context, _) =>
                     const _HeroPlaceholder(loading: true),
                 errorWidget: (context, _, _) => const _HeroPlaceholder(),
@@ -1886,6 +1904,7 @@ class _TimelineThumbnail extends StatelessWidget {
               : CachedNetworkImage(
                   imageUrl: url,
                   fit: BoxFit.cover,
+                  memCacheWidth: decodeWidthFor(context, 98),
                   placeholder: (context, _) =>
                       const _HeroPlaceholder(loading: true),
                   errorWidget: (context, _, _) => const _HeroPlaceholder(),

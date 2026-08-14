@@ -12,6 +12,7 @@ import '../../../core/states/submitting_button.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/add_cat_api.dart';
 import 'add_cat_state.dart';
+import '../../../core/images/decode_budget.dart';
 
 const _initialZoom = 17.0;
 
@@ -317,6 +318,7 @@ class _DuplicateCandidateTile extends StatelessWidget {
                       width: 44,
                       height: 44,
                       fit: BoxFit.cover,
+                      memCacheWidth: decodeWidthFor(context, 44),
                       placeholder: (_, _) => Container(
                         width: 44,
                         height: 44,
