@@ -206,6 +206,12 @@ type cloudflareRunResult struct {
 	Caption     string             `json:"caption"`
 	Text        string             `json:"text"`
 	Choices     []cloudflareChoice `json:"choices"`
+	// The vision model nests its own envelope one level deeper: a live call
+	// answers {"result":{"result":{"answer":"..."},"usage":{...}}}. Reading
+	// only the outer level found nothing, which fails closed — every photo
+	// would have been rejected as moderation-unavailable while every
+	// fake-backed test passed.
+	Result *cloudflareRunResult `json:"result"`
 }
 
 type cloudflareChoice struct {
@@ -226,8 +232,11 @@ func (r cloudflareRunResult) text() string {
 			return candidate
 		}
 	}
-	if len(r.Choices) > 0 {
+	if len(r.Choices) > 0 && r.Choices[0].Message.Content != "" {
 		return r.Choices[0].Message.Content
+	}
+	if r.Result != nil {
+		return r.Result.text()
 	}
 	return ""
 }

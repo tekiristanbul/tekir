@@ -320,3 +320,24 @@ func TestCloudflareModerator_ReadsChatChoiceContent(t *testing.T) {
 		t.Fatalf("expected a rejection, got %+v", decision)
 	}
 }
+
+// The vision model nests its own envelope one level deeper than the chat
+// model — a live call answers {"result":{"result":{"answer":"..."}}}. Reading
+// only the outer level found nothing, which fails closed: every photo would
+// have been rejected as moderation-unavailable. The pretty-printed body is
+// verbatim what the model returned.
+func TestCloudflareModerator_ReadsNestedVisionResult(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"result":{"result":{"answer":"{\n  \"decision\": \"allow\",\n  \"categories\": []\n}","caption":null,"finish_reason":"stop"},"usage":{"total_tokens":765}},"success":true,"errors":[]}`))
+	}))
+	defer srv.Close()
+
+	m := newTestCloudflareModerator(t, srv.URL)
+	decision, err := m.ModerateImage(context.Background(), "image/jpeg", []byte{1, 2, 3})
+	if err != nil {
+		t.Fatalf("ModerateImage: %v", err)
+	}
+	if !decision.Allowed {
+		t.Fatalf("expected allow, got %+v", decision)
+	}
+}
