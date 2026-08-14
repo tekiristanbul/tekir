@@ -71,6 +71,21 @@ class UpdateMediaNotFoundException implements Exception {
   const UpdateMediaNotFoundException();
 }
 
+/// Thrown when `POST /v1/media`, `POST .../updates`, or `PATCH
+/// .../updates/{update_id}` answers 422 — the submitted comment/help note
+/// or attached photo/video was rejected by the pre-publication content
+/// classifier (issue #241, docs/product/trust.md). Mirrors
+/// [AddCatContentRejectedException]'s exact contract: a stable, recoverable
+/// validation-class outcome, never a report to anyone — the caller's own
+/// draft/media is left untouched so the ui can offer edit/replace/remove
+/// and retry. Distinct from [UpdateServerException] (the classifier's own
+/// failures — timeout, malformed output — surface as the existing generic
+/// 500, unchanged) so a genuine rejection never gets a "try again shortly"
+/// framing.
+class UpdateContentRejectedException implements Exception {
+  const UpdateContentRejectedException();
+}
+
 /// Thrown when PATCH/DELETE `.../updates/{update_id}` answers 403 — the
 /// update exists under this cat but isn't the caller's own (issue #80).
 /// Not collapsed into [CatNotFoundException]: the full update history is
@@ -349,6 +364,8 @@ class CatDetailApi {
           return const UpdateMediaNotFoundException();
         }
         return const CatNotFoundException();
+      case 422:
+        return const UpdateContentRejectedException();
     }
     if (status != null) return const UpdateServerException();
     return const UpdateNetworkException();
@@ -406,6 +423,8 @@ class CatDetailApi {
         return const UpdateMediaTooLargeException();
       case 415:
         return const UpdateMediaUnsupportedException();
+      case 422:
+        return const UpdateContentRejectedException();
     }
     if (status != null) return const UpdateServerException();
     return const UpdateNetworkException();
@@ -470,6 +489,8 @@ class CatDetailApi {
         return const UpdateCorrectionNotFoundException();
       case 410:
         return const UpdateCorrectionExpiredException();
+      case 422:
+        return const UpdateContentRejectedException();
     }
     if (status != null) return const UpdateServerException();
     return const UpdateNetworkException();

@@ -747,3 +747,130 @@ func userIDFor(t *testing.T) string {
 	t.Helper()
 	return "11111111-1111-4111-8111-111111111111"
 }
+
+// fakeFrameExtractor is a controllable FrameExtractor test double — no
+// ffmpeg dependency, unlike FFmpegFrameExtractor (see
+// video_frame_extractor_test.go for that adapter's own coverage).
+type fakeFrameExtractor struct {
+	sheet []byte
+	err   error
+}
+
+func (f *fakeFrameExtractor) ExtractContactSheet(context.Context, []byte, string) ([]byte, error) {
+	return f.sheet, f.err
+}
+
+// TestMediaService_Upload_RejectedImageNotStored covers issue #241's
+// atomic-publication requirement for standalone uploads: a rejected photo
+// must never reach ObjectStore.Put (and therefore never reach CreateMedia,
+// which only ever runs after a successful upload in this code path).
+func TestMediaService_Upload_RejectedImageNotStored(t *testing.T) {
+	store := &fakeObjectStore{}
+	mediaStore := &fakeMediaStore{idempotencyErr: pgx.ErrNoRows}
+	svc := NewMediaService(mediaStore, store, 1<<24, 1<<24, WithMediaModerator(FakeModerator{}))
+
+	_, err := svc.Upload(context.Background(), userIDFor(t), "", nil, solidColorPNG(t, 4001, 4001), true)
+	if !errors.Is(err, ErrContentRejected) {
+		t.Fatalf("expected ErrContentRejected, got %v", err)
+	}
+	if len(store.puts) != 0 {
+		t.Errorf("expected nothing stored on rejection, got %v", store.puts)
+	}
+}
+
+// TestMediaService_Upload_ModerationUnavailableNotStored covers the
+// provider-failure fail-closed path: nothing is stored when the moderator
+// itself can't produce a decision (timeout/malformed result upstream).
+func TestMediaService_Upload_ModerationUnavailableNotStored(t *testing.T) {
+	store := &fakeObjectStore{}
+	mediaStore := &fakeMediaStore{idempotencyErr: pgx.ErrNoRows}
+	svc := NewMediaService(mediaStore, store, 1<<24, 1<<24, WithMediaModerator(FakeModerator{}))
+
+	_, err := svc.Upload(context.Background(), userIDFor(t), "", nil, solidColorPNG(t, 4009, 4009), true)
+	if !errors.Is(err, ErrModerationUnavailable) {
+		t.Fatalf("expected ErrModerationUnavailable, got %v", err)
+	}
+	if len(store.puts) != 0 {
+		t.Errorf("expected nothing stored when moderation is unavailable, got %v", store.puts)
+	}
+}
+
+// TestMediaService_Upload_RetryAfterRejectionNeverStores proves a retried
+// upload under the same Idempotency-Key re-evaluates moderation (nothing
+// was ever persisted the first time, so there is no prior row to return)
+// and still never stores anything across repeated attempts (issue #241:
+// "rejected/provider-failed attempts must not leave public objects or
+// partial db records").
+func TestMediaService_Upload_RetryAfterRejectionNeverStores(t *testing.T) {
+	store := &fakeObjectStore{}
+	mediaStore := &fakeMediaStore{idempotencyErr: pgx.ErrNoRows}
+	svc := NewMediaService(mediaStore, store, 1<<24, 1<<24, WithMediaModerator(FakeModerator{}))
+
+	key := "retry-after-reject"
+	rejectedPhoto := solidColorPNG(t, 4001, 4001)
+	for attempt := 0; attempt < 2; attempt++ {
+		_, err := svc.Upload(context.Background(), userIDFor(t), "", &key, rejectedPhoto, true)
+		if !errors.Is(err, ErrContentRejected) {
+			t.Fatalf("attempt %d: expected ErrContentRejected, got %v", attempt, err)
+		}
+	}
+	if len(store.puts) != 0 {
+		t.Errorf("expected nothing ever stored across retries, got %v", store.puts)
+	}
+}
+
+// TestMediaService_Upload_VideoContactSheetModeration covers issue #241's
+// video flow end to end (minus real ffmpeg — see fakeFrameExtractor): the
+// contact sheet a FrameExtractor returns is what actually gets classified,
+// through the ordinary image moderation path, and a rejected contact sheet
+// blocks storage exactly like a rejected photo does.
+func TestMediaService_Upload_VideoContactSheetModeration(t *testing.T) {
+	video := mp4Bytes(t, "isom", 1000, 5000) // 5s, within the 30s cap
+
+	t.Run("rejected contact sheet blocks storage", func(t *testing.T) {
+		store := &fakeObjectStore{}
+		mediaStore := &fakeMediaStore{idempotencyErr: pgx.ErrNoRows}
+		frames := &fakeFrameExtractor{sheet: solidColorPNG(t, 4002, 4002)}
+		svc := NewMediaService(mediaStore, store, 1<<24, 1<<24, WithMediaModerator(FakeModerator{}), WithMediaFrameExtractor(frames))
+
+		_, err := svc.Upload(context.Background(), userIDFor(t), "", nil, video, true)
+		if !errors.Is(err, ErrContentRejected) {
+			t.Fatalf("expected ErrContentRejected, got %v", err)
+		}
+		if len(store.puts) != 0 {
+			t.Errorf("expected nothing stored on rejection, got %v", store.puts)
+		}
+	})
+
+	t.Run("allowed contact sheet permits storage", func(t *testing.T) {
+		store := &fakeObjectStore{}
+		mediaStore := &fakeMediaStore{
+			createRow:      repository.Medium{ID: pgtype.UUID{Bytes: [16]byte{9}, Valid: true}, Url: "/v1/media/objects/video.mp4"},
+			idempotencyErr: pgx.ErrNoRows,
+		}
+		frames := &fakeFrameExtractor{sheet: solidColorPNG(t, 640, 360)}
+		svc := NewMediaService(mediaStore, store, 1<<24, 1<<24, WithMediaModerator(FakeModerator{}), WithMediaFrameExtractor(frames))
+
+		if _, err := svc.Upload(context.Background(), userIDFor(t), "", nil, video, true); err != nil {
+			t.Fatalf("Upload: %v", err)
+		}
+		if len(store.puts) != 1 {
+			t.Errorf("expected the video object to be stored, got %v", store.puts)
+		}
+	})
+
+	t.Run("frame extraction failure fails closed", func(t *testing.T) {
+		store := &fakeObjectStore{}
+		mediaStore := &fakeMediaStore{idempotencyErr: pgx.ErrNoRows}
+		frames := &fakeFrameExtractor{err: errors.New("ffmpeg exploded")}
+		svc := NewMediaService(mediaStore, store, 1<<24, 1<<24, WithMediaModerator(FakeModerator{}), WithMediaFrameExtractor(frames))
+
+		_, err := svc.Upload(context.Background(), userIDFor(t), "", nil, video, true)
+		if !errors.Is(err, ErrModerationUnavailable) {
+			t.Fatalf("expected ErrModerationUnavailable, got %v", err)
+		}
+		if len(store.puts) != 0 {
+			t.Errorf("expected nothing stored when frame extraction fails, got %v", store.puts)
+		}
+	})
+}

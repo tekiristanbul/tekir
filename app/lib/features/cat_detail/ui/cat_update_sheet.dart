@@ -625,7 +625,14 @@ class _MediaPicker extends StatelessWidget {
                         ),
                       ),
                     if (uploading && uploadProgress != null)
-                      PhotoUploadProgress(progress: uploadProgress!),
+                      PhotoUploadProgress(
+                        progress: uploadProgress!,
+                        // The media itself has fully left the device — the
+                        // rest of this same submission (including issue
+                        // #241's pre-publication content check on the
+                        // media and any comment) is still in flight.
+                        checking: uploadProgress! >= 1.0,
+                      ),
                     if (!uploading && onRemove != null)
                       Positioned(
                         right: 4,

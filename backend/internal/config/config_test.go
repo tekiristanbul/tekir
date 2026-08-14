@@ -443,3 +443,123 @@ func TestLoad_OverridesTTLsAndProvider(t *testing.T) {
 		t.Errorf("expected overridden otp provider twilio, got %q", cfg.OTPProvider)
 	}
 }
+
+// TestLoad_ModerationProviderHasNoDefault mirrors
+// TestLoad_ObjectStorageProviderHasNoDefault: the raw value stays empty when
+// unset and the environment-aware defaulting lives in
+// ResolveModerationProvider (issue #241).
+func TestLoad_ModerationProviderHasNoDefault(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("JWT_SIGNING_KEY", "test-signing-key")
+	t.Setenv("MODERATION_PROVIDER", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ModerationProvider != "" {
+		t.Errorf("expected no default moderation provider, got %q", cfg.ModerationProvider)
+	}
+}
+
+// TestResolveModerationProvider covers issue #241's fail-closed provider
+// selection: fake is only reachable under an explicit APP_ENV=development,
+// every non-development environment accepts cloudflare exclusively, and
+// cloudflare always requires its four settings. No case ever resolves an
+// unavailable/misconfigured cloudflare provider to fake.
+func TestResolveModerationProvider(t *testing.T) {
+	cloudflare := Config{
+		CloudflareAccountID:   "account-id-placeholder",
+		CloudflareAPIToken:    "api-token-placeholder",
+		ModerationTextModel:   "@cf/google/gemma-4-26b-a4b-it",
+		ModerationVisionModel: "@cf/moondream/moondream3.1-9B-A2B",
+	}
+
+	cases := []struct {
+		name     string
+		cfg      Config
+		want     string
+		wantErr  bool
+		errNames []string
+	}{
+		{name: "development defaults to fake when unset", cfg: Config{AppEnv: AppEnvDevelopment}, want: ModerationProviderFake},
+		{name: "development explicit fake", cfg: Config{AppEnv: AppEnvDevelopment, ModerationProvider: ModerationProviderFake}, want: ModerationProviderFake},
+		{name: "development cloudflare with full settings", cfg: func() Config {
+			c := cloudflare
+			c.AppEnv = AppEnvDevelopment
+			c.ModerationProvider = ModerationProviderCloudflare
+			return c
+		}(), want: ModerationProviderCloudflare},
+		{name: "development unknown provider rejected", cfg: Config{AppEnv: AppEnvDevelopment, ModerationProvider: "carrier-pigeon"}, wantErr: true},
+		{name: "production cloudflare with full settings", cfg: func() Config {
+			c := cloudflare
+			c.AppEnv = AppEnvProduction
+			c.ModerationProvider = ModerationProviderCloudflare
+			return c
+		}(), want: ModerationProviderCloudflare},
+		{name: "production rejects fake", cfg: Config{AppEnv: AppEnvProduction, ModerationProvider: ModerationProviderFake}, wantErr: true},
+		{name: "production rejects unset", cfg: Config{AppEnv: AppEnvProduction}, wantErr: true},
+		{name: "production rejects unknown", cfg: Config{AppEnv: AppEnvProduction, ModerationProvider: "carrier-pigeon"}, wantErr: true},
+		{name: "unset environment behaves as production for fake", cfg: Config{ModerationProvider: ModerationProviderFake}, wantErr: true},
+		{name: "unset environment behaves as production for unset provider", cfg: Config{}, wantErr: true},
+		{name: "unset environment still accepts configured cloudflare", cfg: func() Config { c := cloudflare; c.ModerationProvider = ModerationProviderCloudflare; return c }(), want: ModerationProviderCloudflare},
+		{name: "unrecognized environment behaves as production", cfg: Config{AppEnv: "staging", ModerationProvider: ModerationProviderFake}, wantErr: true},
+		{name: "cloudflare missing account id", cfg: func() Config {
+			c := cloudflare
+			c.AppEnv = AppEnvProduction
+			c.ModerationProvider = ModerationProviderCloudflare
+			c.CloudflareAccountID = ""
+			return c
+		}(), wantErr: true, errNames: []string{"CLOUDFLARE_ACCOUNT_ID"}},
+		{name: "cloudflare missing api token", cfg: func() Config {
+			c := cloudflare
+			c.AppEnv = AppEnvProduction
+			c.ModerationProvider = ModerationProviderCloudflare
+			c.CloudflareAPIToken = ""
+			return c
+		}(), wantErr: true, errNames: []string{"CLOUDFLARE_API_TOKEN"}},
+		{name: "cloudflare missing text model", cfg: func() Config {
+			c := cloudflare
+			c.AppEnv = AppEnvDevelopment
+			c.ModerationProvider = ModerationProviderCloudflare
+			c.ModerationTextModel = ""
+			return c
+		}(), wantErr: true, errNames: []string{"MODERATION_TEXT_MODEL"}},
+		{name: "cloudflare missing vision model", cfg: func() Config {
+			c := cloudflare
+			c.AppEnv = AppEnvDevelopment
+			c.ModerationProvider = ModerationProviderCloudflare
+			c.ModerationVisionModel = ""
+			return c
+		}(), wantErr: true, errNames: []string{"MODERATION_VISION_MODEL"}},
+		{name: "cloudflare missing everything names all four", cfg: Config{AppEnv: AppEnvProduction, ModerationProvider: ModerationProviderCloudflare}, wantErr: true, errNames: []string{"CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "MODERATION_TEXT_MODEL", "MODERATION_VISION_MODEL"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.cfg.ResolveModerationProvider()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got provider %q", got)
+				}
+				for _, name := range tc.errNames {
+					if !strings.Contains(err.Error(), name) {
+						t.Errorf("expected error to mention %s, got %q", name, err)
+					}
+				}
+				for _, secret := range []string{tc.cfg.CloudflareAPIToken} {
+					if secret != "" && strings.Contains(err.Error(), secret) {
+						t.Errorf("error leaks a configured value: %q", err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("expected provider %q, got %q", tc.want, got)
+			}
+		})
+	}
+}

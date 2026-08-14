@@ -239,6 +239,24 @@ void main() {
       );
     });
 
+    // issue #241: the pre-publication content check rejected the comment
+    // and/or attached media — distinct from the generic 500 a classifier
+    // failure surfaces as (unchanged, still UpdateServerException above).
+    test('422 maps to UpdateContentRejectedException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 422, bodyJson: {'error': 'content rejected'}),
+      );
+
+      await expectLater(
+        api.createUpdate(
+          'cat-1',
+          statuses: const ['seen'],
+          idempotencyKey: 'idem-1',
+        ),
+        throwsA(isA<UpdateContentRejectedException>()),
+      );
+    });
+
     test(
       'a connection failure (no response) maps to UpdateNetworkException',
       () async {
@@ -352,6 +370,40 @@ void main() {
           muted: true,
         ),
         throwsA(isA<UpdateMediaUnsupportedException>()),
+      );
+    });
+
+    test('422 maps to UpdateContentRejectedException (issue #241)', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 422, bodyJson: {'error': 'content rejected'}),
+      );
+
+      await expectLater(
+        api.uploadMedia(
+          mediaBytes: Uint8List.fromList([1]),
+          mediaFilename: 'photo.jpg',
+          idempotencyKey: 'upload-1',
+          muted: true,
+        ),
+        throwsA(isA<UpdateContentRejectedException>()),
+      );
+    });
+  });
+
+  group('CatDetailApi.correctUpdate (issue #80)', () {
+    // issue #241: the pre-publication content check also runs on a
+    // correction's edited comment (PATCH .../updates/{update_id}) — this is
+    // the one mapping test this group needs; the endpoint's other status
+    // codes are already exercised indirectly through
+    // update_correction_sheet_test.dart's fake-api-level tests.
+    test('422 maps to UpdateContentRejectedException', () async {
+      final api = _apiWith(
+        _FakeAdapter(statusCode: 422, bodyJson: {'error': 'content rejected'}),
+      );
+
+      await expectLater(
+        api.correctUpdate('cat-1', 'upd-1', statuses: const ['seen']),
+        throwsA(isA<UpdateContentRejectedException>()),
       );
     });
   });

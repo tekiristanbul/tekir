@@ -260,6 +260,27 @@ keep real values only in a repo-root `.env.local` (gitignored — copy [`.env.ex
 6. unset one required value (e.g. `S3_SECRET_ACCESS_KEY=""`) and confirm startup fails instead of falling back to local disk.
 7. drop `OBJECT_STORAGE_PROVIDER=s3` and confirm the local fake flow still works for normal development.
 
+## content moderation providers (issue #241)
+
+`MODERATION_PROVIDER` selects how pre-publication content moderation classifies user-submitted cat names, update/needs-help comments, photos, and videos before they are ever stored or published:
+
+- `fake` (local default): deterministic, no network — `service.FakeModerator`. Ordinary test/dev content is always allowed; specific fixture inputs (see `backend/internal/service/moderation.go`'s `FakeModerationRejectMarker` and the magic image-dimension triggers in the same file) simulate a rejection or a provider failure for tests. This is what `make run`, docker compose, and the automated tests use — normal ci never calls a real model.
+- `cloudflare`: real moderation via Cloudflare Workers AI (`service.CloudflareModerator`). Requires `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `MODERATION_TEXT_MODEL`, and `MODERATION_VISION_MODEL`. Model slugs are validated only for presence at startup — never resolved against a live model call (issue #241 explicitly rules that out for startup/readiness).
+
+the `fake` default only applies under an explicit `APP_ENV=development`. any other environment — including unset — fails startup unless `MODERATION_PROVIDER=cloudflare` is fully configured; there is no fallback from a selected `cloudflare` provider to `fake` (same posture as `OTP_PROVIDER`/`OBJECT_STORAGE_PROVIDER`/`NOTIFICATION_PROVIDER`).
+
+tekir owns the allow/reject policy: both models classify content, but only ever against the fixed, application-owned category vocabulary in `moderation.go`'s `moderationTextPrompt`/`moderationImagePrompt` — never a raw vendor taxonomy, and raw model prose is never a product contract. malformed or unparseable model output, a timeout, or a transport failure all fail closed identically (`service.ErrModerationUnavailable`) — nothing is ever stored or published on a moderation failure.
+
+video moderation samples 3 deterministic frames (near start, middle, near end) via a real `ffmpeg` binary (`service.FFmpegFrameExtractor` — a runtime dependency baked into the backend container image, see `backend/Dockerfile`), composes them into one contact sheet in pure Go, and classifies that sheet through the same vision-model path as a photo — there is no separate video-specific model call.
+
+### production setup
+
+set `APP_ENV=production`, `MODERATION_PROVIDER=cloudflare`, and the four cloudflare values as deployment secrets (`CLOUDFLARE_API_TOKEN` is a secret; the model slugs are not). `fake`, unset, unknown, and partially configured providers are rejected at startup.
+
+### cloudflare smoke suite (release gate)
+
+normal ci runs only against the deterministic `fake` provider. before a release that ships or changes the `cloudflare` provider, run its separate, manually-triggered smoke suite against real cloudflare workers ai credentials to verify the configured model slugs, request schema, structured-result parsing, representative turkish text, a representative image input, and basic latency — this is a required release gate for 0.4, not an optional check. the smoke suite location and invocation are tracked with the suite itself, not duplicated here.
+
 ## mobile runtime configuration validation (issue #131)
 
 required mobile config fails in one of two deliberately different ways:

@@ -10,6 +10,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -504,12 +505,71 @@ type MediaStore interface {
 // via CatsService.Create/repository.Store.CreateCatWithMedia instead of
 // going through MediaService.
 type MediaService struct {
-	db       MediaStore
-	pipeline *mediaPipeline
+	db        MediaStore
+	pipeline  *mediaPipeline
+	moderator Moderator
+	frames    FrameExtractor
 }
 
-func NewMediaService(db MediaStore, store ObjectStore, maxBytes, maxVideoBytes int) *MediaService {
-	return &MediaService{db: db, pipeline: newMediaPipeline(store, maxBytes, maxVideoBytes)}
+// MediaServiceOption configures optional MediaService behavior.
+type MediaServiceOption func(*MediaService)
+
+// WithMediaModerator wires the pre-publication content moderator Upload
+// calls before ever storing an image or a video's contact sheet (issue
+// #241). Production wiring (cmd/api/main.go) always supplies the
+// environment-resolved provider explicitly; omitting this option leaves the
+// zero-value FakeModerator default from NewMediaService in place, which
+// exists purely so the ~dozen existing tests that construct a MediaService
+// without caring about moderation keep compiling unchanged — it is never
+// reachable in production, where main.go's ResolveModerationProvider fails
+// startup outright before a MediaService is ever constructed. There is no
+// path from a configured cloudflare provider back to this default, ever.
+func WithMediaModerator(m Moderator) MediaServiceOption {
+	return func(s *MediaService) { s.moderator = m }
+}
+
+// WithMediaFrameExtractor wires the video contact-sheet builder Upload calls
+// before moderating a video (issue #241). Left nil by default — safe as
+// long as no test using the default exercises the video upload path, which
+// none of the pre-#241 fixtures do (they're all images).
+func WithMediaFrameExtractor(f FrameExtractor) MediaServiceOption {
+	return func(s *MediaService) { s.frames = f }
+}
+
+func NewMediaService(db MediaStore, store ObjectStore, maxBytes, maxVideoBytes int, opts ...MediaServiceOption) *MediaService {
+	s := &MediaService{db: db, pipeline: newMediaPipeline(store, maxBytes, maxVideoBytes), moderator: FakeModerator{}}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// moderate classifies processed before it is ever stored (issue #241): an
+// image is classified directly; a video is first reduced to a 3-frame
+// contact sheet (WithMediaFrameExtractor) and that contact sheet is
+// classified through the same image path — there is no separate
+// video-moderation model call. Any extraction failure, moderator failure, or
+// a reject decision returns before the caller's subsequent
+// mediaPipeline.upload ever runs, so nothing unreviewed reaches
+// ObjectStore.Put.
+func (s *MediaService) moderate(ctx context.Context, processed processedMedia) error {
+	imageContentType, imageData := processed.contentType, processed.data
+	if strings.HasPrefix(processed.contentType, "video/") {
+		sheet, err := s.frames.ExtractContactSheet(ctx, processed.data, processed.extension)
+		if err != nil {
+			return ErrModerationUnavailable
+		}
+		imageContentType, imageData = "image/jpeg", sheet
+	}
+
+	decision, err := s.moderator.ModerateImage(ctx, imageContentType, imageData)
+	if err != nil {
+		return err
+	}
+	if !decision.Allowed {
+		return ErrContentRejected
+	}
+	return nil
 }
 
 // Upload validates and stores raw, attributing it to the authenticated
@@ -549,6 +609,9 @@ func (s *MediaService) Upload(ctx context.Context, userID, deviceID string, idem
 
 	processed, err := s.pipeline.process(raw)
 	if err != nil {
+		return Media{}, err
+	}
+	if err := s.moderate(ctx, processed); err != nil {
 		return Media{}, err
 	}
 

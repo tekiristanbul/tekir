@@ -410,7 +410,17 @@ class _DetailsStep extends ConsumerWidget {
                         // (docs/design/app-states.md): the photo leaving
                         // the device.
                         if (state.saving && state.uploadProgress != null)
-                          PhotoUploadProgress(progress: state.uploadProgress!),
+                          PhotoUploadProgress(
+                            progress: state.uploadProgress!,
+                            // The photo has fully left the device — the
+                            // same request is now waiting on the server's
+                            // own remaining work, including issue #241's
+                            // pre-publication content check. No new
+                            // request, no polling: just a truer label for
+                            // the tail of this one (see PhotoUploadProgress's
+                            // own doc).
+                            checking: state.uploadProgress! >= 1.0,
+                          ),
                         if (!state.saving && state.error == AddCatError.network)
                           const Positioned(
                             left: AppSpacing.s3,

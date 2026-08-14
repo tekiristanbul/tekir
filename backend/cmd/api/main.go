@@ -58,6 +58,15 @@ func run() error {
 		return err
 	}
 
+	// same fail-closed startup gate for pre-publication content moderation
+	// (issue #241): production with fake/unset/unknown, or cloudflare with
+	// missing settings, stops here — there is no fallback path to the fake
+	// provider. Never resolves a live model call here — only config syntax.
+	moderationProvider, err := cfg.ResolveModerationProvider()
+	if err != nil {
+		return err
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: logLevel(cfg.LogLevel),
 	}))
@@ -84,9 +93,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	catsSvc := service.NewCatsService(store, service.WithCatsMediaPipeline(objectStore, cfg.MediaMaxBytes))
+	moderator, err := newModerator(cfg, moderationProvider)
+	if err != nil {
+		return err
+	}
+	frameExtractor := service.NewFFmpegFrameExtractor()
+	catsSvc := service.NewCatsService(store, service.WithCatsMediaPipeline(objectStore, cfg.MediaMaxBytes), service.WithCatsModerator(moderator))
 	catsHandler := handler.NewCatsHandler(catsSvc, cfg.MediaMaxBytes)
-	mediaSvc := service.NewMediaService(store, objectStore, cfg.MediaMaxBytes, cfg.MediaVideoMaxBytes)
+	mediaSvc := service.NewMediaService(store, objectStore, cfg.MediaMaxBytes, cfg.MediaVideoMaxBytes, service.WithMediaModerator(moderator), service.WithMediaFrameExtractor(frameExtractor))
 	mediaHandler := handler.NewMediaHandler(mediaSvc, max(cfg.MediaMaxBytes, cfg.MediaVideoMaxBytes))
 	// GET /v1/media/objects/{key} only ever serves what FakeObjectStore
 	// wrote — see docs/architecture/backend.md's OBJECT_STORAGE_PROVIDER.
@@ -205,6 +219,21 @@ func newObjectStore(cfg config.Config, provider string) (service.ObjectStore, er
 		return service.NewS3ObjectStore(cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKeyID, cfg.S3SecretAccessKey, cfg.S3PublicBaseURL, opts...)
 	default:
 		return nil, fmt.Errorf("unsupported resolved object storage provider %q", provider)
+	}
+}
+
+// newModerator builds the Moderator implementation named by provider.
+// provider was already validated by cfg.ResolveModerationProvider — this
+// switch is exhaustive over its possible returns, mirroring the object
+// storage/otp provider switches above.
+func newModerator(cfg config.Config, provider string) (service.Moderator, error) {
+	switch provider {
+	case config.ModerationProviderFake:
+		return service.FakeModerator{}, nil
+	case config.ModerationProviderCloudflare:
+		return service.NewCloudflareModerator(cfg.CloudflareAccountID, cfg.CloudflareAPIToken, cfg.ModerationTextModel, cfg.ModerationVisionModel)
+	default:
+		return nil, fmt.Errorf("unsupported resolved moderation provider %q", provider)
 	}
 }
 

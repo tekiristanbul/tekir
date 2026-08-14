@@ -274,6 +274,24 @@ void main() {
       );
     });
 
+    // issue #241: the pre-publication content check rejected the name or
+    // photo — distinct from the generic 500 a classifier failure surfaces
+    // as (unchanged, still AddCatServerException below).
+    test('422 maps to AddCatContentRejectedException', () async {
+      final api = _apiWith(_FakeAdapter(statusCode: 422));
+      await expectLater(
+        api.createCat(
+          lat: 41.03,
+          lng: 28.98,
+          confirmedNew: true,
+          photoBytes: Uint8List.fromList([1]),
+          photoFilename: 'cat.jpg',
+          idempotencyKey: 'key-1',
+        ),
+        throwsA(isA<AddCatContentRejectedException>()),
+      );
+    });
+
     test('a connection failure maps to AddCatNetworkException', () async {
       final api = _apiWith(_ThrowingAdapter());
       await expectLater(

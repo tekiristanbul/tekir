@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -586,9 +587,10 @@ type CatsStore interface {
 }
 
 type CatsService struct {
-	db       CatsStore
-	clock    func() time.Time
-	pipeline *mediaPipeline
+	db        CatsStore
+	clock     func() time.Time
+	pipeline  *mediaPipeline
+	moderator Moderator
 }
 
 // CatsServiceOption configures optional CatsService behavior.
@@ -616,8 +618,21 @@ func WithCatsMediaPipeline(store ObjectStore, maxBytes int) CatsServiceOption {
 	return func(s *CatsService) { s.pipeline = newMediaPipeline(store, maxBytes, 0) }
 }
 
+// WithCatsModerator wires the pre-publication content moderator Create,
+// RenameCat, CreateOrdinaryUpdate, CreateNeedsHelpUpdate, and CorrectOwnUpdate
+// call before writing any name/comment or cat photo (issue #241). Production
+// wiring (cmd/api/main.go) always supplies the environment-resolved provider
+// explicitly; omitting this option leaves the zero-value FakeModerator
+// default from NewCatsService in place — see WithMediaModerator's identical
+// note for why that default is safe (it exists only for the hundreds of
+// existing tests that construct a CatsService without exercising moderation,
+// and is never reachable in production).
+func WithCatsModerator(m Moderator) CatsServiceOption {
+	return func(s *CatsService) { s.moderator = m }
+}
+
 func NewCatsService(db CatsStore, opts ...CatsServiceOption) *CatsService {
-	s := &CatsService{db: db, clock: time.Now}
+	s := &CatsService{db: db, clock: time.Now, moderator: FakeModerator{}}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -1152,6 +1167,9 @@ func (s *CatsService) RenameCat(ctx context.Context, id, callerUserID, name stri
 	if trimmed == "" {
 		return CatDetail{}, ErrInvalidCatName
 	}
+	if err := s.moderateText(ctx, trimmed); err != nil {
+		return CatDetail{}, err
+	}
 
 	if err := s.db.UpdateCatName(ctx, repository.UpdateCatNameParams{
 		ID:   catID,
@@ -1424,6 +1442,9 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 			return CatUpdate{}, err
 		}
 	}
+	if err := s.moderateOptionalText(ctx, comment); err != nil {
+		return CatUpdate{}, err
+	}
 
 	// deviceID (from the optional device-token context) may be "".
 	authorDeviceID, err := optionalUUID(deviceID)
@@ -1626,6 +1647,9 @@ func (s *CatsService) CreateNeedsHelpUpdate(ctx context.Context, id, userID, dev
 	if err := validateNeedsHelpNote(comment); err != nil {
 		return CatUpdate{}, err
 	}
+	if err := s.moderateOptionalText(ctx, comment); err != nil {
+		return CatUpdate{}, err
+	}
 
 	// userID comes from the authenticated bearer context RequireBearer
 	// placed on the request — always a well-formed uuid, never
@@ -1808,6 +1832,15 @@ func (s *CatsService) CorrectOwnUpdate(ctx context.Context, catID, updateID, use
 			return CatUpdate{}, err
 		}
 	}
+	// A correction can rewrite the comment (issue #105) — re-moderate it the
+	// same as at creation, so an edit can't smuggle in content the original
+	// comment never carried (issue #241 scopes "update comments / notes"
+	// without excluding a later edit of one).
+	if correction.SetComment {
+		if err := s.moderateOptionalText(ctx, correction.Comment); err != nil {
+			return CatUpdate{}, err
+		}
+	}
 	// userID is always a well-formed uuid from RequireBearer's context —
 	// never client-supplied input to re-validate against a sentinel error.
 	authorUserID, err := uuid.Parse(userID)
@@ -1961,6 +1994,81 @@ func toDuplicateCandidates(rows []repository.ListNearbyCatsForDuplicateCheckRow)
 	return candidates
 }
 
+// moderateOptionalText moderates *comment when it carries non-whitespace
+// text, and is a no-op otherwise — the shared skip-when-empty rule issue
+// #241 requires for every optional text field this service moderates
+// (update comment, needs-help note).
+func (s *CatsService) moderateOptionalText(ctx context.Context, comment *string) error {
+	if comment == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*comment)
+	if trimmed == "" {
+		return nil
+	}
+	return s.moderateText(ctx, trimmed)
+}
+
+// moderateText classifies text and, when rejected or unavailable, returns
+// the corresponding sentinel error — the single call site every text field
+// this service moderates (cat name, update/needs-help comment) shares.
+// Callers skip calling this entirely for empty/whitespace-only optional text
+// (issue #241) — moderateText itself never special-cases an empty string.
+func (s *CatsService) moderateText(ctx context.Context, text string) error {
+	decision, err := s.moderator.ModerateText(ctx, text)
+	if err != nil {
+		return err
+	}
+	if !decision.Allowed {
+		return ErrContentRejected
+	}
+	return nil
+}
+
+// moderateCreate classifies Create's photo and, when present, its optional
+// name concurrently (issue #241: "the moderation call should run in
+// parallel with independent text moderation where a submission contains
+// both text and image") — the two calls share no state and either alone can
+// fail the whole submission, so there is no reason to serialize them and
+// add their latencies together in the request the composer is waiting on.
+func (s *CatsService) moderateCreate(ctx context.Context, processed processedMedia, name *string) error {
+	trimmedName := ""
+	if name != nil {
+		trimmedName = strings.TrimSpace(*name)
+	}
+
+	var imgErr, textErr error
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		decision, err := s.moderator.ModerateImage(ctx, processed.contentType, processed.data)
+		if err != nil {
+			imgErr = err
+			return
+		}
+		if !decision.Allowed {
+			imgErr = ErrContentRejected
+		}
+	}()
+
+	if trimmedName != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			textErr = s.moderateText(ctx, trimmedName)
+		}()
+	}
+
+	wg.Wait()
+
+	if imgErr != nil {
+		return imgErr
+	}
+	return textErr
+}
+
 // Create adds a new cat (issue #70), attributed to the authenticated
 // account identified by userID (never client-supplied) with deviceID
 // (optional, installation/abuse-control association only) recorded
@@ -2032,6 +2140,9 @@ func (s *CatsService) Create(ctx context.Context, userID, deviceID string, idemp
 
 	processed, err := s.pipeline.process(photoBytes)
 	if err != nil {
+		return CatDetail{}, err
+	}
+	if err := s.moderateCreate(ctx, processed, name); err != nil {
 		return CatDetail{}, err
 	}
 	objectKey, url, err := s.pipeline.upload(ctx, processed)
