@@ -371,8 +371,8 @@ void main() {
   });
 
   testWidgets(
-    'missing photo: falls back to a branded placeholder at the same 16:9 '
-    'cover geometry, not a broken image',
+    'missing photo: falls back to a branded placeholder in the same circular '
+    'profile-photo footprint, not a broken image',
     (tester) async {
       await _pump(
         tester,
@@ -385,15 +385,16 @@ void main() {
 
       expect(find.text('boncuk'), findsWidgets);
       expect(find.byIcon(Icons.pets), findsOneWidget);
-      // The cover keeps the binding design's fixed 16:9 ratio even without
-      // a photo — the placeholder shares the real photo's footprint.
-      final cover = tester.getSize(find.byType(AspectRatio));
-      expect(cover.width / cover.height, closeTo(16 / 9, 0.01));
+      // issue #236: the profile photo is a circle of fixed size, and the
+      // placeholder occupies exactly the same footprint — square, so the
+      // clip never distorts what it crops.
+      final avatar = tester.getSize(find.byType(ClipOval).first);
+      expect(avatar.width, closeTo(avatar.height, 0.01));
     },
   );
 
   testWidgets(
-    'a photoless cover is not tappable — no full-screen view to open',
+    'a photoless profile photo is not tappable — no full-screen view to open',
     (tester) async {
       await _pump(
         tester,
@@ -404,7 +405,7 @@ void main() {
         ),
       );
 
-      await tester.tap(find.byType(AspectRatio), warnIfMissed: false);
+      await tester.tap(find.byType(ClipOval).first, warnIfMissed: false);
       await tester.pumpAndSettle();
 
       // Still on the profile — nothing was pushed over it.
@@ -625,26 +626,26 @@ void main() {
   );
 
   testWidgets(
-    'the identity block (name + area) renders below the cover, not overlaid on it',
+    'the identity block (name + area) renders below the profile photo, not overlaid on it',
     (tester) async {
       await _pump(
         tester,
         CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
       );
 
-      final coverBottom = tester.getBottomLeft(find.byType(AspectRatio)).dy;
+      final avatarBottom = tester.getBottomLeft(find.byType(ClipOval).first).dy;
       final nameTop = tester.getTopLeft(find.text('tekir')).dy;
       final areaTop = tester
           .getTopLeft(find.text('Galata Kulesi çevresi, Beyoğlu'))
           .dy;
 
-      expect(nameTop, greaterThanOrEqualTo(coverBottom));
+      expect(nameTop, greaterThanOrEqualTo(avatarBottom));
       expect(areaTop, greaterThan(nameTop));
     },
   );
 
   testWidgets(
-    'the follow control is the icon-only glass button on the cover, not a labeled button in the body',
+    'the follow control is the icon-only round button in the header, not a labeled button in the body',
     (tester) async {
       await _pump(
         tester,
@@ -655,11 +656,13 @@ void main() {
       expect(find.text('Takip ediliyor'), findsNothing);
       expect(find.byIcon(Icons.favorite_border), findsOneWidget);
 
-      final coverBottom = tester.getBottomLeft(find.byType(AspectRatio)).dy;
+      // It sits above the profile photo, in the header row with the back
+      // control — not down in the body with the timeline.
+      final avatarTop = tester.getTopLeft(find.byType(ClipOval).first).dy;
       final followIconBottom = tester
           .getBottomLeft(find.byIcon(Icons.favorite_border))
           .dy;
-      expect(followIconBottom, lessThanOrEqualTo(coverBottom));
+      expect(followIconBottom, lessThanOrEqualTo(avatarTop));
     },
   );
 
@@ -1185,7 +1188,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.text('ana'), findsOneWidget);
+      expect(find.text('profil'), findsOneWidget);
       expect(find.byType(CachedNetworkImage), findsNWidgets(2));
       // issue #154: the uploader's name surfaces via the same tile the
       // "ana" badge sits on, consistent with the timeline's own avatar.
@@ -1438,7 +1441,7 @@ void main() {
     }
 
     testWidgets(
-      'owner: a non-cover tile opens with "ana fotoğraf yap" enabled',
+      'owner: a non-cover tile opens with "profil fotoğrafı yap" enabled',
       (tester) async {
         await _pump(
           tester,
@@ -1448,7 +1451,7 @@ void main() {
 
         await openFullScreenFor(tester, 'https://example.com/other.jpg');
 
-        expect(find.text('ana fotoğraf yap'), findsOneWidget);
+        expect(find.text('profil fotoğrafı yap'), findsOneWidget);
       },
     );
 
@@ -1463,8 +1466,8 @@ void main() {
 
       await openFullScreenFor(tester, 'https://example.com/cover.jpg');
 
-      expect(find.text('ana fotoğraf'), findsOneWidget);
-      expect(find.text('ana fotoğraf yap'), findsNothing);
+      expect(find.text('profil fotoğrafı'), findsOneWidget);
+      expect(find.text('profil fotoğrafı yap'), findsNothing);
     });
 
     testWidgets('non-owner: the full-screen view carries no cover action', (
@@ -1478,8 +1481,8 @@ void main() {
 
       await openFullScreenFor(tester, 'https://example.com/other.jpg');
 
-      expect(find.text('ana fotoğraf yap'), findsNothing);
-      expect(find.text('ana fotoğraf'), findsNothing);
+      expect(find.text('profil fotoğrafı yap'), findsNothing);
+      expect(find.text('profil fotoğrafı'), findsNothing);
     });
 
     testWidgets(
@@ -1516,8 +1519,8 @@ void main() {
         await tester.pump();
         await tester.pump();
 
-        expect(find.text('ana fotoğraf yap'), findsNothing);
-        expect(find.text('ana fotoğraf'), findsNothing);
+        expect(find.text('profil fotoğrafı yap'), findsNothing);
+        expect(find.text('profil fotoğrafı'), findsNothing);
       },
     );
 
@@ -1604,7 +1607,7 @@ void main() {
     );
 
     testWidgets(
-      'owner: tapping "ana fotoğraf yap" submits and closes the view',
+      'owner: tapping "profil fotoğrafı yap" submits and closes the view',
       (tester) async {
         final api = _FakeCatMediaApi(
           ownerMedia,
@@ -1624,7 +1627,7 @@ void main() {
         await _pump(tester, ownerState(isOwner: true), api: api);
 
         await openFullScreenFor(tester, 'https://example.com/other.jpg');
-        await tester.tap(find.text('ana fotoğraf yap'));
+        await tester.tap(find.text('profil fotoğrafı yap'));
         await tester.pump();
         await tester.pump();
         await tester.pump();
@@ -1632,7 +1635,7 @@ void main() {
         expect(api.capturedSetCoverCatId, _catId);
         expect(api.capturedSetCoverMediaId, 'm2');
         // the full-screen view pops back to the medya grid on success.
-        expect(find.text('ana fotoğraf yap'), findsNothing);
+        expect(find.text('profil fotoğrafı yap'), findsNothing);
       },
     );
   });
