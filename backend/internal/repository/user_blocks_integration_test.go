@@ -71,15 +71,22 @@ func TestStore_BlockHidesOwnersCatFromEveryReadSurface(t *testing.T) {
 	owner := createTestUser(t, ctx, store)
 	viewer := createTestUser(t, ctx, store)
 
-	created, err := store.CreateCatWithMedia(ctx, newCreateCatWithMediaParams(owner, 41.0256, 28.9744, pgtype.Text{}))
+	// A coordinate of its own, well away from the shared fixture point every
+	// other integration test upserts at: this database accumulates thousands
+	// of cats at 41.0256/28.9744, so a distance-ordered read from there would
+	// page past this one long before the keyset limit. From here it is the
+	// nearest cat by construction, which is what makes the assertions below
+	// about *this* cat meaningful.
+	const lat, lng = 41.0805, 29.0575
+	created, err := store.CreateCatWithMedia(ctx, newCreateCatWithMediaParams(owner, lat, lng, pgtype.Text{}))
 	if err != nil {
 		t.Fatalf("create cat: %v", err)
 	}
 	catID := created.Cat.ID
 
-	bounds := repository.ListCatsInBoundsParams{MinLat: 40.9, MinLng: 28.8, MaxLat: 41.2, MaxLng: 29.1}
-	nearby := repository.ListNearbyCatsForDuplicateCheckParams{Lat: 41.0256, Lng: 28.9744, RadiusM: 500}
-	discover := repository.ListCatsByDistanceParams{Lat: 41.0256, Lng: 28.9744, RowLimit: 50}
+	bounds := repository.ListCatsInBoundsParams{MinLat: 41.07, MinLng: 29.04, MaxLat: 41.09, MaxLng: 29.07}
+	nearby := repository.ListNearbyCatsForDuplicateCheckParams{Lat: lat, Lng: lng, RadiusM: 300}
+	discover := repository.ListCatsByDistanceParams{Lat: lat, Lng: lng, RowLimit: 5}
 
 	containsCat := func(t *testing.T, ids []pgtype.UUID) bool {
 		t.Helper()
@@ -207,7 +214,7 @@ func TestStore_BlockRemovesFollowedCatButKeepsTheFollow(t *testing.T) {
 	owner := createTestUser(t, ctx, store)
 	follower := createTestUser(t, ctx, store)
 
-	created, err := store.CreateCatWithMedia(ctx, newCreateCatWithMediaParams(owner, 41.0256, 28.9744, pgtype.Text{}))
+	created, err := store.CreateCatWithMedia(ctx, newCreateCatWithMediaParams(owner, 41.0805, 29.0575, pgtype.Text{}))
 	if err != nil {
 		t.Fatalf("create cat: %v", err)
 	}
