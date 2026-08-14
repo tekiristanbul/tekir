@@ -14,8 +14,15 @@ steps:
   - name: analyze
     agent: developer
 
+  # routine-analysis releases this gate without a human when analyze
+  # reported status: ready, adr.required: no and risk: low (and ends the
+  # run outright when it reported work_required: no). Any other report
+  # leaves it pending. approve-change deliberately has no auto predicate:
+  # every run that changes code must still be seen by a human before it
+  # publishes.
   - name: approve-plan
     type: approval
+    auto: routine-analysis
     needs:
       - analyze
 
