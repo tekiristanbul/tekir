@@ -273,6 +273,21 @@ func (p *mediaPipeline) process(raw []byte) (processedMedia, error) {
 		return processedMedia{}, ErrMalformedMedia
 	}
 
+	// A camera/gallery jpeg commonly stores its sensor's raw pixel order
+	// unchanged and flags how to display it upright via the EXIF
+	// Orientation tag, rather than physically rotating pixels — image.Decode
+	// never applies that tag itself. Apply it now, before the re-encode
+	// below discards the tag along with the rest of the file's EXIF (see
+	// processedMedia's doc comment): once the pixel buffer itself is
+	// upright, no downstream renderer needs to know the file ever carried
+	// an Orientation tag at all. PNG carries no equivalent orientation
+	// convention from any real camera/gallery app, so it's left alone.
+	if format == "jpeg" {
+		if orientation := jpegExifOrientation(raw); orientation != 1 {
+			img = applyExifOrientation(img, orientation)
+		}
+	}
+
 	var buf bytes.Buffer
 	var result processedMedia
 	switch format {
@@ -321,6 +336,143 @@ func (p *mediaPipeline) processVideo(raw []byte, vc videoContainer) (processedMe
 		return processedMedia{}, ErrMediaDurationTooLong
 	}
 	return processedMedia{data: raw, contentType: vc.contentType, extension: vc.extension}, nil
+}
+
+// jpegExifOrientation scans raw's leading JPEG marker segments for an APP1
+// segment carrying an "Exif\0\0" identifier, then reads the EXIF
+// Orientation tag (0x0112) out of that segment's TIFF IFD0 — the same tag
+// every camera and gallery app sets to record how its sensor's pixel order
+// relates to the photo's intended visual "up" (CIPA DC-008/Exif 2.32 §4.6.4
+// table 5). Returns 1 (already upright, no transform needed) if raw isn't a
+// well-formed JPEG, carries no EXIF segment, or the segment carries no
+// usable Orientation tag — a missing or unreadable tag only ever means
+// "nothing to correct", never a reason to reject the upload.
+func jpegExifOrientation(raw []byte) uint16 {
+	if len(raw) < 4 || raw[0] != 0xFF || raw[1] != 0xD8 {
+		return 1
+	}
+	offset := 2
+	for offset+4 <= len(raw) {
+		if raw[offset] != 0xFF {
+			return 1
+		}
+		marker := raw[offset+1]
+		// SOS (start of scan) ends the header segments; entropy-coded scan
+		// data follows and is never itself a marker segment, so scanning
+		// further would risk misreading compressed pixel bytes as one.
+		if marker == 0xDA {
+			return 1
+		}
+		segmentLen := int(binary.BigEndian.Uint16(raw[offset+2 : offset+4]))
+		if segmentLen < 2 || offset+2+segmentLen > len(raw) {
+			return 1
+		}
+		if marker == 0xE1 {
+			if orientation, ok := exifOrientationFromAPP1(raw[offset+4 : offset+2+segmentLen]); ok {
+				return orientation
+			}
+		}
+		offset += 2 + segmentLen
+	}
+	return 1
+}
+
+// exifOrientationFromAPP1 reads an APP1 segment's payload (starting right
+// after the marker/length, so beginning with the "Exif\0\0" identifier) and
+// returns the Orientation tag's value out of IFD0, per the TIFF 6.0
+// structure the EXIF spec embeds. It only ever walks IFD0's own entry list —
+// Orientation is always there, never in a sub-IFD.
+func exifOrientationFromAPP1(payload []byte) (uint16, bool) {
+	if len(payload) < 8 || string(payload[0:6]) != "Exif\x00\x00" {
+		return 0, false
+	}
+	tiff := payload[6:]
+	if len(tiff) < 8 {
+		return 0, false
+	}
+	var order binary.ByteOrder
+	switch string(tiff[0:2]) {
+	case "II":
+		order = binary.LittleEndian
+	case "MM":
+		order = binary.BigEndian
+	default:
+		return 0, false
+	}
+	if order.Uint16(tiff[2:4]) != 42 {
+		return 0, false
+	}
+	ifdOffset := order.Uint32(tiff[4:8])
+	if int(ifdOffset)+2 > len(tiff) {
+		return 0, false
+	}
+	entryCount := int(order.Uint16(tiff[ifdOffset : ifdOffset+2]))
+	base := int(ifdOffset) + 2
+	for i := 0; i < entryCount; i++ {
+		entryOffset := base + i*12
+		if entryOffset+12 > len(tiff) {
+			return 0, false
+		}
+		if order.Uint16(tiff[entryOffset:entryOffset+2]) != 0x0112 {
+			continue
+		}
+		value := order.Uint16(tiff[entryOffset+8 : entryOffset+10])
+		if value < 1 || value > 8 {
+			return 0, false
+		}
+		return value, true
+	}
+	return 0, false
+}
+
+// applyExifOrientation returns img transformed so its own pixel data is
+// upright, correcting for the given EXIF Orientation value (1-8) per the
+// same correction table every EXIF-aware viewer/editor uses (jpegtran
+// -exif-transpose semantics; e.g. ImageMagick's -auto-orient). Values 1
+// (already upright) and anything outside the defined 2-8 range return img
+// unchanged — an unrecognized value is never a safe guess to act on.
+func applyExifOrientation(img image.Image, orientation uint16) image.Image {
+	if orientation < 2 || orientation > 8 {
+		return img
+	}
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	ox, oy := b.Min.X, b.Min.Y
+
+	var dstW, dstH int
+	var src func(x, y int) (int, int)
+	switch orientation {
+	case 2: // mirror horizontal
+		dstW, dstH = w, h
+		src = func(x, y int) (int, int) { return w - 1 - x, y }
+	case 3: // rotate 180
+		dstW, dstH = w, h
+		src = func(x, y int) (int, int) { return w - 1 - x, h - 1 - y }
+	case 4: // mirror vertical
+		dstW, dstH = w, h
+		src = func(x, y int) (int, int) { return x, h - 1 - y }
+	case 5: // transpose (mirror across the top-left/bottom-right diagonal)
+		dstW, dstH = h, w
+		src = func(x, y int) (int, int) { return y, x }
+	case 6: // rotate 90 clockwise
+		dstW, dstH = h, w
+		src = func(x, y int) (int, int) { return y, h - 1 - x }
+	case 7: // transverse (mirror across the top-right/bottom-left diagonal)
+		dstW, dstH = h, w
+		src = func(x, y int) (int, int) { return w - 1 - y, h - 1 - x }
+	default: // 8: rotate 90 counter-clockwise
+		dstW, dstH = h, w
+		src = func(x, y int) (int, int) { return w - 1 - y, x }
+	}
+
+	dst := image.NewNRGBA(image.Rect(0, 0, dstW, dstH))
+	for y := 0; y < dstH; y++ {
+		for x := 0; x < dstW; x++ {
+			sx, sy := src(x, y)
+			dst.Set(x, y, img.At(ox+sx, oy+sy))
+		}
+	}
+	return dst
 }
 
 // upload stores processed under a fresh, random key and returns the
