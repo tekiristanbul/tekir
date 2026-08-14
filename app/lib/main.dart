@@ -9,6 +9,7 @@ import 'core/config/env.dart';
 import 'core/config/startup_validation.dart';
 import 'core/firebase/firebase_bootstrap.dart';
 import 'core/identity/device_identity.dart';
+import 'core/images/decode_budget.dart';
 import 'core/identity/session_identity.dart';
 import 'core/push/push_notifications.dart';
 import 'core/router/app_router.dart';
@@ -25,6 +26,13 @@ Future<void> main() async {
   // means a release build without it crashes at startup instead (issue
   // #128 review).
   Env.apiBaseUrl;
+
+  // The decoded-image cache defaults to 100 MB, which is a liability rather
+  // than a budget while the backend serves one full-resolution image to every
+  // surface (see core/images/decode_budget.dart): two phone photos fill it and
+  // it keeps them alive, which is how fast navigation reached the iOS memory
+  // high watermark and the process was killed.
+  PaintingBinding.instance.imageCache.maximumSizeBytes = imageCacheMaxBytes;
 
   // Non-fatal config diagnostics (issue #131) — anything checked here
   // degrades to a safe default elsewhere instead of failing startup, so

@@ -2066,4 +2066,53 @@ void main() {
       },
     );
   });
+
+  // The backend serves one full-resolution image everywhere, so an
+  // unconstrained decode is ~47 MB per photo and a few live at once cross
+  // iOS's memory high watermark. Every image on this screen must therefore
+  // declare the size it is painted at.
+  testWidgets('every network image on cat detail caps its decode size', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      CatDetailState(
+        detail: CatDetail(
+          id: _catId,
+          name: 'tekir',
+          lat: 41.0256,
+          lng: 28.9744,
+          areaLabel: null,
+          primaryPhoto: 'https://example.invalid/cover.jpg',
+          createdAt: DateTime.utc(2026, 1, 1),
+          lastUpdateAt: null,
+          mediaCount: 1,
+        ),
+        updates: const [],
+        hasLoadedOnce: true,
+      ),
+      media: [
+        CatMediaItem(
+          id: 'm1',
+          url: 'https://example.invalid/m1.jpg',
+          mediaContentType: 'image/jpeg',
+          isCover: false,
+          createdAt: DateTime.utc(2026, 1, 3),
+        ),
+      ],
+    );
+    await tester.pump();
+
+    final images = tester
+        .widgetList<CachedNetworkImage>(find.byType(CachedNetworkImage))
+        .toList();
+    expect(images, isNotEmpty);
+    for (final image in images) {
+      expect(
+        image.memCacheWidth,
+        isNotNull,
+        reason: 'missing memCacheWidth on ${image.imageUrl}',
+      );
+    }
+  });
 }

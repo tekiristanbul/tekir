@@ -7,6 +7,7 @@ import '../../../core/analytics/analytics.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../map/data/cat_marker.dart';
 import 'quiet_day_notifier.dart';
+import '../../../core/images/decode_budget.dart';
 
 // State 09's olive palette (docs/design/screens/app-states.html) — good
 // news deliberately gets its own hue, never the help palette.
@@ -195,6 +196,7 @@ class _FollowedCatRow extends StatelessWidget {
                       ? CachedNetworkImage(
                           imageUrl: cat.primaryPhoto,
                           fit: BoxFit.cover,
+                          memCacheWidth: decodeWidthFor(context, 54),
                           placeholder: (_, _) =>
                               const ColoredBox(color: AppColors.surfaceAlt),
                           errorWidget: (_, _, _) => const ColoredBox(
