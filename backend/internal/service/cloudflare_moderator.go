@@ -112,9 +112,8 @@ func NewCloudflareModerator(accountID, apiToken, textModel, visionModel string, 
 	if textModel == "" {
 		missing = append(missing, "MODERATION_TEXT_MODEL")
 	}
-	if visionModel == "" {
-		missing = append(missing, "MODERATION_VISION_MODEL")
-	}
+	// visionModel may be empty: image moderation is then switched off (see
+	// ModerateImage). Text moderation is unaffected and stays fail-closed.
 	if len(missing) > 0 {
 		return nil, errors.New("cloudflare moderator: missing required settings: " + strings.Join(missing, ", "))
 	}
@@ -247,6 +246,14 @@ func (m *CloudflareModerator) ModerateText(ctx context.Context, text string) (Mo
 
 // ModerateImage implements Moderator.
 func (m *CloudflareModerator) ModerateImage(ctx context.Context, contentType string, data []byte) (ModerationDecision, error) {
+	// No vision model configured: image moderation is off and the photo
+	// publishes unclassified. This is an explicit configuration decision,
+	// announced once at startup — not a provider failure, which is why it
+	// allows rather than failing closed. Text moderation is unaffected.
+	if m.visionModel == "" {
+		return ModerationDecision{Allowed: true}, nil
+	}
+
 	body, err := json.Marshal(cloudflareVisionRequest{
 		Task: "query",
 		// A data uri, not a public url: the image being moderated has not
