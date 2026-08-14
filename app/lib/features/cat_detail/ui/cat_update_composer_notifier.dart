@@ -10,6 +10,7 @@ import '../../../core/identity/session_identity.dart';
 import '../../../core/states/optimistic_inline_row.dart';
 import '../data/cat_detail_api.dart';
 import 'cat_detail_notifier.dart';
+import '../../../core/images/upload_budget.dart';
 
 /// The fixed mvp status vocabulary approved on issue #3
 /// (docs/product/updates.md) — order here drives the composition sheet's
@@ -299,7 +300,12 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
   Future<void> pickPhoto(ImageSource source) async {
     if (state.isSubmitting) return;
     final generation = _generation;
-    final picked = await ImagePicker().pickImage(source: source);
+    final picked = await ImagePicker().pickImage(
+      source: source,
+      maxWidth: uploadMaxDimension,
+      maxHeight: uploadMaxDimension,
+      imageQuality: uploadImageQuality,
+    );
     if (picked == null) return;
     await _setPickedMedia(
       picked,
