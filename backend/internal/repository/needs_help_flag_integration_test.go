@@ -62,7 +62,7 @@ func TestStore_EveryLegacyCategorySurvivesAndServes(t *testing.T) {
 			t.Fatalf("seed legacy %s row: %v", category, err)
 		}
 
-		row, err := store.GetCatByID(ctx, catID)
+		row, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 		if err != nil {
 			t.Fatalf("get cat: %v", err)
 		}
@@ -113,7 +113,7 @@ func TestStore_ActiveAlertLateral_FlagRowAndDeletedFallback(t *testing.T) {
 		t.Fatalf("create newer mark: %v", err)
 	}
 
-	row, err := store.GetCatByID(ctx, catID)
+	row, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		t.Fatalf("get cat: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestStore_ActiveAlertLateral_FlagRowAndDeletedFallback(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("delete newer mark: %v", err)
 	}
-	row, err = store.GetCatByID(ctx, catID)
+	row, err = store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		t.Fatalf("get cat after delete: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestStore_CorrectOwnUpdate_ClearNeedsHelp(t *testing.T) {
 	}
 
 	// the cleared mark must no longer surface as an active alert.
-	catRow, err := store.GetCatByID(ctx, catID)
+	catRow, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		t.Fatalf("get cat: %v", err)
 	}

@@ -127,6 +127,8 @@ type catDetailResponse struct {
 	// "change cover photo" affordance; PATCH /v1/cats/{cat_id}/cover
 	// re-checks ownership server-side regardless.
 	IsOwner bool `json:"is_owner"`
+	// issue #234: names the account the block action on cat detail acts on.
+	OwnerUserID *string `json:"owner_user_id"`
 }
 
 // updateResponse is one entry of a cat's newest-first history. NeedsHelp
@@ -154,6 +156,7 @@ type updateResponse struct {
 	// author's display name, null when the row has no author or the
 	// author never set one — the client falls back to a generic avatar,
 	// never inventing a name or initial.
+	AuthorUserID      *string `json:"author_user_id"`
 	AuthorDisplayName *string `json:"author_display_name"`
 	// PhotoURL (issue #121's timeline-thumbnail parity gap, wired up by
 	// issue #153) is the url of the media this update carries, null when it
@@ -208,7 +211,7 @@ func (h *CatsHandler) Nearby(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	markers, err := h.cats.ListNearby(r.Context(), bounds)
+	markers, err := h.cats.ListNearby(r.Context(), bounds, UserFromContext(r.Context()).UserID)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidBounds) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid bounds"})
@@ -245,7 +248,7 @@ func (h *CatsHandler) NearbyDuplicates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	candidates, err := h.cats.ListNearbyDuplicates(r.Context(), lat, lng)
+	candidates, err := h.cats.ListNearbyDuplicates(r.Context(), lat, lng, UserFromContext(r.Context()).UserID)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return
@@ -304,7 +307,7 @@ func (h *CatsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	page, err := h.cats.ListDiscover(r.Context(), filter, lat, lng, q.Get("cursor"), limit)
+	page, err := h.cats.ListDiscover(r.Context(), filter, lat, lng, q.Get("cursor"), limit, UserFromContext(r.Context()).UserID)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return
@@ -455,6 +458,7 @@ func toCatDetailResponse(detail service.CatDetail) catDetailResponse {
 		ActiveAlert:  toActiveAlertResponse(detail.ActiveAlert),
 		MediaCount:   detail.MediaCount,
 		IsOwner:      detail.IsOwner,
+		OwnerUserID:  detail.OwnerUserID,
 	}
 }
 
@@ -476,13 +480,14 @@ type catMediaResponse struct {
 	MediaMuted          bool      `json:"media_muted"`
 	IsCover             bool      `json:"is_cover"`
 	CreatedAt           time.Time `json:"created_at"`
+	UploaderUserID      *string   `json:"uploader_user_id"`
 	UploaderDisplayName *string   `json:"uploader_display_name"`
 }
 
 // Media answers GET /v1/cats/{cat_id}/media with the cat's photo archive,
 // newest-first — the "medya" tab's data source.
 func (h *CatsHandler) Media(w http.ResponseWriter, r *http.Request) {
-	items, err := h.cats.ListCatMedia(r.Context(), chi.URLParam(r, "cat_id"))
+	items, err := h.cats.ListCatMedia(r.Context(), chi.URLParam(r, "cat_id"), UserFromContext(r.Context()).UserID)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return
@@ -490,7 +495,7 @@ func (h *CatsHandler) Media(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]catMediaResponse, 0, len(items))
 	for _, m := range items {
-		resp = append(resp, catMediaResponse{ID: m.ID, URL: m.URL, MediaContentType: m.ContentType, MediaMuted: m.Muted, IsCover: m.IsCover, CreatedAt: m.CreatedAt, UploaderDisplayName: m.UploaderDisplayName})
+		resp = append(resp, catMediaResponse{ID: m.ID, URL: m.URL, MediaContentType: m.ContentType, MediaMuted: m.Muted, IsCover: m.IsCover, CreatedAt: m.CreatedAt, UploaderUserID: m.UploaderUserID, UploaderDisplayName: m.UploaderDisplayName})
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -627,6 +632,7 @@ func toUpdateResponse(u service.CatUpdate) updateResponse {
 		NeedsHelpCategoryLabel: u.NeedsHelpCategoryLabel,
 		NeedsHelpExpiresAt:     u.NeedsHelpExpiresAt,
 		NeedsHelpActive:        u.NeedsHelpActive,
+		AuthorUserID:           u.AuthorUserID,
 		AuthorDisplayName:      u.AuthorDisplayName,
 		PhotoURL:               u.PhotoURL,
 		MediaContentType:       u.MediaContentType,

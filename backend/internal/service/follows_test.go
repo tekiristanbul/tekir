@@ -33,7 +33,7 @@ type fakeFollowsStore struct {
 	capturedUserID *pgtype.UUID
 }
 
-func (f fakeFollowsStore) CatExists(_ context.Context, _ pgtype.UUID) (bool, error) {
+func (f fakeFollowsStore) CatExists(_ context.Context, _ repository.CatExistsParams) (bool, error) {
 	return f.exists, f.existsErr
 }
 

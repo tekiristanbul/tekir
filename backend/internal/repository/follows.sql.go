@@ -130,6 +130,16 @@ left join lateral (
   limit 1
 ) nh on true
 where f.user_id = $1
+  -- issue #234: a followed cat whose owner this account has since blocked
+  -- drops out of the list. The follow row itself is left alone, so
+  -- unblocking restores it without the user having to follow again. The
+  -- viewer is always the list's own owner (this read is never public), so
+  -- it reuses user_id instead of taking a separate viewer argument.
+  and not exists (
+    select 1 from user_blocks b
+    where b.blocker_user_id = $1
+      and b.blocked_user_id = c.created_by_user_id
+  )
 order by c.last_update_at desc nulls last, c.id desc
 `
 
@@ -195,10 +205,16 @@ const listNeedsHelpRecipientDevices = `-- name: ListNeedsHelpRecipientDevices :m
 select distinct d.id as device_id, d.push_token
 from follows f
 join devices d on d.user_id = f.user_id
+join cats c on c.id = f.cat_id
 where f.cat_id = $1
   and f.user_id is not null
   and f.user_id != $2
   and d.revoked_at is null
+  and not exists (
+    select 1 from user_blocks b
+    where b.blocker_user_id = f.user_id
+      and b.blocked_user_id = c.created_by_user_id
+  )
 `
 
 type ListNeedsHelpRecipientDevicesParams struct {
@@ -226,6 +242,12 @@ type ListNeedsHelpRecipientDevicesRow struct {
 // sender a real delivery address; a null push_token device still gets its
 // in-app notifications row (the source of truth independent of push —
 // issue #84), it just isn't pushed to.
+// issue #234: a follower who blocks the *cat's owner* is dropped from the
+// recipient list. Without this, blocking would hide the cat while its
+// needs-help pushes kept arriving and deep-linking into a screen that now
+// answers 404. The predicate keys on cats.created_by_user_id, not on the
+// update's author: what a block hides is everything attached to the cats
+// that account owns, whoever wrote the individual update.
 func (q *Queries) ListNeedsHelpRecipientDevices(ctx context.Context, arg ListNeedsHelpRecipientDevicesParams) ([]ListNeedsHelpRecipientDevicesRow, error) {
 	rows, err := q.db.Query(ctx, listNeedsHelpRecipientDevices, arg.CatID, arg.AuthorUserID)
 	if err != nil {

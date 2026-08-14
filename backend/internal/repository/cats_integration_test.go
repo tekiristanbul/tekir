@@ -155,7 +155,7 @@ func TestStore_CreateCatWithMedia_Success(t *testing.T) {
 	// the coalesce(photo_url, media.url) read path (issue #70) must resolve
 	// the new cat's photo through the media join, exactly like a seeded
 	// photo_url-only cat.
-	detail, err := store.GetCatByID(ctx, result.Cat.ID)
+	detail, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: result.Cat.ID})
 	if err != nil {
 		t.Fatalf("GetCatByID: %v", err)
 	}
@@ -440,10 +440,10 @@ func TestStore_SoftDeleteCat(t *testing.T) {
 	// the detail read (GetCatByID) and the shared existence gate (CatExists,
 	// backing the media archive, updates history, and update-write paths)
 	// both now treat the cat as not found.
-	if _, err := store.GetCatByID(ctx, catID); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expected GetCatByID to answer pgx.ErrNoRows for a deleted cat, got %v", err)
 	}
-	exists, err := store.CatExists(ctx, catID)
+	exists, err := store.CatExists(ctx, repository.CatExistsParams{ID: catID})
 	if err != nil {
 		t.Fatalf("cat exists: %v", err)
 	}

@@ -13,7 +13,7 @@ import (
 // FollowsStore is satisfied by repository.Store; kept as an interface here
 // so FollowsService stays testable without a real database connection.
 type FollowsStore interface {
-	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
+	CatExists(ctx context.Context, arg repository.CatExistsParams) (bool, error)
 	CreateFollow(ctx context.Context, arg repository.CreateFollowParams) error
 	DeleteFollow(ctx context.Context, arg repository.DeleteFollowParams) error
 	ListFollowedCats(ctx context.Context, userID pgtype.UUID) ([]repository.ListFollowedCatsRow, error)
@@ -74,7 +74,13 @@ func (s *FollowsService) Follow(ctx context.Context, catID, userID, deviceID str
 		return err
 	}
 
-	exists, err := s.db.CatExists(ctx, cid)
+	// issue #234: a cat owned by an account this caller blocks is not a
+	// valid follow target — it answers not-found exactly like an unknown id.
+	viewer, err := optionalUUID(userID)
+	if err != nil {
+		return err
+	}
+	exists, err := s.db.CatExists(ctx, repository.CatExistsParams{ID: cid, ViewerUserID: viewer})
 	if err != nil {
 		return err
 	}
@@ -103,7 +109,13 @@ func (s *FollowsService) Unfollow(ctx context.Context, catID, userID string) err
 		return err
 	}
 
-	exists, err := s.db.CatExists(ctx, cid)
+	// issue #234: a cat owned by an account this caller blocks is not a
+	// valid follow target — it answers not-found exactly like an unknown id.
+	viewer, err := optionalUUID(userID)
+	if err != nil {
+		return err
+	}
+	exists, err := s.db.CatExists(ctx, repository.CatExistsParams{ID: cid, ViewerUserID: viewer})
 	if err != nil {
 		return err
 	}

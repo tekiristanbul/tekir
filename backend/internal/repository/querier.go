@@ -34,7 +34,13 @@ type Querier interface {
 	// deletion is terminal and none of those are the map/nearby/discovery/
 	// detail surfaces this issue names but are still "active listing/query
 	// surfaces" a deleted cat must not remain reachable through.
-	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
+	// issue #234: the same choke point now also answers "not for this viewer".
+	// Because the media archive, the updates history and both update-write
+	// paths all gate on this one query, a blocked owner's cat stops being a
+	// valid target for every one of them at once. A null viewer is a no-op, so
+	// the write paths that resolve ownership (rename, cover, delete) and the
+	// reports store, none of which pass a viewer, keep their current behavior.
+	CatExists(ctx context.Context, arg CatExistsParams) (bool, error)
 	// issue #78: the notification worker's read step. `for update skip locked`
 	// lets more than one worker process poll concurrently without claiming the
 	// same row twice — a second worker just skips a row the first already
@@ -114,6 +120,13 @@ type Querier interface {
 	// backs the cover photo's count pill (docs/design/screens/cat-profile.html)
 	// without fetching the full archive.
 	CountCatMedia(ctx context.Context, catID pgtype.UUID) (int64, error)
+	// issue #234: idempotent by construction — re-blocking an account the
+	// caller already blocks is a no-op that still reports success, the same
+	// shape CreateFollow uses. blocker_user_id always comes from the
+	// authenticated session, never from the request body; the self-block case
+	// is rejected in the service before it reaches the check constraint, so
+	// the constraint is the backstop, not the error message.
+	CreateBlock(ctx context.Context, arg CreateBlockParams) error
 	// issue #70: created_by_user_id is required (resolved from the
 	// authenticated bearer session, never client-supplied); created_by_device_id
 	// is optional (X-Device-Token, installation/abuse-control association only).
@@ -246,6 +259,11 @@ type Querier interface {
 	// afterwards via UpdateUserDisplayName once the new-account minimum-profile
 	// step collects it.
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	// unblocking is a hard delete (the follows lifecycle, not reports'
+	// open/resolved one): a block carries no state worth keeping once it is
+	// lifted. deleting a row that isn't there is not an error — unblock is
+	// idempotent for the same reason block is.
+	DeleteBlock(ctx context.Context, arg DeleteBlockParams) error
 	// issue #65: account-scoped. idempotent: unfollowing a cat this account
 	// doesn't currently follow deletes zero rows and succeeds silently rather
 	// than erroring.
@@ -290,7 +308,7 @@ type Querier interface {
 	// terminal, never relaxed even for the cat's own owner. This same predicate
 	// is what makes Rename/SetCoverPhoto (both fetch ownership through this
 	// query) refuse to mutate a deleted cat too, at no extra cost.
-	GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error)
+	GetCatByID(ctx context.Context, arg GetCatByIDParams) (GetCatByIDRow, error)
 	GetCatByIdempotencyKey(ctx context.Context, arg GetCatByIdempotencyKeyParams) (GetCatByIdempotencyKeyRow, error)
 	GetCatMediaByCatAndMedia(ctx context.Context, arg GetCatMediaByCatAndMediaParams) (CatMedium, error)
 	// called only when SoftDeleteCat affects 0 rows, to disambiguate why:
@@ -378,6 +396,10 @@ type Querier interface {
 	// showing it. a trait with no group (group_key null) sorts after every
 	// grouped trait rather than interleaving arbitrarily.
 	ListActiveTraits(ctx context.Context) ([]ListActiveTraitsRow, error)
+	// the caller's own block list, joined to users for the display name the
+	// unblock screen shows. blocks are never public: this is the only read
+	// that returns them and it is always scoped to the authenticated caller.
+	ListBlockedAccounts(ctx context.Context, blockerUserID pgtype.UUID) ([]ListBlockedAccountsRow, error)
 	// backs the "medya" archive tab: newest-first, each row carrying the media
 	// it points to plus whether it's the cat's current cover (cats.primary_photo_id)
 	// so the client can render the design's "ana" badge without a second lookup.
@@ -510,6 +532,12 @@ type Querier interface {
 	// sender a real delivery address; a null push_token device still gets its
 	// in-app notifications row (the source of truth independent of push —
 	// issue #84), it just isn't pushed to.
+	// issue #234: a follower who blocks the *cat's owner* is dropped from the
+	// recipient list. Without this, blocking would hide the cat while its
+	// needs-help pushes kept arriving and deep-linking into a screen that now
+	// answers 404. The predicate keys on cats.created_by_user_id, not on the
+	// update's author: what a block hides is everything attached to the cats
+	// that account owns, whoever wrote the individual update.
 	ListNeedsHelpRecipientDevices(ctx context.Context, arg ListNeedsHelpRecipientDevicesParams) ([]ListNeedsHelpRecipientDevicesRow, error)
 	// issue #105: read back a row's existing statuses inside
 	// Store.CorrectOwnUpdate's transaction when a presence-aware PATCH omitted

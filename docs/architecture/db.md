@@ -321,9 +321,28 @@ create unique index reports_reporter_target_open_uq on reports (reporter_user_id
 -- UI), but the index costs nothing to add now and this is the shape any
 -- such read would need.
 create index reports_status_created_idx on reports (status, created_at desc);
+
+-- issue #234: account-to-account blocking. a plain directed edge with no
+-- state beyond its existence, so unblocking deletes the row (the follows
+-- lifecycle) rather than flagging it (reports' open/resolved lifecycle) —
+-- the product decision is that blocking is reversible and leaves nothing
+-- behind. the primary key doubles as the uniqueness constraint that makes
+-- CreateBlock's `on conflict do nothing` idempotent, and as the index every
+-- filtered read uses.
+create table user_blocks (
+  blocker_user_id  uuid not null references users(id),
+  blocked_user_id  uuid not null references users(id),
+  created_at       timestamptz not null default now(),
+  primary key (blocker_user_id, blocked_user_id),
+  constraint user_blocks_no_self_block_ck check (blocker_user_id != blocked_user_id)
+);
+-- only the account's own block list reads this direction.
+create index user_blocks_blocked_idx on user_blocks (blocked_user_id);
 ```
 
 ### design notes
+
+- `user_blocks` (implemented, migration 00028, issue #234): the block is the authority for *visibility*, never for deletion — nothing in the block path writes `cats.status`, `updates.deleted_at`, or any media row, so unblocking restores exactly what was hidden. what a block hides is resolved at read time, keyed on `cats.created_by_user_id` (the cat's owner) and not on who authored an individual update or uploaded an individual media item: hiding a cat hides everything attached to it, including other accounts' contributions. every cat-returning query carries a nullable `viewer_user_id` and a `not exists (select 1 from user_blocks ...)` predicate; a null viewer (a guest, and every ownership-resolving write path) matches nothing, so the predicate is a no-op and guest reads are unchanged. the filter is applied per query rather than through one view because the surfaces don't share a single read path — `CatExists`/`GetCatByID` are choke points covering detail, updates, media and the update-write paths, while the map, duplicate-check, discover and followed-cat lists each need their own predicate. a missed surface is this feature's most likely failure mode, which is why `internal/repository/user_blocks_integration_test.go` asserts each one separately against a real database.
 
 - `devices.token_hash`: the client never sends a self-chosen identifier. `POST /v1/devices` (see [[api]]) generates the token server-side and returns it once; only its hash (sha-256, lower-hex) is stored, the same way a password would be. `devices.revoked_at` invalidates that one credential — it doesn't ban a person or a physical device, since nothing stops a client from calling `POST /v1/devices` again for a fresh identity. it's a mitigation for a single bad session, not an identity ban. `platform` accepts `'ios'`, `'android'`, and `'web'` (`'web'` is required because the flutter application has a web target). `user_id` was intentionally absent from the original migration (00007) and added by migration 00012 (issue #58) once the `users` table existed.
 - `refresh_tokens` (implemented, migration 00013, issue #58): backs the `access_token`/`refresh_token` pair in [[api]] — short-lived jwts plus a revocable, hashed refresh token, so login doesn't require a fresh otp on every app open. refreshing rotates: the presented row is revoked and a new one inserted, rather than reused, so a stolen-and-replayed refresh token stops working the moment the legitimate client rotates it.

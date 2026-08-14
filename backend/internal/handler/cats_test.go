@@ -165,11 +165,11 @@ func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.Lis
 	return f.rows, nil
 }
 
-func (f fakeCatsLister) GetCatByID(ctx context.Context, id pgtype.UUID) (repository.GetCatByIDRow, error) {
+func (f fakeCatsLister) GetCatByID(ctx context.Context, arg repository.GetCatByIDParams) (repository.GetCatByIDRow, error) {
 	return f.catRow, f.catErr
 }
 
-func (f fakeCatsLister) CatExists(ctx context.Context, id pgtype.UUID) (bool, error) {
+func (f fakeCatsLister) CatExists(ctx context.Context, arg repository.CatExistsParams) (bool, error) {
 	return f.exists, f.existsErr
 }
 

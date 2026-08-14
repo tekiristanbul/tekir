@@ -206,6 +206,29 @@ retries/duplicates are idempotent (issue #233 acceptance): a second `POST` from 
 
 `status` starts `open` and can only become `resolved` through direct maintainer action against the table itself — no endpoint in this version reads or writes it, since 0.4 ships no moderator/admin dashboard (see "out of scope" below and [[trust]]). Error taxonomy: `400` malformed body/unknown `target_type`/malformed `target_id`/invalid `reason`/missing `note` on `other`, `401` missing/invalid bearer, `404` an unknown or soft-deleted target.
 
+### blocks
+
+```
+POST   /v1/me/blocks             (Bearer required)  { blocked_user_id }  → 204
+DELETE /v1/me/blocks/{user_id}   (Bearer required)                       → 204
+GET    /v1/me/blocks             (Bearer required)                       → 200 [ { user_id, display_name|null, created_at } ]
+                                                                         (implemented — issue #234)
+```
+
+account-to-account blocking (docs/product/trust.md, docs/product/privacy.md). the blocker is always resolved from `Authorization: Bearer` — the request body has no field for it and any extra field is rejected outright (`400`), so a block can't be attributed to another account. blocking lives under `/v1/me/` because a block is the caller's own state: `GET /v1/me/blocks` is the only read that returns blocks at all, and it is always scoped to the caller. the blocked account is never notified and cannot discover the block through any endpoint.
+
+both writes are idempotent: blocking an already-blocked account and unblocking one that isn't blocked both answer `204` and change nothing — the end state the caller asked for is the state they get. `400` covers a malformed `blocked_user_id` and an attempt to block yourself; `404` covers a well-formed id that is not an account.
+
+blocking is **visibility filtering, never deletion**. no content is removed, no `cats.status` or `updates.deleted_at` is touched, and unblocking restores exactly what was hidden — including follows, which survive a block untouched. what a block hides, for the blocker only, is every cat *owned* by the blocked account (`cats.created_by_user_id`) and therefore everything reachable through those cats: markers, detail, updates, media, and other accounts' contributions attached to them. it does not hide that account's updates or media on cats someone else owns; the product decision (issue #234) is owner-scoped, not author-scoped.
+
+enforcement is server-side on every read, never client-side filtering. the filtered surfaces are `GET /v1/cats` (map), `GET /v1/cats/nearby` (duplicate candidates), `GET /v1/cats/discover` (both filters), `GET /v1/me/follows`, `GET /v1/cats/{cat_id}`, `GET /v1/cats/{cat_id}/updates`, and `GET /v1/cats/{cat_id}/media`. a hidden cat answers exactly like an unknown id (`404`) rather than a distinguishable "blocked" error — the same indistinguishability a soft-deleted cat already has, so a response never reveals that a cat exists and was filtered. writes follow the same rule: following a hidden cat, posting an update to it, and reporting it all answer `404`.
+
+the four previously-unauthenticated read routes (`/v1/cats`, `/v1/cats/nearby`, `/v1/cats/discover`, `/v1/cats/{cat_id}/media`) gained `OptionalBearer` for this: they stay guest-readable and a guest's results are byte-for-byte what they were before blocking existed, but an authenticated caller has to be resolvable for the filter to apply at all.
+
+`GET /v1/cats/{cat_id}` gained `owner_user_id`, each update in `GET /v1/cats/{cat_id}/updates` gained `author_user_id`, and each item in `GET /v1/cats/{cat_id}/media` gained `uploader_user_id` — all nullable (a seed cat has no owner; content predating accounts has no author/uploader). the client needs them to know *which account* a block action would act on; `is_owner`/`author_is_me` only answer whether it is the caller.
+
+notification fan-out honours blocks too: a follower who blocks a cat's owner is dropped from that cat's needs-help recipients, so a block never leaves a push arriving that deep-links into a screen the same account now gets `404` for. rows already queued in `notification_outbox` when the block happens are left alone (issue #234).
+
 ### modeling notes
 
 - a cat's active alert is derived from its latest non-deleted, non-expired help-carrying update (`needs_help = true` — issue #101's combined flag model; the legacy `kind` subtype no longer drives any read path).

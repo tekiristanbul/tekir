@@ -72,7 +72,7 @@ var reportReasons = map[string]bool{
 type ReportsStore interface {
 	CreateReport(ctx context.Context, arg repository.CreateReportParams) (repository.Report, error)
 	GetOpenReportByReporterAndTarget(ctx context.Context, arg repository.GetOpenReportByReporterAndTargetParams) (repository.Report, error)
-	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
+	CatExists(ctx context.Context, arg repository.CatExistsParams) (bool, error)
 	UpdateExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	GetMediaByID(ctx context.Context, id pgtype.UUID) (repository.Medium, error)
 }
@@ -126,7 +126,7 @@ func (s *ReportsService) Create(ctx context.Context, reporterUserID, targetType,
 	}
 
 	targetPg := pgtype.UUID{Bytes: targetUUID, Valid: true}
-	exists, err := s.targetExists(ctx, targetType, targetPg)
+	exists, err := s.targetExists(ctx, targetType, targetPg, reporterUserID)
 	if err != nil {
 		return Report{}, err
 	}
@@ -179,10 +179,17 @@ func (s *ReportsService) Create(ctx context.Context, reporterUserID, targetType,
 	return toReport(existing), nil
 }
 
-func (s *ReportsService) targetExists(ctx context.Context, targetType string, targetID pgtype.UUID) (bool, error) {
+func (s *ReportsService) targetExists(ctx context.Context, targetType string, targetID pgtype.UUID, reporterUserID string) (bool, error) {
 	switch targetType {
 	case ReportTargetCat:
-		return s.db.CatExists(ctx, targetID)
+		// issue #234: a blocked owner's cat is not reportable either — it is
+		// not-found for this reporter everywhere else, and answering
+		// differently here would leak that it exists.
+		viewer, err := optionalUUID(reporterUserID)
+		if err != nil {
+			return false, err
+		}
+		return s.db.CatExists(ctx, repository.CatExistsParams{ID: targetID, ViewerUserID: viewer})
 	case ReportTargetUpdate:
 		return s.db.UpdateExists(ctx, targetID)
 	case ReportTargetMedia:
