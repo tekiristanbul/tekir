@@ -2002,6 +2002,26 @@ func TestCatsHandler_Rename_NotFound_Returns404(t *testing.T) {
 	}
 }
 
+// TestCatsHandler_Rename_ContentRejected_Returns422 proves
+// service.ErrContentRejected (issue #241) maps to a stable, generic 422 —
+// never a status that would suggest a validation problem with the request
+// shape itself.
+func TestCatsHandler_Rename_ContentRejected_Returns422(t *testing.T) {
+	ownerID := uuid.MustParse(defaultTestUserID)
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		catRow: repository.GetCatByIDRow{CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true}},
+	}, service.WithCatsModerator(service.FakeModerator{})), testMaxUploadBytes)
+
+	rejected := service.FakeModerationRejectMarker(service.ModerationCategoryHate)
+	rec := httptest.NewRecorder()
+	req := newRenameCatRequest(uuid.New().String(), `{"name":"`+rejected+`"}`)
+	routerFor(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCatsHandler_Rename_InvalidCatID_Returns400(t *testing.T) {
 	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
 

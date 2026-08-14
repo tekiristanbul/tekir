@@ -8,10 +8,24 @@ import '../theme/app_theme.dart';
 /// uploaded: a dark scrim, the percentage top-left, a thin bar along the
 /// bottom. The 6 s read fallback never cancels this upload.
 class PhotoUploadProgress extends StatelessWidget {
-  const PhotoUploadProgress({super.key, required this.progress});
+  const PhotoUploadProgress({
+    super.key,
+    required this.progress,
+    this.checking = false,
+  });
 
   /// Upload progress in 0..1; values outside the range are clamped.
   final double progress;
+
+  /// True once the file itself has fully left the device but the request
+  /// hasn't resolved yet — the same in-flight request is now waiting on the
+  /// server's own work (issue #241's pre-publication content check, among
+  /// anything else the endpoint does before answering). There is no
+  /// separate request or polling for this: it's the tail of the same
+  /// upload, so the bar stays full and only the label swaps from a
+  /// percentage to "kontrol ediliyor" — never a new screen or a full-screen
+  /// block.
+  final bool checking;
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +38,7 @@ class PhotoUploadProgress extends StatelessWidget {
           left: AppSpacing.s3,
           top: AppSpacing.s3,
           child: Text(
-            '%${(value * 100).round()}',
+            checking ? 'kontrol ediliyor' : '%${(value * 100).round()}',
             style: const TextStyle(
               fontSize: 11.5,
               fontWeight: FontWeight.w800,

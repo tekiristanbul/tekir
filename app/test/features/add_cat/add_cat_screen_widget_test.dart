@@ -477,4 +477,91 @@ void main() {
       expect(find.text('cat detail new-cat-id'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'once the photo has fully left the device the overlay switches to '
+    '"kontrol ediliyor" instead of a stale 100%',
+    (tester) async {
+      // issue #241: the same request is now waiting on the server's
+      // pre-publication content check — no new request, no polling, just a
+      // truer label for the tail of this one upload.
+      final api = _FakeAddCatApi()
+        ..progressEvent = (100, 100)
+        ..createGate = Completer<void>()
+        ..createResult = CatDetail(
+          id: 'new-cat-id',
+          name: '',
+          lat: 41.03,
+          lng: 28.98,
+          areaLabel: null,
+          primaryPhoto: null,
+          createdAt: DateTime.utc(2026, 1, 1),
+          lastUpdateAt: null,
+        );
+      await _pumpAddCat(tester, api);
+      await tester.tap(find.text('Bu konumu kullan'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      fakePlatform.nextFile = XFile.fromData(
+        _validPngBytes,
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      await _pickPhoto(tester);
+
+      await tester.tap(find.text('Kaydet'));
+      await tester.pump();
+
+      expect(find.text('kontrol ediliyor'), findsOneWidget);
+      expect(find.text('%100'), findsNothing);
+
+      api.createGate!.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('cat detail new-cat-id'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a content-rejected (422) failure shows the rejection banner and keeps '
+    'the picked photo and typed name',
+    (tester) async {
+      final api = _FakeAddCatApi()
+        ..createError = const AddCatContentRejectedException();
+      await _pumpAddCat(tester, api);
+      await tester.tap(find.text('Bu konumu kullan'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      fakePlatform.nextFile = XFile.fromData(
+        _validPngBytes,
+        name: 'photo.jpg',
+        path: 'photo.jpg',
+      );
+      await _pickPhoto(tester);
+      await tester.enterText(find.byType(TextFormField), 'Boncuk');
+      await tester.pump();
+
+      await tester.tap(find.text('Kaydet'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(
+        find.text(
+          'Bu içerik yayınlanamadı. Fotoğrafı veya bilgileri değiştirip '
+          'tekrar dene.',
+        ),
+        findsOneWidget,
+      );
+      // Never the network-failure sheet, and never a hint at *why* the
+      // content was rejected (no category/provider wording) — issue #241,
+      // docs/product/trust.md.
+      expect(find.textContaining('haritaya eklenemedi'), findsNothing);
+      // Data is never lost: the photo and typed name stay, ready to retry.
+      expect(find.text('Boncuk'), findsOneWidget);
+      expect(find.text('Tekrar dene'), findsOneWidget);
+    },
+  );
 }

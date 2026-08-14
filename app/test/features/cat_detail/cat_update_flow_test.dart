@@ -761,6 +761,11 @@ void main() {
     const CatNotFoundException(): UpdateSubmitError.notFound,
     const UpdateNetworkException(): UpdateSubmitError.network,
     const UpdateServerException(): UpdateSubmitError.server,
+    // issue #241: the pre-publication content check rejected the comment —
+    // mirrors every other mapped failure here exactly, the optimistic row
+    // just flips to "failed" and the draft is recoverable on reopen (see
+    // the dedicated reopen test further down).
+    const UpdateContentRejectedException(): UpdateSubmitError.contentRejected,
   }.entries) {
     testWidgets(
       '${entry.key.runtimeType}: the optimistic row flips to failed and '
@@ -854,6 +859,65 @@ void main() {
       expect(api.createUpdateCalls, 0);
     },
   );
+
+  testWidgets('a content-rejected (422) photo upload stays in the sheet with a '
+      'neutral, retryable error and keeps the picked photo', (tester) async {
+    // issue #241, docs/product/trust.md: a rejection never says why —
+    // no category/provider wording — and the photo stays put, ready to
+    // replace/remove and retry.
+    fakePlatform.nextFile = XFile.fromData(
+      _validPngBytes,
+      name: 'photo.png',
+      path: 'photo.png',
+    );
+    final api = _FakeCatDetailApi()
+      ..uploadError = const UpdateContentRejectedException();
+    await _pump(tester, api: api);
+    await _openComposer(tester);
+
+    await _pickPhoto(tester);
+    await tester.tap(find.text('Görüldü'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byType(CatUpdateSheet), findsOneWidget);
+    expect(
+      find.text(updateSubmitErrorMessageTr(UpdateSubmitError.contentRejected)),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('removePhotoButton')), findsOneWidget);
+    expect(api.createUpdateCalls, 0);
+  });
+
+  testWidgets('once a picked photo/video has fully left the device the media '
+      'picker overlay switches to "kontrol ediliyor"', (tester) async {
+    fakePlatform.nextFile = XFile.fromData(
+      _validPngBytes,
+      name: 'photo.png',
+      path: 'photo.png',
+    );
+    final api = _FakeCatDetailApi()
+      ..nextResult = _entry('upd-1')
+      ..uploadGate = Completer<void>()
+      ..uploadProgressEvent = (2, 2);
+    await _pump(tester, api: api);
+    await _openComposer(tester);
+
+    await _pickPhoto(tester);
+    await tester.tap(find.text('Görüldü'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Paylaş'));
+    await tester.pump();
+
+    expect(find.text('kontrol ediliyor'), findsOneWidget);
+    expect(find.text('%100'), findsNothing);
+
+    api.uploadGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.byType(CatUpdateSheet), findsNothing);
+  });
 
   testWidgets(
     'reopening the sheet after a failed submission restores the draft, and '

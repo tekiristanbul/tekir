@@ -25,6 +25,12 @@ enum AddCatError {
   network,
   server,
   unauthorized,
+
+  /// The pre-publication content check (issue #241) rejected the name or
+  /// photo. Mirrors every other case here: implies "try again" — the photo
+  /// and name are left untouched so the user can edit/replace/remove and
+  /// resubmit — never a permanent dead end.
+  contentRejected,
 }
 
 /// Turkish, actionable copy for each mapped failure — matches the app's
@@ -40,6 +46,9 @@ String addCatErrorMessageTr(AddCatError error) {
     AddCatError.network => 'Bağlantı sorunu, tekrar dene.',
     AddCatError.server => 'Sunucuya ulaşılamadı, birazdan tekrar dene.',
     AddCatError.unauthorized => 'Kimlik doğrulanamadı, tekrar dene.',
+    AddCatError.contentRejected =>
+      'Bu içerik yayınlanamadı. Fotoğrafı veya bilgileri değiştirip '
+          'tekrar dene.',
   };
 }
 
@@ -319,6 +328,16 @@ class AddCatNotifier extends Notifier<AddCatState> {
         saving: false,
         clearUploadProgress: true,
         error: AddCatError.unsupportedMedia,
+      );
+      return null;
+    } on AddCatContentRejectedException {
+      // The photo/name stay exactly as entered (issue #241,
+      // docs/product/trust.md) — a stable, recoverable outcome the user can
+      // edit/replace/remove and retry, never a report to anyone.
+      state = state.copyWith(
+        saving: false,
+        clearUploadProgress: true,
+        error: AddCatError.contentRejected,
       );
       return null;
     } on AddCatValidationException {

@@ -105,6 +105,10 @@ func writeMediaServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "video too long"})
 	case errors.Is(err, service.ErrMalformedMedia):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed file"})
+	case errors.Is(err, service.ErrContentRejected):
+		// issue #241: a stable, recoverable moderation rejection — never
+		// echoes categories, provider identity, or model output.
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "content rejected"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 	}

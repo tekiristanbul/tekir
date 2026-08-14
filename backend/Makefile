@@ -1,4 +1,4 @@
-.PHONY: run run-notifier build test lint fmt sqlc migrate-up migrate-down migrate-status seed
+.PHONY: run run-notifier build test smoke-cloudflare lint fmt sqlc migrate-up migrate-down migrate-status seed
 
 DATABASE_URL ?= postgres://catsofistanbul:catsofistanbul@localhost:5432/catsofistanbul?sslmode=disable
 export DATABASE_URL
@@ -22,6 +22,12 @@ run-notifier:
 build:
 	go build -o bin/api ./cmd/api
 	go build -o bin/notifier ./cmd/notifier
+
+# the release gate from issue #241: real workers ai calls, real credentials,
+# never part of `make test` or ci. see DEVELOPMENT.md's cloudflare smoke
+# suite section.
+smoke-cloudflare:
+	go test -tags cloudflare_smoke -run Smoke -v -count=1 ./internal/service/
 
 test:
 	go test ./...

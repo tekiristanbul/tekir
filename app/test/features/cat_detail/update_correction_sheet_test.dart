@@ -309,6 +309,35 @@ void main() {
   });
 
   testWidgets(
+    'a content-rejected (422) edit shows a neutral, retryable banner and '
+    'keeps the edited fields (issue #241)',
+    (tester) async {
+      final api = _FakeCatDetailApi(
+        correctError: const UpdateContentRejectedException(),
+      );
+      await _pumpAndOpen(
+        tester,
+        api: api,
+        entry: _entry(statuses: const ['fed'], comment: 'mama verdim'),
+      );
+
+      await tester.tap(find.text('Kaydet'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          'Bu içerik yayınlanamadı. Yazdıklarını değiştirip tekrar dene.',
+        ),
+        findsOneWidget,
+      );
+      // Never the network/server retryable wording, and the edited draft
+      // stays exactly as entered, ready to change and retry.
+      expect(find.text('mama verdim'), findsOneWidget);
+      expect(find.text('Tekrar dene'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'a 404 on delete is treated as already-gone, not a hard failure',
     (tester) async {
       final api = _FakeCatDetailApi(

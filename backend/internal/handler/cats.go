@@ -857,6 +857,10 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "media not in cat gallery"})
 	case errors.Is(err, service.ErrInvalidCatName):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cat name"})
+	case errors.Is(err, service.ErrContentRejected):
+		// issue #241: a stable, recoverable moderation rejection — never
+		// echoes categories, provider identity, or model output.
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "content rejected"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 	}

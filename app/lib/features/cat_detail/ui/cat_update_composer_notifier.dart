@@ -30,6 +30,12 @@ enum UpdateSubmitError {
   mediaTooLarge,
   unsupportedMedia,
   mediaNotFound,
+
+  /// The pre-publication content check (issue #241) rejected the comment,
+  /// help note, or attached photo/video. Mirrors every other case here:
+  /// implies "try again" — the draft and media are left untouched so the
+  /// user can edit/replace/remove and resubmit.
+  contentRejected,
 }
 
 /// Turkish, actionable copy for each mapped failure (issue #43) — every
@@ -46,6 +52,9 @@ String updateSubmitErrorMessageTr(UpdateSubmitError error) {
       'Medya çok büyük, daha küçük bir dosya seç.',
     UpdateSubmitError.unsupportedMedia => 'Desteklenmeyen medya türü.',
     UpdateSubmitError.mediaNotFound => 'Medya gönderilemedi, tekrar seç.',
+    UpdateSubmitError.contentRejected =>
+      'Bu içerik yayınlanamadı. Yazdıklarını veya eklediğin fotoğrafı/videoyu '
+          'değiştirip tekrar dene.',
   };
 }
 
@@ -562,6 +571,11 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
       state = state.copyWith(clearMedia: true);
       _mediaIdempotencyKey = _generateIdempotencyKey();
       _fail(UpdateSubmitError.mediaNotFound);
+    } on UpdateContentRejectedException {
+      // Unlike UpdateMediaNotFoundException above, the draft and media stay
+      // exactly as entered (issue #241, docs/product/trust.md) — a stable,
+      // recoverable outcome the user can edit/replace/remove and retry.
+      _fail(UpdateSubmitError.contentRejected);
     } on UpdateNetworkException {
       _fail(UpdateSubmitError.network);
     } catch (_) {

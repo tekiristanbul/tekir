@@ -18,6 +18,12 @@ enum UpdateCorrectionError {
   expired,
   network,
   server,
+
+  /// The pre-publication content check (issue #241) rejected the edited
+  /// statuses/comment. Mirrors every other case here: implies "try again"
+  /// — the edited fields stay exactly as entered so the user can change
+  /// them and retry.
+  rejected,
 }
 
 /// Turkish, actionable copy for each mapped failure — mirrors
@@ -35,6 +41,8 @@ String updateCorrectionErrorMessageTr(UpdateCorrectionError error) {
     UpdateCorrectionError.network => 'Bağlantı sorunu, tekrar dene.',
     UpdateCorrectionError.server =>
       'Sunucuya ulaşılamadı, birazdan tekrar dene.',
+    UpdateCorrectionError.rejected =>
+      'Bu içerik yayınlanamadı. Yazdıklarını değiştirip tekrar dene.',
   };
 }
 
@@ -249,6 +257,7 @@ class UpdateCorrectionNotifier extends Notifier<UpdateCorrectionState> {
       UpdateCorrectionForbiddenException() => UpdateCorrectionError.notAuthor,
       UpdateCorrectionNotFoundException() => UpdateCorrectionError.notFound,
       UpdateCorrectionExpiredException() => UpdateCorrectionError.expired,
+      UpdateContentRejectedException() => UpdateCorrectionError.rejected,
       UpdateNetworkException() => UpdateCorrectionError.network,
       _ => UpdateCorrectionError.server,
     };

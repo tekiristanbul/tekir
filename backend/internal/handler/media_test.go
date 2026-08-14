@@ -208,6 +208,8 @@ func TestMediaHandler_Upload_MapsServiceErrors(t *testing.T) {
 		{"unsupported type", service.ErrUnsupportedMediaType, http.StatusUnsupportedMediaType},
 		{"video too long", service.ErrMediaDurationTooLong, http.StatusBadRequest},
 		{"malformed", service.ErrMalformedMedia, http.StatusBadRequest},
+		{"content rejected", service.ErrContentRejected, http.StatusUnprocessableEntity},
+		{"moderation unavailable", service.ErrModerationUnavailable, http.StatusInternalServerError},
 		{"generic", errors.New("boom"), http.StatusInternalServerError},
 	}
 	for _, tc := range cases {

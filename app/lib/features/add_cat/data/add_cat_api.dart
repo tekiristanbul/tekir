@@ -34,6 +34,19 @@ class AddCatUnsupportedMediaException implements Exception {
   const AddCatUnsupportedMediaException();
 }
 
+/// Thrown when `POST /v1/cats` answers 422 — the submitted name or photo
+/// was rejected by the pre-publication content classifier (issue #241,
+/// docs/product/trust.md). A stable, recoverable validation-class outcome,
+/// not a report to anyone: the caller's own name and photo are left
+/// exactly as entered so the ui can offer edit/replace/remove and retry.
+/// Distinct from [AddCatServerException] (the classifier's own failures —
+/// timeout, malformed output — surface as the existing generic 500,
+/// unchanged) so a genuine rejection never gets a "try again shortly"
+/// framing.
+class AddCatContentRejectedException implements Exception {
+  const AddCatContentRejectedException();
+}
+
 /// Thrown for connection failures (offline, timeout).
 class AddCatNetworkException implements Exception {
   const AddCatNetworkException();
@@ -179,6 +192,8 @@ class AddCatApi {
         return const AddCatMediaTooLargeException();
       case 415:
         return const AddCatUnsupportedMediaException();
+      case 422:
+        return const AddCatContentRejectedException();
     }
     if (status != null) return const AddCatServerException();
     return const AddCatNetworkException();

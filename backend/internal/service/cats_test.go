@@ -2576,3 +2576,171 @@ func TestCatsService_ListCatMedia_InvalidCatID(t *testing.T) {
 		t.Errorf("expected ErrInvalidCatID, got %v", err)
 	}
 }
+
+// --- issue #241: pre-publication content moderation ---
+
+// TestCatsService_Create_Moderation covers atomic publication (issue #241):
+// a rejected photo or name must never reach CreateCatWithMedia, and a
+// rejected name specifically proves moderation runs even when the photo
+// itself is fine — neither field alone gets a pass.
+func TestCatsService_Create_Moderation(t *testing.T) {
+	t.Run("rejected photo blocks creation", func(t *testing.T) {
+		store := &fakeObjectStore{}
+		var captured repository.CreateCatWithMediaParams
+		svc := NewCatsService(fakeCatsLister{capturedCreateCat: &captured},
+			WithCatsMediaPipeline(store, 1<<24), WithCatsModerator(FakeModerator{}))
+
+		_, err := svc.Create(context.Background(), uuid.New().String(), "", nil, istanbulLat, istanbulLng, nil, true, solidColorPNG(t, 4001, 4001))
+		if !errors.Is(err, ErrContentRejected) {
+			t.Fatalf("expected ErrContentRejected, got %v", err)
+		}
+		if len(store.puts) != 0 {
+			t.Errorf("expected no upload for a rejected photo, got %v", store.puts)
+		}
+		if captured.Cat.ID.Valid {
+			t.Error("expected CreateCatWithMedia never called for a rejected photo")
+		}
+	})
+
+	t.Run("rejected name blocks creation even with an allowed photo", func(t *testing.T) {
+		store := &fakeObjectStore{}
+		var captured repository.CreateCatWithMediaParams
+		svc := NewCatsService(fakeCatsLister{capturedCreateCat: &captured},
+			WithCatsMediaPipeline(store, 1<<24), WithCatsModerator(FakeModerator{}))
+
+		name := "test " + FakeModerationRejectMarker(ModerationCategoryHarassment)
+		_, err := svc.Create(context.Background(), uuid.New().String(), "", nil, istanbulLat, istanbulLng, &name, true, validJPEGBytes(t))
+		if !errors.Is(err, ErrContentRejected) {
+			t.Fatalf("expected ErrContentRejected, got %v", err)
+		}
+		if len(store.puts) != 0 {
+			t.Errorf("expected no upload for a rejected name, got %v", store.puts)
+		}
+		if captured.Cat.ID.Valid {
+			t.Error("expected CreateCatWithMedia never called for a rejected name")
+		}
+	})
+
+	t.Run("moderation-unavailable fails closed", func(t *testing.T) {
+		store := &fakeObjectStore{}
+		svc := NewCatsService(fakeCatsLister{}, WithCatsMediaPipeline(store, 1<<24), WithCatsModerator(FakeModerator{}))
+
+		_, err := svc.Create(context.Background(), uuid.New().String(), "", nil, istanbulLat, istanbulLng, nil, true, solidColorPNG(t, 4009, 4009))
+		if !errors.Is(err, ErrModerationUnavailable) {
+			t.Fatalf("expected ErrModerationUnavailable, got %v", err)
+		}
+		if len(store.puts) != 0 {
+			t.Errorf("expected no upload when moderation is unavailable, got %v", store.puts)
+		}
+	})
+
+	t.Run("legitimate injured-cat welfare photo and benign name are allowed", func(t *testing.T) {
+		store := &fakeObjectStore{}
+		svc := NewCatsService(fakeCatsLister{
+			createCatWithMediaRow: repository.CreateCatWithMediaRow{
+				Cat:   repository.CreateCatRow{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}},
+				Media: repository.Medium{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, Url: "/v1/media/objects/welfare.png"},
+			},
+		}, WithCatsMediaPipeline(store, 1<<24), WithCatsModerator(FakeModerator{}))
+
+		name := "Boncuk"
+		_, err := svc.Create(context.Background(), uuid.New().String(), "", nil, istanbulLat, istanbulLng, &name, true, solidColorPNG(t, 4008, 4008))
+		if err != nil {
+			t.Fatalf("expected a legitimate welfare photo with an injury to be allowed, got %v", err)
+		}
+		if len(store.puts) != 1 {
+			t.Errorf("expected exactly one object stored, got %v", store.puts)
+		}
+	})
+}
+
+func TestCatsService_RenameCat_Moderation(t *testing.T) {
+	id := uuid.New()
+	ownerID := uuid.New()
+
+	t.Run("rejected name is not saved", func(t *testing.T) {
+		var captured repository.UpdateCatNameParams
+		svc := NewCatsService(fakeCatsLister{
+			catRow: repository.GetCatByIDRow{
+				ID:              pgtype.UUID{Bytes: id, Valid: true},
+				CreatedByUserID: pgtype.UUID{Bytes: ownerID, Valid: true},
+			},
+			capturedRename: &captured,
+		}, WithCatsModerator(FakeModerator{}))
+
+		name := FakeModerationRejectMarker(ModerationCategorySexual)
+		_, err := svc.RenameCat(context.Background(), id.String(), ownerID.String(), name)
+		if !errors.Is(err, ErrContentRejected) {
+			t.Fatalf("expected ErrContentRejected, got %v", err)
+		}
+		if captured.ID.Valid {
+			t.Error("expected UpdateCatName never called for a rejected name")
+		}
+	})
+}
+
+func TestCatsService_CreateOrdinaryUpdate_Moderation(t *testing.T) {
+	t.Run("rejected comment is not saved", func(t *testing.T) {
+		var captured repository.CreateOrdinaryUpdateParams
+		svc := NewCatsService(fakeCatsLister{exists: true, captured: &captured}, WithCatsModerator(FakeModerator{}))
+
+		comment := "test " + FakeModerationRejectMarker(ModerationCategoryHate)
+		_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, []string{"fed"}, false, &comment, nil)
+		if !errors.Is(err, ErrContentRejected) {
+			t.Fatalf("expected ErrContentRejected, got %v", err)
+		}
+		if captured.CatID.Valid {
+			t.Error("expected CreateOrdinaryUpdate never called for a rejected comment")
+		}
+	})
+
+	t.Run("empty comment skips moderation", func(t *testing.T) {
+		var captured repository.CreateOrdinaryUpdateParams
+		svc := NewCatsService(fakeCatsLister{
+			exists:    true,
+			createRow: repository.CreateUpdateRow{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}},
+			captured:  &captured,
+		}, WithCatsModerator(FakeModerator{}))
+
+		empty := "   "
+		_, err := svc.CreateOrdinaryUpdate(context.Background(), uuid.New().String(), uuid.New().String(), "", nil, []string{"fed"}, false, &empty, nil)
+		if err != nil {
+			t.Fatalf("expected whitespace-only comment to skip moderation and succeed, got %v", err)
+		}
+	})
+}
+
+func TestCatsService_CreateNeedsHelpUpdate_Moderation(t *testing.T) {
+	t.Run("rejected comment is not saved", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{exists: true}, WithCatsModerator(FakeModerator{}))
+
+		comment := "test " + FakeModerationRejectMarker(ModerationCategoryIllegalActivity)
+		_, err := svc.CreateNeedsHelpUpdate(context.Background(), uuid.New().String(), uuid.New().String(), uuid.New().String(), "trapped", &comment)
+		if !errors.Is(err, ErrContentRejected) {
+			t.Fatalf("expected ErrContentRejected, got %v", err)
+		}
+	})
+}
+
+func TestCatsService_CorrectOwnUpdate_Moderation(t *testing.T) {
+	t.Run("rejected comment edit is not saved", func(t *testing.T) {
+		catID := uuid.New()
+		updateID := uuid.New()
+		userID := uuid.New()
+
+		var captured repository.CorrectOwnUpdateParams
+		svc := NewCatsService(fakeCatsLister{capturedCorrect: &captured}, WithCatsModerator(FakeModerator{}))
+
+		comment := "test " + FakeModerationRejectMarker(ModerationCategorySelfHarm)
+		_, err := svc.CorrectOwnUpdate(context.Background(), catID.String(), updateID.String(), userID.String(), UpdateCorrection{
+			SetComment: true,
+			Comment:    &comment,
+		})
+		if !errors.Is(err, ErrContentRejected) {
+			t.Fatalf("expected ErrContentRejected, got %v", err)
+		}
+		if captured.ID.Valid {
+			t.Error("expected CorrectOwnUpdate never called for a rejected comment edit")
+		}
+	})
+}

@@ -35,6 +35,12 @@ const (
 	ObjectStorageProviderS3   = "s3"
 )
 
+// ModerationProvider values ResolveModerationProvider can return.
+const (
+	ModerationProviderFake       = "fake"
+	ModerationProviderCloudflare = "cloudflare"
+)
+
 type Config struct {
 	Port            string
 	DatabaseURL     string
@@ -159,6 +165,31 @@ type Config struct {
 	// the file's project_id field, so no separate project-id variable
 	// exists to drift out of sync with the credentials.
 	FCMCredentialsFile string
+
+	// ModerationProvider selects the Moderator implementation cmd/api uses
+	// for pre-publication content moderation (issue #241): "fake" (the
+	// deterministic, no-network dev/test provider) or "cloudflare"
+	// (Cloudflare Workers AI). Raw environment value; the environment-aware
+	// defaulting and validation live in ResolveModerationProvider — exactly
+	// the OTPProvider/ResolveOTPProvider split (issue #59). "fake" is only
+	// ever a default under an explicit APP_ENV=development; production
+	// fails closed on unset/unknown/incomplete configuration, with no
+	// runtime fallback from cloudflare to fake, ever.
+	ModerationProvider string
+	// ModerationTextModel/ModerationVisionModel are the Cloudflare Workers
+	// AI model slugs the cloudflare provider calls for text and image/video-
+	// contact-sheet moderation respectively (issue #241: "model identifiers
+	// remain configuration, not public api/domain concepts"). Required only
+	// when ModerationProvider is "cloudflare" — checked syntactically
+	// (non-empty) at startup; never called live during startup/readiness.
+	ModerationTextModel   string
+	ModerationVisionModel string
+	// CloudflareAccountID/CloudflareAPIToken authenticate Workers AI
+	// requests and are required when ModerationProvider is "cloudflare".
+	// Deployment secrets — CloudflareAPIToken is never logged or echoed in
+	// errors.
+	CloudflareAccountID string
+	CloudflareAPIToken  string
 }
 
 func Load() (Config, error) {
@@ -212,6 +243,15 @@ func Load() (Config, error) {
 		// the fake provider because an operator forgot to set this.
 		NotificationProvider: os.Getenv("NOTIFICATION_PROVIDER"),
 		FCMCredentialsFile:   os.Getenv("FCM_CREDENTIALS_FILE"),
+
+		// raw values only — ResolveModerationProvider applies the
+		// environment-aware default and validation (issue #241), keeping
+		// the same no-silent-fallback posture as every other provider pair.
+		ModerationProvider:    os.Getenv("MODERATION_PROVIDER"),
+		ModerationTextModel:   os.Getenv("MODERATION_TEXT_MODEL"),
+		ModerationVisionModel: os.Getenv("MODERATION_VISION_MODEL"),
+		CloudflareAccountID:   os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
+		CloudflareAPIToken:    os.Getenv("CLOUDFLARE_API_TOKEN"),
 	}
 	cfg.MediaPublicBaseURL = getEnv("MEDIA_PUBLIC_BASE_URL", "http://localhost:"+cfg.Port)
 
@@ -411,6 +451,65 @@ func (c Config) ResolveObjectStorageProvider() (string, error) {
 		return "", fmt.Errorf("OBJECT_STORAGE_PROVIDER is required (set APP_ENV=%s for the local %q default, or OBJECT_STORAGE_PROVIDER=%s)", AppEnvDevelopment, ObjectStorageProviderFake, ObjectStorageProviderS3)
 	default:
 		return "", fmt.Errorf("unsupported OBJECT_STORAGE_PROVIDER %q (%q with APP_ENV=%s, or %q)", provider, ObjectStorageProviderFake, AppEnvDevelopment, ObjectStorageProviderS3)
+	}
+}
+
+// ResolveModerationProvider decides which Moderator implementation cmd/api
+// runs with (issue #241) and validates the selection is complete — the same
+// fail-closed shape as ResolveOTPProvider (issue #59):
+//
+//   - "fake" is only reachable under an explicit APP_ENV=development — as
+//     the default when MODERATION_PROVIDER is unset, or when set explicitly.
+//   - any other environment (production, unset, or unrecognized) rejects
+//     fake, unset, and unknown providers outright; only "cloudflare" is
+//     accepted there.
+//   - "cloudflare" additionally requires CLOUDFLARE_ACCOUNT_ID,
+//     CLOUDFLARE_API_TOKEN, MODERATION_TEXT_MODEL, and
+//     MODERATION_VISION_MODEL in every environment; any missing one fails
+//     resolution, naming the missing variables but never echoing a
+//     configured value.
+//
+// Model slugs are validated only for presence — never resolved against a
+// live model call at startup (issue #241: "do not make a live model call
+// during application startup/readiness"). There is intentionally no path
+// that degrades a selected or required cloudflare provider to fake —
+// misconfiguration stops startup instead.
+func (c Config) ResolveModerationProvider() (string, error) {
+	dev := c.AppEnv == AppEnvDevelopment
+
+	provider := c.ModerationProvider
+	if provider == "" && dev {
+		provider = ModerationProviderFake
+	}
+
+	switch provider {
+	case ModerationProviderFake:
+		if !dev {
+			return "", fmt.Errorf("MODERATION_PROVIDER %q is only allowed with APP_ENV=%s (production requires MODERATION_PROVIDER=%s)", provider, AppEnvDevelopment, ModerationProviderCloudflare)
+		}
+		return ModerationProviderFake, nil
+	case ModerationProviderCloudflare:
+		var missing []string
+		if c.CloudflareAccountID == "" {
+			missing = append(missing, "CLOUDFLARE_ACCOUNT_ID")
+		}
+		if c.CloudflareAPIToken == "" {
+			missing = append(missing, "CLOUDFLARE_API_TOKEN")
+		}
+		if c.ModerationTextModel == "" {
+			missing = append(missing, "MODERATION_TEXT_MODEL")
+		}
+		if c.ModerationVisionModel == "" {
+			missing = append(missing, "MODERATION_VISION_MODEL")
+		}
+		if len(missing) > 0 {
+			return "", fmt.Errorf("MODERATION_PROVIDER=%s requires %s", ModerationProviderCloudflare, strings.Join(missing, ", "))
+		}
+		return ModerationProviderCloudflare, nil
+	case "":
+		return "", fmt.Errorf("MODERATION_PROVIDER is required (set APP_ENV=%s for the local %q default, or MODERATION_PROVIDER=%s)", AppEnvDevelopment, ModerationProviderFake, ModerationProviderCloudflare)
+	default:
+		return "", fmt.Errorf("unsupported MODERATION_PROVIDER %q (%q with APP_ENV=%s, or %q)", provider, ModerationProviderFake, AppEnvDevelopment, ModerationProviderCloudflare)
 	}
 }
 

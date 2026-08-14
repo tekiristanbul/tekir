@@ -858,6 +858,31 @@ void main() {
     },
   );
 
+  test('a content-rejected (422) photo upload keeps the draft and media, and '
+      'maps a retryable, neutral error', () async {
+    final api = _FakeCatDetailApi()
+      ..uploadError = const UpdateContentRejectedException();
+    final container = _containerWith(api);
+    addTearDown(container.dispose);
+    await container.read(catDetailProvider(_catId).notifier).load();
+    final notifier = container.read(catUpdateComposerProvider(_catId).notifier);
+    fakePlatform.nextFile = XFile.fromData(
+      Uint8List.fromList([1, 2, 3]),
+      name: 'photo.jpg',
+      path: 'photo.jpg',
+    );
+    await notifier.pickPhoto(ImageSource.gallery);
+    notifier.toggleStatus('seen');
+
+    final ok = await notifier.submit();
+
+    expect(ok, isFalse);
+    final state = container.read(catUpdateComposerProvider(_catId));
+    expect(state.error, UpdateSubmitError.contentRejected);
+    expect(state.mediaBytes, isNotNull);
+    expect(state.selectedStatuses, {'seen'});
+  });
+
   test(
     'media not found clears the picked photo and requires a fresh pick',
     () async {
@@ -1103,6 +1128,10 @@ void main() {
     const CatNotFoundException(): UpdateSubmitError.notFound,
     const UpdateNetworkException(): UpdateSubmitError.network,
     const UpdateServerException(): UpdateSubmitError.server,
+    // issue #241: the pre-publication content check rejected the comment —
+    // mirrors every other mapped failure here exactly: retryable, draft
+    // untouched.
+    const UpdateContentRejectedException(): UpdateSubmitError.contentRejected,
   }.entries) {
     test(
       '${entry.key.runtimeType} surfaces as ${entry.value}, and is retryable',
