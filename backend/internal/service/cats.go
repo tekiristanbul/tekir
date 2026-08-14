@@ -472,6 +472,10 @@ type CatDetail struct {
 	// client never decides for itself whether to show the cover-change
 	// affordance.
 	IsOwner bool
+	// OwnerUserID (issue #234) is the account that created the cat, or nil
+	// for a pre-#70 seed cat that no account owns. The block action on cat
+	// detail acts on this account — is_owner alone can't name it.
+	OwnerUserID *string
 }
 
 // CatUpdate is one entry in a cat's newest-first history: either an
@@ -489,6 +493,9 @@ type CatUpdate struct {
 	CreatedAt time.Time
 	UpdatedAt *time.Time
 
+	// AuthorUserID (issue #234) is the account that wrote this update, so
+	// the timeline row can offer to block it. Nil for a pre-account update.
+	AuthorUserID *string
 	// AuthorDisplayName (issue #121's timeline-avatar parity gap) is the
 	// author's users.display_name at read time — nil for a guest-authored
 	// (pre-#65) row or an account that never set one; the handler falls
@@ -554,8 +561,8 @@ type updatesCursor struct {
 // CatsService stays testable without a real database connection.
 type CatsStore interface {
 	ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error)
-	GetCatByID(ctx context.Context, id pgtype.UUID) (repository.GetCatByIDRow, error)
-	CatExists(ctx context.Context, id pgtype.UUID) (bool, error)
+	GetCatByID(ctx context.Context, arg repository.GetCatByIDParams) (repository.GetCatByIDRow, error)
+	CatExists(ctx context.Context, arg repository.CatExistsParams) (bool, error)
 	ListCatUpdates(ctx context.Context, arg repository.ListCatUpdatesParams) ([]repository.ListCatUpdatesRow, error)
 	CreateOrdinaryUpdate(ctx context.Context, arg repository.CreateOrdinaryUpdateParams) (repository.CreateUpdateRow, error)
 	CorrectOwnUpdate(ctx context.Context, arg repository.CorrectOwnUpdateParams) (repository.CorrectOwnUpdateRow, error)
@@ -651,16 +658,21 @@ func deriveActiveAlert(clock func() time.Time, category, comment pgtype.Text, cr
 }
 
 // ListNearby returns the active cats inside the requested viewport.
-func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds) ([]CatMarker, error) {
+func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds, callerUserID string) ([]CatMarker, error) {
 	if err := bounds.validate(); err != nil {
 		return nil, err
 	}
 
+	viewer, err := optionalUUID(callerUserID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.ListCatsInBounds(ctx, repository.ListCatsInBoundsParams{
-		MinLng: bounds.MinLng,
-		MinLat: bounds.MinLat,
-		MaxLng: bounds.MaxLng,
-		MaxLat: bounds.MaxLat,
+		MinLng:       bounds.MinLng,
+		MinLat:       bounds.MinLat,
+		MaxLng:       bounds.MaxLng,
+		MaxLat:       bounds.MaxLat,
+		ViewerUserID: viewer,
 	})
 	if err != nil {
 		return nil, err
@@ -694,7 +706,7 @@ func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds) ([]CatMarke
 // guest-readable read path. cursor is the opaque token from a previous
 // page's NextCursor, or "" for the first page; limit == 0 falls back to
 // defaultDiscoverLimit, matching ListCatUpdates' own convention.
-func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng float64, cursor string, limit int) (DiscoverPage, error) {
+func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng float64, cursor string, limit int, callerUserID string) (DiscoverPage, error) {
 	if filter != discoverFilterNearby && filter != discoverFilterNeedsHelp {
 		return DiscoverPage{}, ErrInvalidDiscoverFilter
 	}
@@ -745,6 +757,10 @@ func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng 
 		items   []DiscoverCat
 		lastRow *discoverRow
 	)
+	viewer, err := optionalUUID(callerUserID)
+	if err != nil {
+		return DiscoverPage{}, err
+	}
 	switch filter {
 	case discoverFilterNearby:
 		rows, err := s.db.ListCatsByDistance(ctx, repository.ListCatsByDistanceParams{
@@ -752,6 +768,7 @@ func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng 
 			AfterDistanceM: afterDistance,
 			AfterID:        afterID,
 			RowLimit:       rowLimit,
+			ViewerUserID:   viewer,
 		})
 		if err != nil {
 			return DiscoverPage{}, err
@@ -774,6 +791,7 @@ func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng 
 			AfterDistanceM: afterDistance,
 			AfterID:        afterID,
 			RowLimit:       rowLimit,
+			ViewerUserID:   viewer,
 		})
 		if err != nil {
 			return DiscoverPage{}, err
@@ -915,7 +933,11 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id, callerUserID string)
 		return CatDetail{}, err
 	}
 
-	row, err := s.db.GetCatByID(ctx, catID)
+	viewer, err := optionalUUID(callerUserID)
+	if err != nil {
+		return CatDetail{}, err
+	}
+	row, err := s.db.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID, ViewerUserID: viewer})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CatDetail{}, ErrCatNotFound
@@ -943,6 +965,7 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id, callerUserID string)
 		ActiveAlert:  deriveActiveAlert(s.clock, row.NeedsHelpCategory, row.NeedsHelpComment, row.NeedsHelpCreatedAt, row.NeedsHelpExpiresAt),
 		MediaCount:   int(mediaCount),
 		IsOwner:      isCatOwner(row.CreatedByUserID, callerUserID),
+		OwnerUserID:  uuidPtr(row.CreatedByUserID),
 	}, nil
 }
 
@@ -952,6 +975,17 @@ func (s *CatsService) GetCatDetail(ctx context.Context, id, callerUserID string)
 // malformed callerUserID (shouldn't happen — OptionalBearer/RequireBearer
 // only ever place a well-formed uuid or nothing at all in context) simply
 // never matches, mirroring ListCatUpdates' own AuthorIsMe derivation.
+// uuidPtr renders a nullable account id for the wire: nil when the column is
+// null (a seed cat with no owner, an update written before accounts), the
+// canonical uuid string otherwise.
+func uuidPtr(id pgtype.UUID) *string {
+	if !id.Valid {
+		return nil
+	}
+	s := uuid.UUID(id.Bytes).String()
+	return &s
+}
+
 func isCatOwner(ownerID pgtype.UUID, callerUserID string) bool {
 	if !ownerID.Valid || callerUserID == "" {
 		return false
@@ -982,17 +1016,28 @@ type CatMediaItem struct {
 	IsCover             bool
 	CreatedAt           time.Time
 	UploaderDisplayName *string
+	// UploaderUserID (issue #234) is the account that uploaded this media,
+	// so the archive tile can offer to block it.
+	UploaderUserID *string
 }
 
 // ListCatMedia returns id's photo archive, newest-first, or ErrCatNotFound
 // if no cat exists with that id.
-func (s *CatsService) ListCatMedia(ctx context.Context, id string) ([]CatMediaItem, error) {
+func (s *CatsService) ListCatMedia(ctx context.Context, id, callerUserID string) ([]CatMediaItem, error) {
 	catID, err := parseCatID(id)
 	if err != nil {
 		return nil, err
 	}
 
-	exists, err := s.db.CatExists(ctx, catID)
+	// issue #234: the archive is guest-readable, so the viewer is optional —
+	// but when there is one, a cat owned by an account they block must be as
+	// unreachable here as it is on the detail screen.
+	viewer, err := optionalUUID(callerUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	exists, err := s.db.CatExists(ctx, repository.CatExistsParams{ID: catID, ViewerUserID: viewer})
 	if err != nil {
 		return nil, err
 	}
@@ -1015,6 +1060,7 @@ func (s *CatsService) ListCatMedia(ctx context.Context, id string) ([]CatMediaIt
 			IsCover:             r.IsCover,
 			CreatedAt:           r.CreatedAt.Time,
 			UploaderDisplayName: textPtr(r.UploaderDisplayName),
+			UploaderUserID:      uuidPtr(r.UploaderUserID),
 		})
 	}
 	return items, nil
@@ -1040,7 +1086,7 @@ func (s *CatsService) SetCoverPhoto(ctx context.Context, id, callerUserID, media
 		return CatDetail{}, err
 	}
 
-	row, err := s.db.GetCatByID(ctx, catID)
+	row, err := s.db.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CatDetail{}, ErrCatNotFound
@@ -1091,7 +1137,7 @@ func (s *CatsService) RenameCat(ctx context.Context, id, callerUserID, name stri
 		return CatDetail{}, err
 	}
 
-	row, err := s.db.GetCatByID(ctx, catID)
+	row, err := s.db.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CatDetail{}, ErrCatNotFound
@@ -1206,6 +1252,10 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 			haveCaller = true
 		}
 	}
+	// issue #234: same caller, used for a different question — whether this
+	// cat's owner is someone they block, which makes the history 404 exactly
+	// like an unknown cat.
+	viewer := pgtype.UUID{Bytes: callerUUID, Valid: haveCaller}
 
 	if limit == 0 {
 		limit = defaultUpdatesLimit
@@ -1219,7 +1269,7 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 		return UpdatesPage{}, err
 	}
 
-	exists, err := s.db.CatExists(ctx, catID)
+	exists, err := s.db.CatExists(ctx, repository.CatExistsParams{ID: catID, ViewerUserID: viewer})
 	if err != nil {
 		return UpdatesPage{}, err
 	}
@@ -1263,6 +1313,7 @@ func (s *CatsService) ListCatUpdates(ctx context.Context, id, cursor string, lim
 			Comment:           textPtr(r.Comment),
 			CreatedAt:         r.CreatedAt.Time,
 			NeedsHelp:         r.NeedsHelp,
+			AuthorUserID:      uuidPtr(r.AuthorUserID),
 			AuthorDisplayName: textPtr(r.AuthorDisplayName),
 			PhotoURL:          textPtr(r.PhotoUrl),
 			MediaContentType:  textPtr(r.MediaContentType),
@@ -1380,7 +1431,14 @@ func (s *CatsService) CreateOrdinaryUpdate(ctx context.Context, id, userID, devi
 		return CatUpdate{}, err
 	}
 
-	exists, err := s.db.CatExists(ctx, catID)
+	// issue #234: an author who blocks this cat's owner cannot post to it —
+	// the same not-found answer every read gives them.
+	viewer, err := optionalUUID(userID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
+	exists, err := s.db.CatExists(ctx, repository.CatExistsParams{ID: catID, ViewerUserID: viewer})
 	if err != nil {
 		return CatUpdate{}, err
 	}
@@ -1581,7 +1639,14 @@ func (s *CatsService) CreateNeedsHelpUpdate(ctx context.Context, id, userID, dev
 		return CatUpdate{}, err
 	}
 
-	exists, err := s.db.CatExists(ctx, catID)
+	// issue #234: an author who blocks this cat's owner cannot post to it —
+	// the same not-found answer every read gives them.
+	viewer, err := optionalUUID(userID)
+	if err != nil {
+		return CatUpdate{}, err
+	}
+
+	exists, err := s.db.CatExists(ctx, repository.CatExistsParams{ID: catID, ViewerUserID: viewer})
 	if err != nil {
 		return CatUpdate{}, err
 	}
@@ -1867,12 +1932,16 @@ func (s *CatsService) DeleteOwnUpdate(ctx context.Context, catID, updateID, user
 // flow's standalone, non-blocking duplicate-candidate check
 // (docs/architecture/api.md). Public: this is advisory information a guest
 // browsing the add-cat flow up to the auth gate can see the same as anyone.
-func (s *CatsService) ListNearbyDuplicates(ctx context.Context, lat, lng float64) ([]DuplicateCandidate, error) {
+func (s *CatsService) ListNearbyDuplicates(ctx context.Context, lat, lng float64, callerUserID string) ([]DuplicateCandidate, error) {
 	if !withinIstanbul(lat, lng) {
 		return nil, ErrInvalidArea
 	}
+	viewer, err := optionalUUID(callerUserID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.ListNearbyCatsForDuplicateCheck(ctx, repository.ListNearbyCatsForDuplicateCheckParams{
-		Lat: lat, Lng: lng, RadiusM: duplicateCheckRadiusMeters,
+		Lat: lat, Lng: lng, RadiusM: duplicateCheckRadiusMeters, ViewerUserID: viewer,
 	})
 	if err != nil {
 		return nil, err
@@ -1950,7 +2019,9 @@ func (s *CatsService) Create(ctx context.Context, userID, deviceID string, idemp
 	}
 
 	if !confirmedNew {
-		candidates, err := s.ListNearbyDuplicates(ctx, lat, lng)
+		// issue #234: the creator is the viewer here, so a cat owned by
+		// someone they block never surfaces as a duplicate warning either.
+		candidates, err := s.ListNearbyDuplicates(ctx, lat, lng, userID)
 		if err != nil {
 			return CatDetail{}, err
 		}

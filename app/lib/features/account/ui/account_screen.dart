@@ -109,6 +109,17 @@ class _AuthenticatedBody extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppSpacing.s4),
+        // issue #234: blocking is reversible, so the list of blocked
+        // accounts has to be reachable — this is the only place it exists.
+        SizedBox(
+          height: kTapMin,
+          child: OutlinedButton.icon(
+            onPressed: () => context.push('/account/blocked'),
+            icon: const Icon(Icons.block, size: 18),
+            label: const Text('Engellenen hesaplar'),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.s3),
         SizedBox(
           height: kTapMin,
           child: OutlinedButton.icon(

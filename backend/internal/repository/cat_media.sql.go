@@ -87,6 +87,7 @@ select
   m.content_type,
   m.muted,
   coalesce(c.primary_photo_id = cm.media_id, false) as is_cover,
+  m.uploaded_by_user_id as uploader_user_id,
   uu.display_name as uploader_display_name
 from cat_media cm
 join media m on m.id = cm.media_id
@@ -114,6 +115,7 @@ type ListCatMediaRow struct {
 	ContentType         string             `json:"content_type"`
 	Muted               bool               `json:"muted"`
 	IsCover             bool               `json:"is_cover"`
+	UploaderUserID      pgtype.UUID        `json:"uploader_user_id"`
 	UploaderDisplayName pgtype.Text        `json:"uploader_display_name"`
 }
 
@@ -153,6 +155,7 @@ func (q *Queries) ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]ListCa
 			&i.ContentType,
 			&i.Muted,
 			&i.IsCover,
+			&i.UploaderUserID,
 			&i.UploaderDisplayName,
 		); err != nil {
 			return nil, err

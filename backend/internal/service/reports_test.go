@@ -43,7 +43,7 @@ func (f fakeReportsStore) GetOpenReportByReporterAndTarget(_ context.Context, _ 
 	return f.existingRow, f.existingErr
 }
 
-func (f fakeReportsStore) CatExists(_ context.Context, _ pgtype.UUID) (bool, error) {
+func (f fakeReportsStore) CatExists(_ context.Context, _ repository.CatExistsParams) (bool, error) {
 	return f.catExists, f.catExistsErr
 }
 

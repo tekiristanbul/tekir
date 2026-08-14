@@ -95,6 +95,12 @@ type fakeCatsLister struct {
 	setCoverErr error
 	// capturedSetCover mirrors captured above, for SetCatCoverPhoto.
 	capturedSetCover *repository.SetCatCoverPhotoParams
+	// issue #234: the block filter lives in sql, so these capture the viewer
+	// the service actually passed down — the only thing a fake store can
+	// prove about it.
+	capturedBounds    *repository.ListCatsInBoundsParams
+	capturedGetCat    *repository.GetCatByIDParams
+	capturedCatExists *repository.CatExistsParams
 
 	renameErr error
 	// capturedRename mirrors captured above, for UpdateCatName.
@@ -155,14 +161,23 @@ func (f fakeCatsLister) ListCatMedia(ctx context.Context, catID pgtype.UUID) ([]
 }
 
 func (f fakeCatsLister) ListCatsInBounds(ctx context.Context, arg repository.ListCatsInBoundsParams) ([]repository.ListCatsInBoundsRow, error) {
+	if f.capturedBounds != nil {
+		*f.capturedBounds = arg
+	}
 	return f.rows, f.err
 }
 
-func (f fakeCatsLister) GetCatByID(ctx context.Context, id pgtype.UUID) (repository.GetCatByIDRow, error) {
+func (f fakeCatsLister) GetCatByID(ctx context.Context, arg repository.GetCatByIDParams) (repository.GetCatByIDRow, error) {
+	if f.capturedGetCat != nil {
+		*f.capturedGetCat = arg
+	}
 	return f.catRow, f.catErr
 }
 
-func (f fakeCatsLister) CatExists(ctx context.Context, id pgtype.UUID) (bool, error) {
+func (f fakeCatsLister) CatExists(ctx context.Context, arg repository.CatExistsParams) (bool, error) {
+	if f.capturedCatExists != nil {
+		*f.capturedCatExists = arg
+	}
 	return f.exists, f.existsErr
 }
 
@@ -252,7 +267,7 @@ func TestCatsService_ListNearby(t *testing.T) {
 		},
 	}}, WithClock(func() time.Time { return fixedNow }))
 
-	markers, err := svc.ListNearby(context.Background(), Bounds{MinLng: 28, MinLat: 41, MaxLng: 29, MaxLat: 42})
+	markers, err := svc.ListNearby(context.Background(), Bounds{MinLng: 28, MinLat: 41, MaxLng: 29, MaxLat: 42}, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -303,7 +318,7 @@ func TestCatsService_ListNearby_InvalidBounds(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := svc.ListNearby(context.Background(), c.bounds); !errors.Is(err, ErrInvalidBounds) {
+			if _, err := svc.ListNearby(context.Background(), c.bounds, ""); !errors.Is(err, ErrInvalidBounds) {
 				t.Fatalf("expected ErrInvalidBounds, got %v", err)
 			}
 		})
@@ -1092,7 +1107,7 @@ func TestCatsService_ListNearby_ActiveAlertBoundaries(t *testing.T) {
 				fakeCatsLister{rows: []repository.ListCatsInBoundsRow{baseRow(c.expiresAt)}},
 				WithClock(func() time.Time { return fixedNow }),
 			)
-			markers, err := svc.ListNearby(context.Background(), Bounds{MinLng: 28, MinLat: 41, MaxLng: 29, MaxLat: 42})
+			markers, err := svc.ListNearby(context.Background(), Bounds{MinLng: 28, MinLat: 41, MaxLng: 29, MaxLat: 42}, "")
 			if err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
@@ -1949,7 +1964,7 @@ func TestCatsService_ListNearbyDuplicates_Success(t *testing.T) {
 		},
 	})
 
-	candidates, err := svc.ListNearbyDuplicates(context.Background(), istanbulLat, istanbulLng)
+	candidates, err := svc.ListNearbyDuplicates(context.Background(), istanbulLat, istanbulLng, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -1961,7 +1976,7 @@ func TestCatsService_ListNearbyDuplicates_Success(t *testing.T) {
 func TestCatsService_ListNearbyDuplicates_InvalidArea(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	if _, err := svc.ListNearbyDuplicates(context.Background(), parisLat, parisLng); !errors.Is(err, ErrInvalidArea) {
+	if _, err := svc.ListNearbyDuplicates(context.Background(), parisLat, parisLng, ""); !errors.Is(err, ErrInvalidArea) {
 		t.Fatalf("expected ErrInvalidArea, got %v", err)
 	}
 }
@@ -2249,7 +2264,7 @@ const (
 func TestCatsService_ListDiscover_InvalidFilter(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	_, err := svc.ListDiscover(context.Background(), "popular", galataLat, galataLng, "", 0)
+	_, err := svc.ListDiscover(context.Background(), "popular", galataLat, galataLng, "", 0, "")
 	if !errors.Is(err, ErrInvalidDiscoverFilter) {
 		t.Fatalf("expected ErrInvalidDiscoverFilter, got %v", err)
 	}
@@ -2259,7 +2274,7 @@ func TestCatsService_ListDiscover_InvalidArea(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
 	// well outside istanbulBounds (e.g. ankara).
-	_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, 39.93, 32.85, "", 0)
+	_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, 39.93, 32.85, "", 0, "")
 	if !errors.Is(err, ErrInvalidArea) {
 		t.Fatalf("expected ErrInvalidArea, got %v", err)
 	}
@@ -2269,7 +2284,7 @@ func TestCatsService_ListDiscover_InvalidLimit(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
 	for _, limit := range []int{-1, maxDiscoverLimit + 1} {
-		if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", limit); !errors.Is(err, ErrInvalidLimit) {
+		if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", limit, ""); !errors.Is(err, ErrInvalidLimit) {
 			t.Errorf("limit %d: expected ErrInvalidLimit, got %v", limit, err)
 		}
 	}
@@ -2278,7 +2293,7 @@ func TestCatsService_ListDiscover_InvalidLimit(t *testing.T) {
 func TestCatsService_ListDiscover_InvalidCursor(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "not-base64!!", 0)
+	_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "not-base64!!", 0, "")
 	if !errors.Is(err, ErrInvalidCursor) {
 		t.Fatalf("expected ErrInvalidCursor, got %v", err)
 	}
@@ -2300,7 +2315,7 @@ func TestCatsService_ListDiscover_Nearby_PaginatesAndEncodesCursor(t *testing.T)
 		},
 	})
 
-	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 2)
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 2, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2341,7 +2356,7 @@ func TestCatsService_ListDiscover_Nearby_PaginatesAndEncodesCursor(t *testing.T)
 	// postgres's job, exercised by the repository integration test, not
 	// this fake, which always returns the same fixed rows regardless of
 	// what it was asked for.
-	if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, page.NextCursor, 2); err != nil {
+	if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, page.NextCursor, 2, ""); err != nil {
 		t.Fatalf("expected no error on second page, got %v", err)
 	}
 	if !captured.AfterDistanceM.Valid || captured.AfterDistanceM.Float64 != 120 {
@@ -2359,7 +2374,7 @@ func TestCatsService_ListDiscover_Nearby_NoNextPageWhenExactlyLimitRows(t *testi
 		},
 	})
 
-	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 5)
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 5, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2387,7 +2402,7 @@ func TestCatsService_ListDiscover_NeedsHelp_PassesClockAsNow(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return fixedNow }))
 
-	page, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "", 0)
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "", 0, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2429,7 +2444,7 @@ func TestCatsService_ListDiscover_NeedsHelp_ExactExpiryBoundary(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return fixedNow }))
 
-	page, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "", 0)
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "", 0, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2441,7 +2456,7 @@ func TestCatsService_ListDiscover_NeedsHelp_ExactExpiryBoundary(t *testing.T) {
 func TestCatsService_ListDiscover_EmptyResult(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 0)
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 0, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2469,7 +2484,7 @@ func TestCatsService_ListCatMedia(t *testing.T) {
 		},
 	})
 
-	items, err := svc.ListCatMedia(context.Background(), uuid.New().String())
+	items, err := svc.ListCatMedia(context.Background(), uuid.New().String(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2500,7 +2515,7 @@ func TestCatsService_ListCatMedia_ContentType(t *testing.T) {
 		},
 	})
 
-	items, err := svc.ListCatMedia(context.Background(), uuid.New().String())
+	items, err := svc.ListCatMedia(context.Background(), uuid.New().String(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2531,7 +2546,7 @@ func TestCatsService_ListCatMedia_UploaderDisplayName(t *testing.T) {
 		},
 	})
 
-	items, err := svc.ListCatMedia(context.Background(), uuid.New().String())
+	items, err := svc.ListCatMedia(context.Background(), uuid.New().String(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2549,7 +2564,7 @@ func TestCatsService_ListCatMedia_UploaderDisplayName(t *testing.T) {
 func TestCatsService_ListCatMedia_UnknownCat(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{exists: false})
 
-	if _, err := svc.ListCatMedia(context.Background(), uuid.New().String()); !errors.Is(err, ErrCatNotFound) {
+	if _, err := svc.ListCatMedia(context.Background(), uuid.New().String(), ""); !errors.Is(err, ErrCatNotFound) {
 		t.Errorf("expected ErrCatNotFound, got %v", err)
 	}
 }
@@ -2557,7 +2572,7 @@ func TestCatsService_ListCatMedia_UnknownCat(t *testing.T) {
 func TestCatsService_ListCatMedia_InvalidCatID(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	if _, err := svc.ListCatMedia(context.Background(), "not-a-uuid"); !errors.Is(err, ErrInvalidCatID) {
+	if _, err := svc.ListCatMedia(context.Background(), "not-a-uuid", ""); !errors.Is(err, ErrInvalidCatID) {
 		t.Errorf("expected ErrInvalidCatID, got %v", err)
 	}
 }

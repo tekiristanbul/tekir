@@ -56,6 +56,15 @@ where c.status = 'active'
     st_makeenvelope(sqlc.arg(min_lng)::float8, sqlc.arg(min_lat)::float8, sqlc.arg(max_lng)::float8, sqlc.arg(max_lat)::float8),
     4326
   )::geography
+  -- issue #234: hide every cat owned by an account this viewer blocks. a
+  -- null viewer (guest, or any unauthenticated read) matches no row here,
+  -- so the predicate is a no-op and guest results stay exactly what they
+  -- were before blocking existed.
+  and not exists (
+    select 1 from user_blocks b
+    where b.blocker_user_id = sqlc.narg(viewer_user_id)::uuid
+      and b.blocked_user_id = c.created_by_user_id
+  )
 order by c.created_at desc;
 
 -- name: GetCatByID :one
@@ -128,7 +137,17 @@ left join lateral (
   order by u.created_at desc, u.seq desc
   limit 1
 ) water on true
-where c.id = sqlc.arg(id) and c.status != 'deleted';
+where c.id = sqlc.arg(id) and c.status != 'deleted'
+  -- issue #234: a cat owned by an account the viewer blocks answers exactly
+  -- like an unknown id — the same indistinguishable-404 rule a soft-deleted
+  -- cat already follows, so the response never reveals that the cat exists
+  -- and was filtered. null viewer (guest, and every ownership-resolving
+  -- write path, which passes none) is a no-op.
+  and not exists (
+    select 1 from user_blocks b
+    where b.blocker_user_id = sqlc.narg(viewer_user_id)::uuid
+      and b.blocked_user_id = c.created_by_user_id
+  );
 
 -- name: SetCatCoverPhoto :exec
 -- issue #156: switches a cat's cover to an existing entry from its own
@@ -156,7 +175,22 @@ update cats set name = sqlc.arg(name) where id = sqlc.arg(id);
 -- deletion is terminal and none of those are the map/nearby/discovery/
 -- detail surfaces this issue names but are still "active listing/query
 -- surfaces" a deleted cat must not remain reachable through.
-select exists(select 1 from cats where id = sqlc.arg(id) and status != 'deleted') as exists;
+-- issue #234: the same choke point now also answers "not for this viewer".
+-- Because the media archive, the updates history and both update-write
+-- paths all gate on this one query, a blocked owner's cat stops being a
+-- valid target for every one of them at once. A null viewer is a no-op, so
+-- the write paths that resolve ownership (rename, cover, delete) and the
+-- reports store, none of which pass a viewer, keep their current behavior.
+select exists(
+  select 1 from cats c
+  where c.id = sqlc.arg(id)
+    and c.status != 'deleted'
+    and not exists (
+      select 1 from user_blocks b
+      where b.blocker_user_id = sqlc.narg(viewer_user_id)::uuid
+        and b.blocked_user_id = c.created_by_user_id
+    )
+) as exists;
 
 -- name: UpdateCatLastUpdateAt :exec
 -- issue #36: run inside the same transaction as CreateUpdate/CreateUpdateStatus
@@ -223,6 +257,14 @@ from cats c
 left join media m on m.id = c.primary_photo_id
 where c.status = 'active'
   and st_dwithin(c.area, st_setsrid(st_makepoint(sqlc.arg(lng)::float8, sqlc.arg(lat)::float8), 4326)::geography, sqlc.arg(radius_m)::float8)
+  -- issue #234: a duplicate-candidate the caller cannot open is a dead end,
+  -- so a blocked owner's cats are excluded here too. Guests keep the
+  -- unfiltered advisory list (null viewer matches nothing).
+  and not exists (
+    select 1 from user_blocks b
+    where b.blocker_user_id = sqlc.narg(viewer_user_id)::uuid
+      and b.blocked_user_id = c.created_by_user_id
+  )
 order by st_distance(c.area, st_setsrid(st_makepoint(sqlc.arg(lng)::float8, sqlc.arg(lat)::float8), 4326)::geography) asc;
 
 -- name: ListCatsByDistance :many
@@ -271,6 +313,13 @@ with candidates as (
     limit 1
   ) nh on true
   where c.status = 'active'
+    -- issue #234: same viewer-blocked-owner exclusion as the map and
+    -- detail reads; null viewer (guest) is a no-op.
+    and not exists (
+      select 1 from user_blocks b
+      where b.blocker_user_id = sqlc.narg(viewer_user_id)::uuid
+        and b.blocked_user_id = c.created_by_user_id
+    )
 )
 select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
@@ -317,6 +366,13 @@ with candidates as (
     limit 1
   ) nh on true
   where c.status = 'active'
+    -- issue #234: same viewer-blocked-owner exclusion as the map and
+    -- detail reads; null viewer (guest) is a no-op.
+    and not exists (
+      select 1 from user_blocks b
+      where b.blocker_user_id = sqlc.narg(viewer_user_id)::uuid
+        and b.blocked_user_id = c.created_by_user_id
+    )
 )
 select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates

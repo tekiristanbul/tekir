@@ -13,7 +13,7 @@ import (
 	"github.com/tekiristanbul/tekir/backend/internal/handler"
 )
 
-func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, auth *handler.AuthHandler, media *handler.MediaHandler, mediaServe *handler.MediaServeHandler, notifications *handler.NotificationsHandler, profile *handler.ProfileHandler, reports *handler.ReportsHandler, deviceTokens handler.DeviceTokenResolver, accessTokens handler.AccessTokenValidator, corsOrigins []string) http.Handler {
+func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, auth *handler.AuthHandler, media *handler.MediaHandler, mediaServe *handler.MediaServeHandler, notifications *handler.NotificationsHandler, profile *handler.ProfileHandler, reports *handler.ReportsHandler, blocks *handler.BlocksHandler, deviceTokens handler.DeviceTokenResolver, accessTokens handler.AccessTokenValidator, corsOrigins []string) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -35,13 +35,16 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.Get("/healthz", health.Live)
 	r.Get("/readyz", health.Ready)
 
-	r.Get("/v1/cats", cats.Nearby)
-	r.Get("/v1/cats/nearby", cats.NearbyDuplicates)
-	r.Get("/v1/cats/discover", cats.Discover)
+	// issue #234: these four stay guest-readable, but a blocked owner's cats
+	// must disappear for an authenticated caller — which the route cannot do
+	// without resolving who is asking. OptionalBearer, never RequireBearer.
+	r.With(handler.OptionalBearer(accessTokens)).Get("/v1/cats", cats.Nearby)
+	r.With(handler.OptionalBearer(accessTokens)).Get("/v1/cats/nearby", cats.NearbyDuplicates)
+	r.With(handler.OptionalBearer(accessTokens)).Get("/v1/cats/discover", cats.Discover)
 	r.With(handler.OptionalBearer(accessTokens)).Get("/v1/cats/{cat_id}", cats.Detail)
 	r.With(handler.RequireBearer(accessTokens)).Patch("/v1/cats/{cat_id}", cats.Rename)
 	r.With(handler.RequireBearer(accessTokens)).Delete("/v1/cats/{cat_id}", cats.Delete)
-	r.Get("/v1/cats/{cat_id}/media", cats.Media)
+	r.With(handler.OptionalBearer(accessTokens)).Get("/v1/cats/{cat_id}/media", cats.Media)
 	r.With(handler.RequireBearer(accessTokens)).Patch("/v1/cats/{cat_id}/cover", cats.SetCover)
 	r.With(handler.OptionalBearer(accessTokens)).Get("/v1/cats/{cat_id}/updates", cats.UpdateHistory)
 	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/cats", cats.Create)
@@ -60,6 +63,13 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.With(handler.RequireBearer(accessTokens)).Get("/v1/me/badges", profile.Badges)
 
 	r.With(handler.RequireBearer(accessTokens)).Post("/v1/reports", reports.Create)
+
+	// issue #234: blocking lives under the caller-owned /v1/me namespace —
+	// a block is the caller's own state, and its list is never readable by
+	// anyone else.
+	r.With(handler.RequireBearer(accessTokens)).Post("/v1/me/blocks", blocks.Create)
+	r.With(handler.RequireBearer(accessTokens)).Get("/v1/me/blocks", blocks.List)
+	r.With(handler.RequireBearer(accessTokens)).Delete("/v1/me/blocks/{user_id}", blocks.Delete)
 
 	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/media", media.Upload)
 	r.Get("/v1/media/objects/{key}", mediaServe.ServeObject)

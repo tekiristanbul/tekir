@@ -161,6 +161,12 @@ type User struct {
 	DisplayName     pgtype.Text        `json:"display_name"`
 }
 
+type UserBlock struct {
+	BlockerUserID pgtype.UUID        `json:"blocker_user_id"`
+	BlockedUserID pgtype.UUID        `json:"blocked_user_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type WorkspacePing struct {
 	ID        pgtype.UUID        `json:"id"`
 	Message   string             `json:"message"`

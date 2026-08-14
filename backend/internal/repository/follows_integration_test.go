@@ -353,7 +353,7 @@ func TestStore_CatExists_ForFollows(t *testing.T) {
 
 	catID := upsertTestCat(t, ctx, store, "tekir")
 
-	exists, err := store.CatExists(ctx, catID)
+	exists, err := store.CatExists(ctx, repository.CatExistsParams{ID: catID})
 	if err != nil {
 		t.Fatalf("cat exists: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestStore_CatExists_ForFollows(t *testing.T) {
 		t.Error("expected existing cat to report exists=true")
 	}
 
-	exists, err = store.CatExists(ctx, pgtype.UUID{Bytes: uuid.New(), Valid: true})
+	exists, err = store.CatExists(ctx, repository.CatExistsParams{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}})
 	if err != nil {
 		t.Fatalf("cat exists (unknown): %v", err)
 	}

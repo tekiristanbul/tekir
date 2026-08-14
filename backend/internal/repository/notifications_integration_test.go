@@ -105,7 +105,7 @@ func TestStore_CreateNeedsHelpUpdate_Success(t *testing.T) {
 		t.Errorf("expected expires_at %v, got %v", createdAt.Add(72*time.Hour), expiresAt.Time)
 	}
 
-	cat, err := store.GetCatByID(ctx, catID)
+	cat, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		t.Fatalf("get cat: %v", err)
 	}

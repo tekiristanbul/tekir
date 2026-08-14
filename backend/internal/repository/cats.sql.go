@@ -12,8 +12,22 @@ import (
 )
 
 const catExists = `-- name: CatExists :one
-select exists(select 1 from cats where id = $1 and status != 'deleted') as exists
+select exists(
+  select 1 from cats c
+  where c.id = $1
+    and c.status != 'deleted'
+    and not exists (
+      select 1 from user_blocks b
+      where b.blocker_user_id = $2::uuid
+        and b.blocked_user_id = c.created_by_user_id
+    )
+) as exists
 `
+
+type CatExistsParams struct {
+	ID           pgtype.UUID `json:"id"`
+	ViewerUserID pgtype.UUID `json:"viewer_user_id"`
+}
 
 // lets the updates-history endpoint 404 on an unknown cat instead of
 // silently returning an empty page indistinguishable from "no history yet".
@@ -24,8 +38,14 @@ select exists(select 1 from cats where id = $1 and status != 'deleted') as exist
 // deletion is terminal and none of those are the map/nearby/discovery/
 // detail surfaces this issue names but are still "active listing/query
 // surfaces" a deleted cat must not remain reachable through.
-func (q *Queries) CatExists(ctx context.Context, id pgtype.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, catExists, id)
+// issue #234: the same choke point now also answers "not for this viewer".
+// Because the media archive, the updates history and both update-write
+// paths all gate on this one query, a blocked owner's cat stops being a
+// valid target for every one of them at once. A null viewer is a no-op, so
+// the write paths that resolve ownership (rename, cover, delete) and the
+// reports store, none of which pass a viewer, keep their current behavior.
+func (q *Queries) CatExists(ctx context.Context, arg CatExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, catExists, arg.ID, arg.ViewerUserID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -171,7 +191,22 @@ left join lateral (
   limit 1
 ) water on true
 where c.id = $1 and c.status != 'deleted'
+  -- issue #234: a cat owned by an account the viewer blocks answers exactly
+  -- like an unknown id — the same indistinguishable-404 rule a soft-deleted
+  -- cat already follows, so the response never reveals that the cat exists
+  -- and was filtered. null viewer (guest, and every ownership-resolving
+  -- write path, which passes none) is a no-op.
+  and not exists (
+    select 1 from user_blocks b
+    where b.blocker_user_id = $2::uuid
+      and b.blocked_user_id = c.created_by_user_id
+  )
 `
+
+type GetCatByIDParams struct {
+	ID           pgtype.UUID `json:"id"`
+	ViewerUserID pgtype.UUID `json:"viewer_user_id"`
+}
 
 type GetCatByIDRow struct {
 	ID                 pgtype.UUID        `json:"id"`
@@ -211,8 +246,8 @@ type GetCatByIDRow struct {
 // terminal, never relaxed even for the cat's own owner. This same predicate
 // is what makes Rename/SetCoverPhoto (both fetch ownership through this
 // query) refuse to mutate a deleted cat too, at no extra cost.
-func (q *Queries) GetCatByID(ctx context.Context, id pgtype.UUID) (GetCatByIDRow, error) {
-	row := q.db.QueryRow(ctx, getCatByID, id)
+func (q *Queries) GetCatByID(ctx context.Context, arg GetCatByIDParams) (GetCatByIDRow, error) {
+	row := q.db.QueryRow(ctx, getCatByID, arg.ID, arg.ViewerUserID)
 	var i GetCatByIDRow
 	err := row.Scan(
 		&i.ID,
@@ -323,6 +358,13 @@ with candidates as (
     limit 1
   ) nh on true
   where c.status = 'active'
+    -- issue #234: same viewer-blocked-owner exclusion as the map and
+    -- detail reads; null viewer (guest) is a no-op.
+    and not exists (
+      select 1 from user_blocks b
+      where b.blocker_user_id = $7::uuid
+        and b.blocked_user_id = c.created_by_user_id
+    )
 )
 select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
@@ -344,6 +386,7 @@ type ListActiveNeedsHelpCatsByDistanceParams struct {
 	RowLimit       int32              `json:"row_limit"`
 	Lng            float64            `json:"lng"`
 	Lat            float64            `json:"lat"`
+	ViewerUserID   pgtype.UUID        `json:"viewer_user_id"`
 }
 
 type ListActiveNeedsHelpCatsByDistanceRow struct {
@@ -381,6 +424,7 @@ func (q *Queries) ListActiveNeedsHelpCatsByDistance(ctx context.Context, arg Lis
 		arg.RowLimit,
 		arg.Lng,
 		arg.Lat,
+		arg.ViewerUserID,
 	)
 	if err != nil {
 		return nil, err
@@ -434,6 +478,13 @@ with candidates as (
     limit 1
   ) nh on true
   where c.status = 'active'
+    -- issue #234: same viewer-blocked-owner exclusion as the map and
+    -- detail reads; null viewer (guest) is a no-op.
+    and not exists (
+      select 1 from user_blocks b
+      where b.blocker_user_id = $6::uuid
+        and b.blocked_user_id = c.created_by_user_id
+    )
 )
 select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
@@ -450,6 +501,7 @@ type ListCatsByDistanceParams struct {
 	RowLimit       int32         `json:"row_limit"`
 	Lng            float64       `json:"lng"`
 	Lat            float64       `json:"lat"`
+	ViewerUserID   pgtype.UUID   `json:"viewer_user_id"`
 }
 
 type ListCatsByDistanceRow struct {
@@ -495,6 +547,7 @@ func (q *Queries) ListCatsByDistance(ctx context.Context, arg ListCatsByDistance
 		arg.RowLimit,
 		arg.Lng,
 		arg.Lat,
+		arg.ViewerUserID,
 	)
 	if err != nil {
 		return nil, err
@@ -552,14 +605,24 @@ where c.status = 'active'
     st_makeenvelope($1::float8, $2::float8, $3::float8, $4::float8),
     4326
   )::geography
+  -- issue #234: hide every cat owned by an account this viewer blocks. a
+  -- null viewer (guest, or any unauthenticated read) matches no row here,
+  -- so the predicate is a no-op and guest results stay exactly what they
+  -- were before blocking existed.
+  and not exists (
+    select 1 from user_blocks b
+    where b.blocker_user_id = $5::uuid
+      and b.blocked_user_id = c.created_by_user_id
+  )
 order by c.created_at desc
 `
 
 type ListCatsInBoundsParams struct {
-	MinLng float64 `json:"min_lng"`
-	MinLat float64 `json:"min_lat"`
-	MaxLng float64 `json:"max_lng"`
-	MaxLat float64 `json:"max_lat"`
+	MinLng       float64     `json:"min_lng"`
+	MinLat       float64     `json:"min_lat"`
+	MaxLng       float64     `json:"max_lng"`
+	MaxLat       float64     `json:"max_lat"`
+	ViewerUserID pgtype.UUID `json:"viewer_user_id"`
 }
 
 type ListCatsInBoundsRow struct {
@@ -593,6 +656,7 @@ func (q *Queries) ListCatsInBounds(ctx context.Context, arg ListCatsInBoundsPara
 		arg.MinLat,
 		arg.MaxLng,
 		arg.MaxLat,
+		arg.ViewerUserID,
 	)
 	if err != nil {
 		return nil, err
@@ -633,13 +697,22 @@ from cats c
 left join media m on m.id = c.primary_photo_id
 where c.status = 'active'
   and st_dwithin(c.area, st_setsrid(st_makepoint($1::float8, $2::float8), 4326)::geography, $3::float8)
+  -- issue #234: a duplicate-candidate the caller cannot open is a dead end,
+  -- so a blocked owner's cats are excluded here too. Guests keep the
+  -- unfiltered advisory list (null viewer matches nothing).
+  and not exists (
+    select 1 from user_blocks b
+    where b.blocker_user_id = $4::uuid
+      and b.blocked_user_id = c.created_by_user_id
+  )
 order by st_distance(c.area, st_setsrid(st_makepoint($1::float8, $2::float8), 4326)::geography) asc
 `
 
 type ListNearbyCatsForDuplicateCheckParams struct {
-	Lng     float64 `json:"lng"`
-	Lat     float64 `json:"lat"`
-	RadiusM float64 `json:"radius_m"`
+	Lng          float64     `json:"lng"`
+	Lat          float64     `json:"lat"`
+	RadiusM      float64     `json:"radius_m"`
+	ViewerUserID pgtype.UUID `json:"viewer_user_id"`
 }
 
 type ListNearbyCatsForDuplicateCheckRow struct {
@@ -655,7 +728,12 @@ type ListNearbyCatsForDuplicateCheckRow struct {
 // bounding-box check does; radius_m is in meters, matching geography's
 // native unit. photo_url coalesce mirrors ListCatsInBounds/GetCatByID.
 func (q *Queries) ListNearbyCatsForDuplicateCheck(ctx context.Context, arg ListNearbyCatsForDuplicateCheckParams) ([]ListNearbyCatsForDuplicateCheckRow, error) {
-	rows, err := q.db.Query(ctx, listNearbyCatsForDuplicateCheck, arg.Lng, arg.Lat, arg.RadiusM)
+	rows, err := q.db.Query(ctx, listNearbyCatsForDuplicateCheck,
+		arg.Lng,
+		arg.Lat,
+		arg.RadiusM,
+		arg.ViewerUserID,
+	)
 	if err != nil {
 		return nil, err
 	}

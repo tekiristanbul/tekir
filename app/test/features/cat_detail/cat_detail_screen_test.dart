@@ -779,6 +779,116 @@ void main() {
     },
   );
 
+  group('block affordance (issue #234)', () {
+    // The menu only appears when the content names an account that is not
+    // the caller. Everything else — a seed cat with no owner, the caller's
+    // own cat — keeps the single-action report button it had before.
+    testWidgets("cat detail: a non-owner sees engelle next to şikayet et", (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: CatDetail(
+            id: _catId,
+            name: 'tekir',
+            lat: 41.0256,
+            lng: 28.9744,
+            areaLabel: null,
+            primaryPhoto: null,
+            createdAt: DateTime.utc(2026, 1, 1),
+            lastUpdateAt: null,
+            isOwner: false,
+            ownerUserId: 'owner-1',
+          ),
+          updates: const [],
+          hasLoadedOnce: true,
+        ),
+      );
+
+      await tester.tap(find.byTooltip('Kedi işlemleri'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Şikayet et'), findsOneWidget);
+      expect(find.text('Engelle'), findsOneWidget);
+    });
+
+    testWidgets(
+      'cat detail: the owner is never offered engelle on their own cat',
+      (tester) async {
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: CatDetail(
+              id: _catId,
+              name: 'tekir',
+              lat: 41.0256,
+              lng: 28.9744,
+              areaLabel: null,
+              primaryPhoto: null,
+              createdAt: DateTime.utc(2026, 1, 1),
+              lastUpdateAt: null,
+              isOwner: true,
+              ownerUserId: 'me',
+            ),
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+        );
+
+        await tester.tap(find.byTooltip('Kedi işlemleri'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Engelle'), findsNothing);
+      },
+    );
+
+    // A seed cat predates accounts, so there is no account to block — the
+    // affordance must not appear rather than appear and fail.
+    testWidgets('cat detail: a cat with no owner account offers no engelle', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
+      );
+
+      await tester.tap(find.byTooltip('Kedi işlemleri'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Engelle'), findsNothing);
+    });
+
+    testWidgets('timeline: another account\'s update offers engelle', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: _detail,
+          updates: [
+            CatUpdateEntry(
+              id: 'u1',
+              statuses: const ['seen'],
+              comment: null,
+              createdAt: DateTime.utc(2026, 1, 2),
+              authorUserId: 'someone-else',
+              authorDisplayName: 'Komşu',
+            ),
+          ],
+          hasLoadedOnce: true,
+        ),
+      );
+
+      await tester.ensureVisible(find.byTooltip('Güncelleme işlemleri'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Güncelleme işlemleri'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Engelle'), findsOneWidget);
+    });
+  });
+
   group('report affordance (issue #233)', () {
     testWidgets(
       'cat detail: the bildir icon renders for both owner and non-owner',
@@ -803,7 +913,7 @@ void main() {
             ),
           );
 
-          expect(find.byTooltip('Kediyi bildir'), findsOneWidget);
+          expect(find.byTooltip('Kedi işlemleri'), findsOneWidget);
         }
       },
     );
@@ -820,7 +930,7 @@ void main() {
           ),
         );
 
-        await tester.tap(find.byTooltip('Kediyi bildir'));
+        await tester.tap(find.byTooltip('Kedi işlemleri'));
         await tester.pumpAndSettle();
 
         expect(find.text('İçeriği bildirmek için giriş yap'), findsOneWidget);
@@ -847,7 +957,7 @@ void main() {
           ),
         );
 
-        expect(find.byTooltip('Güncellemeyi bildir'), findsOneWidget);
+        expect(find.byTooltip('Güncelleme işlemleri'), findsOneWidget);
         expect(find.byTooltip('Güncellemeyi düzelt'), findsNothing);
       },
     );
@@ -877,7 +987,7 @@ void main() {
         );
 
         expect(find.byTooltip('Güncellemeyi düzelt'), findsOneWidget);
-        expect(find.byTooltip('Güncellemeyi bildir'), findsNothing);
+        expect(find.byTooltip('Güncelleme işlemleri'), findsNothing);
       },
     );
 

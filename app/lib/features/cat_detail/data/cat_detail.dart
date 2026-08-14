@@ -22,6 +22,7 @@ class CatDetail {
     this.activeAlert,
     this.mediaCount = 0,
     this.isOwner = false,
+    this.ownerUserId,
   });
 
   final String id;
@@ -59,6 +60,10 @@ class CatDetail {
   /// regardless.
   final bool isOwner;
 
+  /// The account that created this cat, or null for a seed cat no account
+  /// owns (issue #234) — what the "engelle" action on cat detail acts on.
+  final String? ownerUserId;
+
   factory CatDetail.fromJson(Map<String, dynamic> json) {
     final area = json['area'] as Map<String, dynamic>;
     final rawLastUpdate = json['last_update_at'] as String?;
@@ -85,6 +90,7 @@ class CatDetail {
           : null,
       mediaCount: (json['media_count'] as num?)?.toInt() ?? 0,
       isOwner: json['is_owner'] as bool? ?? false,
+      ownerUserId: json['owner_user_id'] as String?,
     );
   }
 }
@@ -105,6 +111,7 @@ class CatMediaItem {
     required this.isCover,
     required this.createdAt,
     this.uploaderDisplayName,
+    this.uploaderUserId,
     this.mediaContentType,
     this.mediaMuted = true,
   });
@@ -114,6 +121,10 @@ class CatMediaItem {
   final bool isCover;
   final DateTime createdAt;
   final String? uploaderDisplayName;
+
+  /// The account that uploaded this media (issue #234), or null for media
+  /// predating account attribution.
+  final String? uploaderUserId;
   final String? mediaContentType;
   final bool mediaMuted;
 
@@ -126,6 +137,7 @@ class CatMediaItem {
       isCover: json['is_cover'] as bool? ?? false,
       createdAt: DateTime.parse(json['created_at'] as String),
       uploaderDisplayName: json['uploader_display_name'] as String?,
+      uploaderUserId: json['uploader_user_id'] as String?,
       mediaContentType: json['media_content_type'] as String?,
       mediaMuted: json['media_muted'] as bool? ?? true,
     );
@@ -158,6 +170,7 @@ class CatUpdateEntry {
     this.needsHelpExpiresAt,
     this.needsHelpActive,
     this.authorIsMe = false,
+    this.authorUserId,
     this.correctionExpiresAt,
     this.authorDisplayName,
     this.photoUrl,
@@ -207,6 +220,10 @@ class CatUpdateEntry {
   /// client to compute by comparing ids itself.
   final bool authorIsMe;
 
+  /// The account that wrote this update (issue #234), or null for an
+  /// update predating account attribution.
+  final String? authorUserId;
+
   /// Non-null only when [authorIsMe] and the row is a correctable resource
   /// (issue #80, extended by #101: every post-migration row, help-carrying
   /// or not — a legacy pre-#101 help subtype row never gets one):
@@ -246,6 +263,7 @@ class CatUpdateEntry {
           : null,
       needsHelpActive: json['needs_help_active'] as bool?,
       authorIsMe: json['author_is_me'] as bool? ?? false,
+      authorUserId: json['author_user_id'] as String?,
       correctionExpiresAt: rawCorrectionExpiresAt != null
           ? DateTime.parse(rawCorrectionExpiresAt)
           : null,

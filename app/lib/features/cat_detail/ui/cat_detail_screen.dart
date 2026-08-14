@@ -19,6 +19,9 @@ import 'cat_detail_notifier.dart';
 import 'cat_update_composer_notifier.dart';
 import 'cat_update_sheet.dart';
 import 'edit_cat_name_sheet.dart';
+import '../../blocks/ui/block_action.dart';
+import '../../discover/ui/discover_notifier.dart';
+import '../../map/ui/cats_map_notifier.dart';
 import 'report_reason.dart';
 import 'report_sheet.dart';
 import 'update_correction_sheet.dart';
@@ -438,7 +441,9 @@ class _IdentityBlock extends StatelessWidget {
               _ReportButton(
                 targetType: ReportTargetType.cat,
                 targetId: detail.id,
-                tooltip: 'Kediyi bildir',
+                tooltip: 'Kedi işlemleri',
+                blockUserId: detail.isOwner ? null : detail.ownerUserId,
+                evictCatId: detail.id,
               ),
               if (detail.isOwner) _DeleteCatButton(catId: detail.id),
             ],
@@ -1329,7 +1334,12 @@ class _MediaTile extends StatelessWidget {
             Positioned(
               right: 4,
               top: 4,
-              child: _ReportMediaBadge(catId: catId, mediaId: item.id),
+              child: _ReportMediaBadge(
+                catId: catId,
+                mediaId: item.id,
+                uploaderUserId: item.uploaderUserId,
+                uploaderDisplayName: item.uploaderDisplayName,
+              ),
             ),
           ],
         ),
@@ -1346,28 +1356,74 @@ class _MediaTile extends StatelessWidget {
 /// tile's own full-area [GestureDetector] — tapping it opens the report
 /// sheet instead of the tile's full-screen view.
 class _ReportMediaBadge extends ConsumerWidget {
-  const _ReportMediaBadge({required this.catId, required this.mediaId});
+  const _ReportMediaBadge({
+    required this.catId,
+    required this.mediaId,
+    this.uploaderUserId,
+    this.uploaderDisplayName,
+  });
 
   final String catId;
   final String mediaId;
 
+  /// The account that uploaded this media (issue #234) — null for media
+  /// predating account attribution, and then the badge stays a single
+  /// report action.
+  final String? uploaderUserId;
+  final String? uploaderDisplayName;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    const glyph = Padding(
+      padding: EdgeInsets.all(3),
+      child: Icon(Icons.more_vert, size: 14, color: Colors.white),
+    );
+
+    if (uploaderUserId == null) {
+      return Material(
+        color: Colors.black.withValues(alpha: 0.35),
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () => openReportSheet(
+            context,
+            ref,
+            targetType: ReportTargetType.media,
+            targetId: mediaId,
+          ),
+          child: glyph,
+        ),
+      );
+    }
+
     return Material(
       color: Colors.black.withValues(alpha: 0.35),
       shape: const CircleBorder(),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: () => openReportSheet(
-          context,
-          ref,
-          targetType: ReportTargetType.media,
-          targetId: mediaId,
-        ),
-        child: const Padding(
-          padding: EdgeInsets.all(3),
-          child: Icon(Icons.more_vert, size: 14, color: Colors.white),
-        ),
+      child: PopupMenuButton<_ContentAction>(
+        padding: EdgeInsets.zero,
+        tooltip: 'Medya işlemleri',
+        onSelected: (action) => switch (action) {
+          _ContentAction.report => openReportSheet(
+            context,
+            ref,
+            targetType: ReportTargetType.media,
+            targetId: mediaId,
+          ),
+          _ContentAction.block => confirmAndBlock(
+            context,
+            ref,
+            userId: uploaderUserId!,
+            displayName: uploaderDisplayName,
+          ),
+        },
+        itemBuilder: (context) => const [
+          PopupMenuItem(
+            value: _ContentAction.report,
+            child: Text('Şikayet et'),
+          ),
+          PopupMenuItem(value: _ContentAction.block, child: Text('Engelle')),
+        ],
+        child: glyph,
       ),
     );
   }
@@ -1729,8 +1785,12 @@ class _TimelineItem extends StatelessWidget {
                         _ReportButton(
                           targetType: ReportTargetType.update,
                           targetId: update.id,
-                          tooltip: 'Güncellemeyi bildir',
+                          tooltip: 'Güncelleme işlemleri',
                           iconSize: 16,
+                          blockUserId: update.authorIsMe
+                              ? null
+                              : update.authorUserId,
+                          blockDisplayName: update.authorDisplayName,
                         ),
                     ],
                   ),
@@ -2160,6 +2220,9 @@ class _ReportButton extends ConsumerWidget {
     required this.targetId,
     required this.tooltip,
     this.iconSize = 18,
+    this.blockUserId,
+    this.blockDisplayName,
+    this.evictCatId,
   });
 
   final ReportTargetType targetType;
@@ -2167,26 +2230,90 @@ class _ReportButton extends ConsumerWidget {
   final String tooltip;
   final double iconSize;
 
+  /// The account behind this content — the cat's owner, the update's author,
+  /// the media's uploader (issue #234). Null when it is unknown (a seed cat,
+  /// content predating accounts) or when it is the caller themselves, and
+  /// then this stays the single-action report button it has always been.
+  final String? blockUserId;
+  final String? blockDisplayName;
+
+  /// Set on the cat-detail header only: blocking the owner makes this very
+  /// cat unreachable, so on success the screen goes back and the map and
+  /// discover caches drop it in place. Invalidating those providers instead
+  /// would empty their screens rather than refresh them (issue #230). The
+  /// owner's *other* cats disappear on those screens' next fetch — the
+  /// server is already filtering them by then.
+  final String? evictCatId;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final icon = Icon(Icons.more_vert, size: iconSize, color: AppColors.faint);
+
+    if (blockUserId == null) {
+      return SizedBox(
+        width: kTapMin,
+        height: kTapMin,
+        child: IconButton(
+          padding: EdgeInsets.zero,
+          iconSize: iconSize,
+          icon: icon,
+          tooltip: tooltip,
+          onPressed: () => openReportSheet(
+            context,
+            ref,
+            targetType: targetType,
+            targetId: targetId,
+          ),
+        ),
+      );
+    }
+
     return SizedBox(
       width: kTapMin,
       height: kTapMin,
-      child: IconButton(
+      child: PopupMenuButton<_ContentAction>(
         padding: EdgeInsets.zero,
-        iconSize: iconSize,
-        icon: const Icon(Icons.more_vert, color: AppColors.faint),
         tooltip: tooltip,
-        onPressed: () => openReportSheet(
-          context,
-          ref,
-          targetType: targetType,
-          targetId: targetId,
-        ),
+        icon: icon,
+        iconSize: iconSize,
+        onSelected: (action) => switch (action) {
+          _ContentAction.report => openReportSheet(
+            context,
+            ref,
+            targetType: targetType,
+            targetId: targetId,
+          ),
+          _ContentAction.block => confirmAndBlock(
+            context,
+            ref,
+            userId: blockUserId!,
+            displayName: blockDisplayName,
+            onBlocked: evictCatId == null
+                ? null
+                : () {
+                    ref.read(catsMapProvider.notifier).removeCat(evictCatId!);
+                    ref.read(discoverProvider.notifier).removeCat(evictCatId!);
+                    context.pop();
+                  },
+          ),
+        },
+        itemBuilder: (context) => const [
+          PopupMenuItem(
+            value: _ContentAction.report,
+            child: Text('Şikayet et'),
+          ),
+          PopupMenuItem(value: _ContentAction.block, child: Text('Engelle')),
+        ],
       ),
     );
   }
 }
+
+/// The two actions the "⋮" menu offers on someone else's content (issue
+/// #234). Reporting flags one item for review; blocking hides every cat the
+/// account owns — deliberately different scopes, which is why they are two
+/// entries and not one.
+enum _ContentAction { report, block }
 
 class _EmptyHistory extends StatelessWidget {
   const _EmptyHistory();

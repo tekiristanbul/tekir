@@ -2,6 +2,7 @@ import 'package:go_router/go_router.dart';
 
 import '../analytics/analytics.dart';
 import '../../features/account/ui/account_screen.dart';
+import '../../features/blocks/ui/blocked_accounts_screen.dart';
 import '../../features/add_cat/ui/add_cat_screen.dart';
 import '../../features/auth/ui/login_screen.dart';
 import '../../features/badges/ui/badge_detail_screen.dart';
@@ -78,6 +79,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/account',
       builder: (context, state) => const AccountScreen(),
+    ),
+    GoRoute(
+      path: '/account/blocked',
+      builder: (context, state) => const BlockedAccountsScreen(),
     ),
     GoRoute(
       path: '/add-cat',

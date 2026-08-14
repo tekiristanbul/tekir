@@ -118,7 +118,7 @@ func TestStore_GetCatByID(t *testing.T) {
 
 	id := upsertTestCat(t, ctx, store, "tekir")
 
-	row, err := store.GetCatByID(ctx, id)
+	row, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: id})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestStore_GetCatByID_UnknownCat(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
-	_, err := store.GetCatByID(ctx, pgtype.UUID{Bytes: uuid.New(), Valid: true})
+	_, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expected pgx.ErrNoRows, got %v", err)
 	}
@@ -143,7 +143,7 @@ func TestStore_CatExists(t *testing.T) {
 
 	id := upsertTestCat(t, ctx, store, "tekir")
 
-	exists, err := store.CatExists(ctx, id)
+	exists, err := store.CatExists(ctx, repository.CatExistsParams{ID: id})
 	if err != nil {
 		t.Fatalf("exists: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestStore_CatExists(t *testing.T) {
 		t.Error("expected existing cat to report exists=true")
 	}
 
-	exists, err = store.CatExists(ctx, pgtype.UUID{Bytes: uuid.New(), Valid: true})
+	exists, err = store.CatExists(ctx, repository.CatExistsParams{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}})
 	if err != nil {
 		t.Fatalf("exists: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestStore_GetCatByID_LatestNeedsHelpUpdate(t *testing.T) {
 	createNeedsHelpUpdate(t, ctx, store, id, time.Now().Add(-10*time.Hour), "water_needed")
 	createNeedsHelpUpdate(t, ctx, store, id, time.Now().Add(-time.Hour), "trapped")
 
-	row, err := store.GetCatByID(ctx, id)
+	row, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: id})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -506,7 +506,7 @@ func TestStore_CreateOrdinaryUpdate_Success(t *testing.T) {
 	}
 
 	// cats.last_update_at moved to the update's created_at, atomically.
-	cat, err := store.GetCatByID(ctx, catID)
+	cat, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		t.Fatalf("get cat: %v", err)
 	}
@@ -729,7 +729,7 @@ func TestStore_CreateOrdinaryUpdate_RollsBackOnInvalidStatus(t *testing.T) {
 	ctx := context.Background()
 
 	catID := upsertTestCat(t, ctx, store, "rollback target")
-	before, err := store.GetCatByID(ctx, catID)
+	before, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		t.Fatalf("get cat: %v", err)
 	}
@@ -755,7 +755,7 @@ func TestStore_CreateOrdinaryUpdate_RollsBackOnInvalidStatus(t *testing.T) {
 	}
 
 	// cats.last_update_at is untouched.
-	after, err := store.GetCatByID(ctx, catID)
+	after, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		t.Fatalf("get cat: %v", err)
 	}
@@ -820,7 +820,7 @@ func TestStore_CreateOrdinaryUpdate_DuplicateEnqueueRollsBack(t *testing.T) {
 
 	// the retried transaction rolled back entirely: last_update_at still
 	// reflects the first call, not the retry's later timestamp.
-	cat, err := store.GetCatByID(ctx, catID)
+	cat, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		t.Fatalf("get cat: %v", err)
 	}
@@ -880,7 +880,7 @@ func TestStore_UpdateCatLastUpdateAt_Monotonic(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create ordinary update: %v", err)
 	}
-	cat, err := store.GetCatByID(ctx, catID)
+	cat, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		t.Fatalf("get cat: %v", err)
 	}
@@ -895,7 +895,7 @@ func TestStore_UpdateCatLastUpdateAt_Monotonic(t *testing.T) {
 		t.Fatalf("update last_update_at with an older timestamp: %v", err)
 	}
 
-	cat, err = store.GetCatByID(ctx, catID)
+	cat, err = store.GetCatByID(ctx, repository.GetCatByIDParams{ID: catID})
 	if err != nil {
 		t.Fatalf("get cat: %v", err)
 	}
@@ -956,7 +956,7 @@ func TestStore_GetCatByID_NoNeedsHelpUpdateIsNull(t *testing.T) {
 
 	id := upsertTestCat(t, ctx, store, "never needed help")
 
-	row, err := store.GetCatByID(ctx, id)
+	row, err := store.GetCatByID(ctx, repository.GetCatByIDParams{ID: id})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
