@@ -13,7 +13,7 @@ import (
 	"github.com/tekiristanbul/tekir/backend/internal/handler"
 )
 
-func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, auth *handler.AuthHandler, media *handler.MediaHandler, mediaServe *handler.MediaServeHandler, notifications *handler.NotificationsHandler, profile *handler.ProfileHandler, reports *handler.ReportsHandler, blocks *handler.BlocksHandler, deviceTokens handler.DeviceTokenResolver, accessTokens handler.AccessTokenValidator, corsOrigins []string) http.Handler {
+func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, auth *handler.AuthHandler, media *handler.MediaHandler, mediaServe *handler.MediaServeHandler, notifications *handler.NotificationsHandler, profile *handler.ProfileHandler, reports *handler.ReportsHandler, blocks *handler.BlocksHandler, accounts *handler.AccountsHandler, deviceTokens handler.DeviceTokenResolver, accessTokens handler.AccessTokenValidator, corsOrigins []string) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -86,6 +86,10 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/auth/logout", auth.Logout)
 	r.With(handler.RequireDeviceToken(deviceTokens), handler.OptionalBearer(accessTokens)).Get("/v1/me", auth.Me)
 	r.With(handler.RequireBearer(accessTokens)).Patch("/v1/me", auth.UpdateDisplayName)
+	// issue #242: apple guideline 5.1.1(v) — an account that can be created
+	// in the app must be deletable in the app. No account id in the request:
+	// the caller can only ever delete itself.
+	r.With(handler.RequireBearer(accessTokens)).Delete("/v1/me", accounts.Delete)
 
 	return r
 }

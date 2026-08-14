@@ -183,6 +183,9 @@ class _FakeAccountApi implements AccountApi {
     userId: 'user-1',
     phoneVerified: true,
   );
+
+  @override
+  Future<void> deleteAccount() async {}
 }
 
 class _FakeAddCatApi implements AddCatApi {

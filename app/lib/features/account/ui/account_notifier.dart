@@ -46,6 +46,25 @@ class AccountNotifier extends Notifier<AccountState> {
     await ref.read(sessionProvider.notifier).logout();
     await load();
   }
+
+  /// Deletes the account for good (issue #242, apple guideline 5.1.1(v)),
+  /// then drops the local session and reloads as a guest.
+  ///
+  /// Order matters and is the whole point: the delete call has to be
+  /// confirmed by the server *before* any local credential is cleared. The
+  /// other way round the user would be signed out of an account that still
+  /// exists, with no way to reach it again and nothing left to retry with.
+  /// A failure therefore propagates to the caller with the session intact,
+  /// so the screen can offer a retry.
+  ///
+  /// The session teardown afterwards is the ordinary logout path; its
+  /// best-effort server-side revoke will simply fail against an account
+  /// that no longer exists, which is why it is best-effort.
+  Future<void> deleteAccount() async {
+    await ref.read(accountApiProvider).deleteAccount();
+    await ref.read(sessionProvider.notifier).logout();
+    await load();
+  }
 }
 
 final accountProvider = NotifierProvider<AccountNotifier, AccountState>(
