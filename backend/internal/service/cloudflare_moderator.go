@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -148,12 +149,25 @@ type cloudflareChatMessage struct {
 	Content string `json:"content"`
 }
 
-// cloudflareVisionRequest is the Workers AI request body for a vision model
-// (issue #241's MODERATION_VISION_MODEL): the image as a byte array plus the
-// fixed moderationImagePrompt.
+// cloudflareVisionRequest is the Workers AI request body for the configured
+// vision model. The legacy image-to-text shape on Workers AI is an array of
+// raw bytes plus "prompt", but MODERATION_VISION_MODEL's own documented
+// input is different: a "task" out of a fixed set, the image as a public
+// https url or a base64 data uri, and the prompt under "question". It also
+// streams by default, which would hand this adapter a server-sent-event
+// body instead of one json envelope, so streaming is turned off explicitly.
+//
+// Reasoning is disabled and temperature pinned to zero for the same reason
+// the prompt demands a single-line answer: this is a classifier call whose
+// only useful output is the contract, and anything else is latency and
+// tokens spent on prose that gets thrown away.
 type cloudflareVisionRequest struct {
-	Image  []int  `json:"image"`
-	Prompt string `json:"prompt"`
+	Task        string  `json:"task"`
+	Image       string  `json:"image"`
+	Question    string  `json:"question"`
+	Reasoning   bool    `json:"reasoning"`
+	Temperature float64 `json:"temperature"`
+	Stream      bool    `json:"stream"`
 }
 
 // cloudflareRunResponse is Workers AI's fixed response envelope, common to
@@ -176,21 +190,46 @@ type cloudflareError struct {
 // tries them in order and uses the first non-empty match. The model's own
 // reply is expected to be, verbatim, the strict single-line json this
 // package's fixed prompts require (see parseModerationResult).
+//
+// choices[] is the shape a chat model actually answers with on /ai/run: a
+// probe of MODERATION_TEXT_MODEL returned {"result":{"choices":[{"message":
+// {"content":"{\"decision\":...}","reasoning_content":"..."}}]}}. Reading
+// only "response" left text moderation with an empty reply, which fails
+// closed — i.e. every name and comment would have been rejected as
+// "moderation unavailable" against the real provider while every fake-backed
+// test passed. reasoning_content is deliberately never read: it is the
+// model's scratch pad, not its answer, and it does not carry the contract.
 type cloudflareRunResult struct {
-	Response    string `json:"response"`
-	Description string `json:"description"`
-	Text        string `json:"text"`
+	Response    string             `json:"response"`
+	Description string             `json:"description"`
+	Answer      string             `json:"answer"`
+	Caption     string             `json:"caption"`
+	Text        string             `json:"text"`
+	Choices     []cloudflareChoice `json:"choices"`
+}
+
+type cloudflareChoice struct {
+	Message struct {
+		Content string `json:"content"`
+	} `json:"message"`
 }
 
 func (r cloudflareRunResult) text() string {
-	switch {
-	case r.Response != "":
-		return r.Response
-	case r.Description != "":
-		return r.Description
-	default:
-		return r.Text
+	for _, candidate := range []string{
+		r.Response,
+		r.Description,
+		r.Answer,
+		r.Caption,
+		r.Text,
+	} {
+		if candidate != "" {
+			return candidate
+		}
 	}
+	if len(r.Choices) > 0 {
+		return r.Choices[0].Message.Content
+	}
+	return ""
 }
 
 // ModerateText implements Moderator.
@@ -208,11 +247,14 @@ func (m *CloudflareModerator) ModerateText(ctx context.Context, text string) (Mo
 
 // ModerateImage implements Moderator.
 func (m *CloudflareModerator) ModerateImage(ctx context.Context, contentType string, data []byte) (ModerationDecision, error) {
-	pixels := make([]int, len(data))
-	for i, b := range data {
-		pixels[i] = int(b)
-	}
-	body, err := json.Marshal(cloudflareVisionRequest{Image: pixels, Prompt: moderationImagePrompt})
+	body, err := json.Marshal(cloudflareVisionRequest{
+		Task: "query",
+		// A data uri, not a public url: the image being moderated has not
+		// been stored anywhere yet — that is the whole point of moderating
+		// before the write — so there is no url to hand over.
+		Image:    "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(data),
+		Question: moderationImagePrompt,
+	})
 	if err != nil {
 		return ModerationDecision{}, fmt.Errorf("%w: encode image request: %v", ErrModerationUnavailable, err)
 	}

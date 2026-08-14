@@ -71,22 +71,25 @@ func TestStore_BlockHidesOwnersCatFromEveryReadSurface(t *testing.T) {
 	owner := createTestUser(t, ctx, store)
 	viewer := createTestUser(t, ctx, store)
 
-	// A coordinate of its own, well away from the shared fixture point every
-	// other integration test upserts at: this database accumulates thousands
-	// of cats at 41.0256/28.9744, so a distance-ordered read from there would
-	// page past this one long before the keyset limit. From here it is the
-	// nearest cat by construction, which is what makes the assertions below
-	// about *this* cat meaningful.
-	const lat, lng = 41.0805, 29.0575
+	// A coordinate of its own, and a different one on every run. Two things
+	// would otherwise page this cat out of a distance-ordered read before the
+	// keyset limit: the shared fixture point every other integration test
+	// upserts at (41.0256/28.9744, thousands of cats deep in a long-lived
+	// database), and this test's own earlier runs piling up on a fixed point
+	// of its own. Jittering by the owner's uuid keeps each run's cat the
+	// nearest one by construction, which is what makes the assertions below
+	// about *this* cat mean anything.
+	lat := 41.05 + float64(owner.Bytes[0])/255*0.05
+	lng := 29.00 + float64(owner.Bytes[1])/255*0.05
 	created, err := store.CreateCatWithMedia(ctx, newCreateCatWithMediaParams(owner, lat, lng, pgtype.Text{}))
 	if err != nil {
 		t.Fatalf("create cat: %v", err)
 	}
 	catID := created.Cat.ID
 
-	bounds := repository.ListCatsInBoundsParams{MinLat: 41.07, MinLng: 29.04, MaxLat: 41.09, MaxLng: 29.07}
+	bounds := repository.ListCatsInBoundsParams{MinLat: lat - 0.001, MinLng: lng - 0.001, MaxLat: lat + 0.001, MaxLng: lng + 0.001}
 	nearby := repository.ListNearbyCatsForDuplicateCheckParams{Lat: lat, Lng: lng, RadiusM: 300}
-	discover := repository.ListCatsByDistanceParams{Lat: lat, Lng: lng, RowLimit: 5}
+	discover := repository.ListCatsByDistanceParams{Lat: lat, Lng: lng, RowLimit: 25}
 
 	containsCat := func(t *testing.T, ids []pgtype.UUID) bool {
 		t.Helper()

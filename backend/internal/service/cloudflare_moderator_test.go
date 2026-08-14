@@ -3,6 +3,7 @@ package service_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -258,10 +259,12 @@ func TestNewCloudflareModerator_Validation(t *testing.T) {
 	}
 }
 
-func TestCloudflareModerator_ModerateImage_SendsBytesAndPrompt(t *testing.T) {
+func TestCloudflareModerator_ModerateImage_SendsDataURIAndQuestion(t *testing.T) {
 	var received struct {
-		Image  []int  `json:"image"`
-		Prompt string `json:"prompt"`
+		Task     string `json:"task"`
+		Image    string `json:"image"`
+		Question string `json:"question"`
+		Stream   bool   `json:"stream"`
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
@@ -277,15 +280,43 @@ func TestCloudflareModerator_ModerateImage_SendsBytesAndPrompt(t *testing.T) {
 	if _, err := m.ModerateImage(context.Background(), "image/png", data); err != nil {
 		t.Fatalf("ModerateImage: %v", err)
 	}
-	if len(received.Image) != len(data) {
-		t.Fatalf("expected %d image bytes, got %d", len(data), len(received.Image))
+
+	// The configured vision model takes a task, the image as a data uri (the
+	// image is not stored anywhere yet, so there is no url to send), and the
+	// prompt under "question" — not the legacy byte-array/"prompt" shape.
+	if received.Task != "query" {
+		t.Errorf("task: want query, got %q", received.Task)
 	}
-	for i, b := range data {
-		if received.Image[i] != int(b) {
-			t.Errorf("byte %d: expected %d, got %d", i, b, received.Image[i])
-		}
+	wantImage := "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+	if received.Image != wantImage {
+		t.Errorf("image: want %q, got %q", wantImage, received.Image)
 	}
-	if received.Prompt == "" {
-		t.Error("expected a non-empty prompt")
+	if received.Question == "" {
+		t.Error("expected a non-empty question")
+	}
+	// Streaming would hand this adapter a server-sent-event body instead of
+	// one json envelope, and it is on by default for this model.
+	if received.Stream {
+		t.Error("streaming must be off")
+	}
+}
+
+// A chat model on /ai/run answers under choices[].message.content, not
+// "response" — reading only "response" left the reply empty, which fails
+// closed, so every name and comment would have been rejected against the
+// real provider while every fake-backed test still passed.
+func TestCloudflareModerator_ReadsChatChoiceContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"success":true,"errors":[],"result":{"choices":[{"message":{"content":"{\"decision\":\"reject\",\"categories\":[\"graphic_violence\"]}","reasoning_content":"the model's scratch pad, which must never be read as the answer"}}]}}`))
+	}))
+	defer srv.Close()
+
+	m := newTestCloudflareModerator(t, srv.URL)
+	decision, err := m.ModerateText(context.Background(), "bu kediyi oldurecegim")
+	if err != nil {
+		t.Fatalf("ModerateText: %v", err)
+	}
+	if decision.Allowed {
+		t.Fatalf("expected a rejection, got %+v", decision)
 	}
 }

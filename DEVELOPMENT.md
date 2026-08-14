@@ -279,7 +279,13 @@ set `APP_ENV=production`, `MODERATION_PROVIDER=cloudflare`, and the four cloudfl
 
 ### cloudflare smoke suite (release gate)
 
-normal ci runs only against the deterministic `fake` provider. before a release that ships or changes the `cloudflare` provider, run its separate, manually-triggered smoke suite against real cloudflare workers ai credentials to verify the configured model slugs, request schema, structured-result parsing, representative turkish text, a representative image input, and basic latency — this is a required release gate for 0.4, not an optional check. the smoke suite location and invocation are tracked with the suite itself, not duplicated here.
+normal ci runs only against the deterministic `fake` provider. before a release that ships or changes the `cloudflare` provider, run its separate, manually-triggered smoke suite against real cloudflare workers ai credentials to verify the configured model slugs, request schema, structured-result parsing, representative turkish text, a representative image input, and basic latency — this is a required release gate for 0.4, not an optional check. run it from `backend/`:
+
+```text
+CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... make smoke-cloudflare
+```
+
+the suite lives in `backend/internal/service/cloudflare_moderator_smoke_test.go` behind the `cloudflare_smoke` build tag, so `go test ./...` and ci never reach it. it skips silently when the credentials are absent. `MODERATION_TEXT_MODEL`/`MODERATION_VISION_MODEL` override the models it exercises; without them it uses the deployment defaults. it covers turkish safe/unsafe text, a welfare report with a visible injury (which must stay allowed), an image call, and a contact-sheet-sized image, and logs each call's latency — latency is reported rather than asserted, since it sits inside the user's own publish request but a hard threshold would make the gate flaky.
 
 ## mobile runtime configuration validation (issue #131)
 
