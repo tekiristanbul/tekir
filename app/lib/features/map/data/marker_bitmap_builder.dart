@@ -17,13 +17,13 @@ import '../../../core/theme/app_theme.dart';
 class MarkerBitmapBuilder {
   MarkerBitmapBuilder({Dio? photoClient}) : _photoClient = photoClient ?? Dio();
 
-  // Doubled from the prototype's 44pt (product-owner call): at the old size
-  // a cat's photo was too small to recognise at a glance, which is the whole
-  // point of a photo pin rather than a dot.
-  static const _displaySize = 88.0;
+  // 66pt: the prototype's 44pt was too small to recognise a cat at a glance,
+  // 88pt overlapped its neighbours too readily, and this is the size the
+  // product owner settled on between the two.
+  static const _displaySize = 66.0;
   // Keeps the prototype's proportion between base and selected (56 vs 40),
   // so a selected pin still reads as about a third larger.
-  static const _selectedDisplaySize = 116.0;
+  static const _selectedDisplaySize = 87.0;
   // Was 3.0 to stay crisp on high-dpi screens. At twice the display size the
   // bitmap is already 176pt across, so 2.0 renders at 176px * 2 = 352px —
   // still above any current device's pixel density for this size, and it

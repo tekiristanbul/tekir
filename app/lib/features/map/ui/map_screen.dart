@@ -15,6 +15,7 @@ import '../../auth/ui/auth_gate.dart';
 import '../data/cat_marker.dart';
 import '../data/location_service.dart';
 import '../data/map_style.dart';
+import '../data/marker_layout.dart';
 import '../data/marker_bitmap_builder.dart';
 import 'cat_preview_sheet.dart';
 import 'cats_map_notifier.dart';
@@ -91,19 +92,34 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ? cats.where((cat) => cat.needsHelp).toList()
         : cats;
 
+    // Cats recorded at the same doorway end up on the same coordinate, and
+    // identical positions make the one drawn last the only one that can be
+    // tapped: the others are unreachable, not merely hidden. Fanning a
+    // coincident group out by a few metres makes each of them its own tap
+    // target. It is display only — nothing is written back, and the offset
+    // is derived from the cat's own id, so a pin lands in the same place on
+    // every rebuild instead of jumping between renders.
+    final positions = fanOutCoincident(visibleCats);
+
     final markers = await Future.wait(
       visibleCats.map((cat) async {
+        final selected = cat.id == selectedId;
         final icon = await bitmaps.pin(
           cacheKey: cat.id,
           photoUrl: cat.primaryPhoto,
           needsHelp: cat.needsHelp,
-          selected: cat.id == selectedId,
+          selected: selected,
         );
         return Marker(
           markerId: MarkerId(cat.id),
-          position: LatLng(cat.lat, cat.lng),
+          position: positions[cat.id] ?? LatLng(cat.lat, cat.lng),
           icon: icon,
           clusterManagerId: _catsClusterManagerId,
+          // The selected pin is always on top; everything else stacks by
+          // latitude, southern pins over northern ones, which is what a map
+          // reader expects and — more to the point — is stable, so the same
+          // cat does not win the overlap one rebuild and lose it the next.
+          zIndexInt: selected ? selectedMarkerZIndex : latitudeZIndex(cat.lat),
           onTap: () => _onCatSelected(cat),
         );
       }),
