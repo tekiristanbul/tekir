@@ -779,6 +779,160 @@ void main() {
     },
   );
 
+  group('report affordance (issue #233)', () {
+    testWidgets(
+      'cat detail: the bildir icon renders for both owner and non-owner',
+      (tester) async {
+        for (final isOwner in [true, false]) {
+          await _pump(
+            tester,
+            CatDetailState(
+              detail: CatDetail(
+                id: _catId,
+                name: 'tekir',
+                lat: 41.0256,
+                lng: 28.9744,
+                areaLabel: null,
+                primaryPhoto: null,
+                createdAt: DateTime.utc(2026, 1, 1),
+                lastUpdateAt: null,
+                isOwner: isOwner,
+              ),
+              updates: const [],
+              hasLoadedOnce: true,
+            ),
+          );
+
+          expect(find.byTooltip('Kediyi bildir'), findsOneWidget);
+        }
+      },
+    );
+
+    testWidgets(
+      'cat detail: tapping bildir as a guest shows the auth gate, never the sheet directly',
+      (tester) async {
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: _detail,
+            updates: const [],
+            hasLoadedOnce: true,
+          ),
+        );
+
+        await tester.tap(find.byTooltip('Kediyi bildir'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('İçeriği bildirmek için giriş yap'), findsOneWidget);
+        expect(find.text('İçeriği bildir'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'timeline: an entry without an open correction window shows bildir instead',
+      (tester) async {
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: _detail,
+            updates: [
+              CatUpdateEntry(
+                id: 'u1',
+                statuses: const ['seen'],
+                comment: null,
+                createdAt: DateTime.utc(2026, 1, 2),
+              ),
+            ],
+            hasLoadedOnce: true,
+          ),
+        );
+
+        expect(find.byTooltip('Güncellemeyi bildir'), findsOneWidget);
+        expect(find.byTooltip('Güncellemeyi düzelt'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      "timeline: the author's own entry inside its correction window shows "
+      'the correction menu, never bildir',
+      (tester) async {
+        await _pump(
+          tester,
+          CatDetailState(
+            detail: _detail,
+            updates: [
+              CatUpdateEntry(
+                id: 'u1',
+                statuses: const ['seen'],
+                comment: null,
+                createdAt: DateTime.utc(2026, 1, 2),
+                authorIsMe: true,
+                correctionExpiresAt: DateTime.now().add(
+                  const Duration(minutes: 5),
+                ),
+              ),
+            ],
+            hasLoadedOnce: true,
+          ),
+        );
+
+        expect(find.byTooltip('Güncellemeyi düzelt'), findsOneWidget);
+        expect(find.byTooltip('Güncellemeyi bildir'), findsNothing);
+      },
+    );
+
+    testWidgets('medya tab: each tile carries its own bildir overlay', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        CatDetailState(
+          detail: CatDetail(
+            id: _catId,
+            name: 'tekir',
+            lat: 41.0256,
+            lng: 28.9744,
+            areaLabel: null,
+            primaryPhoto: null,
+            createdAt: DateTime.utc(2026, 1, 1),
+            lastUpdateAt: null,
+            mediaCount: 2,
+          ),
+          updates: const [],
+          hasLoadedOnce: true,
+        ),
+        media: [
+          CatMediaItem(
+            id: 'm1',
+            url: 'https://example.com/cover.jpg',
+            isCover: true,
+            createdAt: DateTime.utc(2026, 1, 2),
+          ),
+          CatMediaItem(
+            id: 'm2',
+            url: 'https://example.com/other.jpg',
+            isCover: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        ],
+      );
+
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pump();
+      await tester.tap(find.text('medya'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.descendant(
+          of: find.byType(GridView),
+          matching: find.byIcon(Icons.more_vert),
+        ),
+        findsNWidgets(2),
+      );
+    });
+  });
+
   group('issue #121 media parity', () {
     testWidgets(
       'cover photo counter: shown with the real media_count, hidden at zero',

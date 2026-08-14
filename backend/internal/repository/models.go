@@ -103,6 +103,18 @@ type RefreshToken struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type Report struct {
+	ID             pgtype.UUID        `json:"id"`
+	ReporterUserID pgtype.UUID        `json:"reporter_user_id"`
+	TargetType     string             `json:"target_type"`
+	TargetID       pgtype.UUID        `json:"target_id"`
+	Reason         string             `json:"reason"`
+	Note           pgtype.Text        `json:"note"`
+	Status         string             `json:"status"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+}
+
 type Trait struct {
 	Key         string             `json:"key"`
 	DisplayName string             `json:"display_name"`

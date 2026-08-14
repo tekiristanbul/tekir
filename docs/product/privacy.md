@@ -19,6 +19,7 @@ make it clear which information is public, which information remains private, an
 - tekir does not sell personal data or expose private account data to advertisers.
 - account deletion removes or anonymizes personal account information. public cat history and contributions remain, but are no longer associated with the deleted user's public identity.
 - moderation and legal obligations may require retaining limited internal records for a defined operational period; such records are not public.
+- a user-generated content report (issue #233, [[trust]]) is retained indefinitely — no auto-expiry or scheduled purge — since it is the only durable record of a moderation concern until a maintainer reviews it. a report is never public: no endpoint exposes another account's reports, or any report at all, to any client in this version. submitting a report never automatically hides or deletes the reported cat, update, or media; it only creates a record for a maintainer to review.
 - notification permission is requested only after a user chooses to follow a cat or otherwise opts into notifications, not on first launch.
 - product analytics ([[analytics]]) collects only anonymous, bounded behavioral events: no phone numbers, names, free text, cat names, precise location, tokens, or raw record ids are ever sent to the analytics provider, no analytics user id is set, and no advertising identifiers, audiences, or session replay are used.
 

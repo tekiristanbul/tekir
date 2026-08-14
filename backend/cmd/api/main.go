@@ -143,7 +143,10 @@ func run() error {
 	profileSvc := service.NewProfileService(store)
 	profileHandler := handler.NewProfileHandler(profileSvc)
 
-	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, notificationsHandler, profileHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
+	reportsSvc := service.NewReportsService(store)
+	reportsHandler := handler.NewReportsHandler(reportsSvc)
+
+	router := server.NewRouter(logger, healthHandler, catsHandler, devicesHandler, followsHandler, authHandler, mediaHandler, mediaServeHandler, notificationsHandler, profileHandler, reportsHandler, devicesSvc, sessionsSvc, cfg.CORSOrigins)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

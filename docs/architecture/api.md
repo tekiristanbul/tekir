@@ -177,6 +177,35 @@ both are own-account-only this mvp slice — there is no `GET /v1/users/{id}/pro
 
 curated profile avatars (mentioned in docs/product/community.md/privacy.md) are explicitly deferred past this slice: no avatar field exists in this response and no avatar-selection endpoint exists — there is no defined curated set (asset list, count, or picker) anywhere in the product/design references to build against yet. a future slice adds this once that set is defined.
 
+### reports
+
+```
+POST /v1/reports  (Bearer required)  { target_type, target_id, reason, note? }
+                                              → 201 { id, target_type, target_id, reason, note|null, status, created_at }
+                                              (implemented — issue #233)
+```
+
+user-generated content reporting (docs/product/trust.md, docs/product/privacy.md): a cat, an update, or a media item may be reported by any phone-verified account. `reporter_user_id` is always resolved from `Authorization: Bearer` — never accepted from the request body, so a report's ownership can't be spoofed. reporting never mutates the reported content: this endpoint writes only a `reports` row (see [[db]]) — it never touches `cats.status`, `updates.deleted_at`, or any `media` field, and there is no automatic hide-after-N-reports behavior in this version.
+
+`target_type` is exactly one of `cat`, `update`, `media`; any other value is `400`. `target_id` must be a well-formed uuid (`400` otherwise) and must resolve to a real, still-visible row of that type — a soft-deleted cat or update is treated the same as an unknown id (`404`), matching how every other read/write path already excludes them (see [[db]]'s `CatExists`/`UpdateExists`); a media row has no soft-delete state of its own, so existence alone gates it. A malformed `target_id` and a well-formed-but-unknown/deleted one are deliberately distinct statuses (`400` vs. `404`) rather than collapsed into one, mirroring `GET /v1/cats/{cat_id}`'s own malformed-vs-unknown-id split.
+
+`reason` is the fixed, closed vocabulary a database check constraint also enforces (product-owner decision on issue #233; turkish labels are used verbatim in the flutter client, not composed server-side):
+
+```
+inappropriate  -> "uygunsuz icerik"
+not_a_cat      -> "kedi degil"
+wrong_info     -> "yanlis bilgi"
+spam           -> "spam / tekrar eden icerik"
+privacy        -> "kisisel gizlilik ihlali" (medyada insan yuzu, ev ici, ozel alan, plaka gibi)
+other          -> "diger"
+```
+
+any other value is `400`. `other` requires `note` to be present and non-blank after trimming (`400` otherwise, before the note ever reaches the database — the check constraint is the last line of defense, not the primary one); every other reason leaves `note` optional. `note` is free text with no fixed cap beyond ordinary request-size limits.
+
+retries/duplicates are idempotent (issue #233 acceptance): a second `POST` from the same account against the same `(target_type, target_id)` while an earlier report from that account against it is still `status = 'open'` returns the original report (`201`, not `409` or `200` — the response shape is identical either way, so a client can't tell a fresh report from a resurfaced one, which is the point) rather than creating a second active row. Submitting again after the original resolves is a new, independent report — see [[db]]'s partial unique index.
+
+`status` starts `open` and can only become `resolved` through direct maintainer action against the table itself — no endpoint in this version reads or writes it, since 0.4 ships no moderator/admin dashboard (see "out of scope" below and [[trust]]). Error taxonomy: `400` malformed body/unknown `target_type`/malformed `target_id`/invalid `reason`/missing `note` on `other`, `401` missing/invalid bearer, `404` an unknown or soft-deleted target.
+
 ### modeling notes
 
 - a cat's active alert is derived from its latest non-deleted, non-expired help-carrying update (`needs_help = true` — issue #101's combined flag model; the legacy `kind` subtype no longer drives any read path).

@@ -200,6 +200,17 @@ type Querier interface {
 	// only the hash is ever persisted; the raw token is returned to the
 	// caller once and never stored (mirrors CreateDevice's convention).
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (CreateRefreshTokenRow, error)
+	// issue #233: reporter_user_id/target_type/target_id/reason are all
+	// validated by the service layer before this runs (target existence,
+	// closed reason vocabulary, other-requires-note). idempotent by
+	// construction, mirroring CreateMedia/CreateCat's own idempotency-key
+	// pattern: on conflict do nothing on the partial (reporter_user_id,
+	// target_type, target_id) where status = 'open' unique index means a
+	// retried/duplicate report never creates a second active row — no row
+	// comes back (pgx.ErrNoRows) on the conflicting retry, and the caller
+	// (ReportsService) looks the existing open report up via
+	// GetOpenReportByReporterAndTarget instead.
+	CreateReport(ctx context.Context, arg CreateReportParams) (Report, error)
 	// kind discriminates an ordinary status update from a needs-help one (issue
 	// #23); needs_help_category/needs_help_expires_at are null for an ordinary
 	// update and required for a needs-help one — enforced by
@@ -307,6 +318,11 @@ type Querier interface {
 	GetLatestOtpCode(ctx context.Context, phone string) (OtpCode, error)
 	GetMediaByID(ctx context.Context, id pgtype.UUID) (Medium, error)
 	GetMediaByIdempotencyKey(ctx context.Context, arg GetMediaByIdempotencyKeyParams) (Medium, error)
+	// resolves a retried/duplicate POST /v1/reports (same reporter, same
+	// target, still open) to the report it already created — mirrors
+	// GetCatByIdempotencyKey/GetMediaByIdempotencyKey's own conflict-recovery
+	// shape.
+	GetOpenReportByReporterAndTarget(ctx context.Context, arg GetOpenReportByReporterAndTargetParams) (Report, error)
 	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
 	// issue #80: resolves a retried POST /v1/cats/{cat_id}/updates (same
 	// Idempotency-Key, same account) to the update it already created,
@@ -610,6 +626,12 @@ type Querier interface {
 	// and trims/validates the name before ever issuing this update — this
 	// query itself trusts both already happened and only writes.
 	UpdateCatName(ctx context.Context, arg UpdateCatNameParams) error
+	// issue #233: lets POST /v1/reports validate an update target server-side
+	// before writing a report. deleted_at is null, mirroring CatExists' own
+	// status != 'deleted' exclusion — a soft-deleted update is already gone
+	// from every reader's view (see ListCatUpdates), so it isn't a reportable
+	// target either.
+	UpdateExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	UpdateUserDisplayName(ctx context.Context, arg UpdateUserDisplayNameParams) error
 	UpsertCat(ctx context.Context, arg UpsertCatParams) (pgtype.UUID, error)
 	// loads/updates the vocabulary itself (seed data only for now — there's no

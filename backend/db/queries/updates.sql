@@ -265,3 +265,11 @@ order by status;
 -- values) and this only ever runs inside CorrectOwnUpdate's own transaction
 -- alongside the row update above.
 delete from update_statuses where update_id = sqlc.arg(update_id);
+
+-- name: UpdateExists :one
+-- issue #233: lets POST /v1/reports validate an update target server-side
+-- before writing a report. deleted_at is null, mirroring CatExists' own
+-- status != 'deleted' exclusion — a soft-deleted update is already gone
+-- from every reader's view (see ListCatUpdates), so it isn't a reportable
+-- target either.
+select exists(select 1 from updates where id = sqlc.arg(id) and deleted_at is null) as exists;
