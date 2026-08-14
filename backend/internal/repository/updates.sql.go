@@ -578,3 +578,19 @@ func (q *Queries) ReplaceUpdateStatuses(ctx context.Context, updateID pgtype.UUI
 	_, err := q.db.Exec(ctx, replaceUpdateStatuses, updateID)
 	return err
 }
+
+const updateExists = `-- name: UpdateExists :one
+select exists(select 1 from updates where id = $1 and deleted_at is null) as exists
+`
+
+// issue #233: lets POST /v1/reports validate an update target server-side
+// before writing a report. deleted_at is null, mirroring CatExists' own
+// status != 'deleted' exclusion — a soft-deleted update is already gone
+// from every reader's view (see ListCatUpdates), so it isn't a reportable
+// target either.
+func (q *Queries) UpdateExists(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, updateExists, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}

@@ -264,6 +264,63 @@ create table notifications (
   unique (device_id, update_id)
 );
 create index notif_device_created_idx on notifications (device_id, created_at desc);
+
+-- implemented (migration 00027, issue #233): user-generated content
+-- reporting. a single polymorphic table backs all three reportable
+-- surfaces (cat, update, media) — the write/read shape (who reported what,
+-- why, when, current review state) is identical across all three, and a
+-- real foreign key per target_type would need three nullable target
+-- columns instead of one. target_id carries no foreign key of its own,
+-- since it points at a different table depending on target_type;
+-- referential validity is enforced by the service layer at write time
+-- (service.ReportsService.Create, see [[api]]) instead. reason is a fixed,
+-- closed check-constraint vocabulary (product-owner decision on issue
+-- #233), not a data-driven table like traits — adding a reason is a
+-- schema change:
+--
+--   inappropriate  -> "uygunsuz icerik"
+--   not_a_cat      -> "kedi degil"
+--   wrong_info     -> "yanlis bilgi"
+--   spam           -> "spam / tekrar eden icerik"
+--   privacy        -> "kisisel gizlilik ihlali" (medyada insan yuzu, ev ici,
+--                      ozel alan, plaka gibi)
+--   other          -> "diger"
+--
+-- `other` requires a non-empty note (reports_other_requires_note_ck); every
+-- other reason leaves note optional. status starts 'open' and only ever
+-- moves to 'resolved' through direct maintainer action against this table
+-- — there is no 0.4 admin endpoint that writes it. a report never
+-- automatically hides or deletes its target: nothing here references
+-- cats.status or updates.deleted_at, and no application code path writes
+-- to either as a side effect of a report.
+create table reports (
+  id                uuid primary key default gen_random_uuid(),
+  reporter_user_id  uuid not null references users(id),
+  target_type       text not null check (target_type in ('cat', 'update', 'media')),
+  target_id         uuid not null,
+  reason            text not null check (reason in ('inappropriate', 'not_a_cat', 'wrong_info', 'spam', 'privacy', 'other')),
+  note              text,
+  status            text not null default 'open' check (status in ('open', 'resolved')),
+  created_at        timestamptz not null default now(),
+  resolved_at       timestamptz,
+  constraint reports_other_requires_note_ck check (
+    reason != 'other' or (note is not null and length(btrim(note)) > 0)
+  )
+);
+-- a retried/duplicate report from the same account against the same
+-- target must not create a second active report (issue #233 acceptance)
+-- — partial on status = 'open' so a resolved report never blocks that
+-- account reporting the same target again later. CreateReport inserts
+-- `on conflict (reporter_user_id, target_type, target_id) where status =
+-- 'open' do nothing`, mirroring media/cats' own idempotency-key pattern;
+-- a conflicting retry returns no row and the service looks the existing
+-- open report up via GetOpenReportByReporterAndTarget instead.
+create unique index reports_reporter_target_open_uq on reports (reporter_user_id, target_type, target_id) where status = 'open';
+-- backs a future maintainer review path's "open reports, oldest first" read
+-- — no such endpoint exists yet (0.4 explicitly ships no admin/moderator
+-- UI), but the index costs nothing to add now and this is the shape any
+-- such read would need.
+create index reports_status_created_idx on reports (status, created_at desc);
 ```
 
 ### design notes
@@ -297,6 +354,7 @@ create index notif_device_created_idx on notifications (device_id, created_at de
 - `cat_media` (implemented, migration 00024, issue #121) is the join table backing `GET /v1/cats/{cat_id}/media`'s archive/"medya" tab — a row links a cat to a `media` row, independent of whether that media is the cat's current cover or came in through an update. A row is created twice over: `Store.CreateCatWithMedia` inserts one for a new cat's required initial photo, and `Store.CreateOrdinaryUpdate` inserts one whenever the caller attached `media_id`, mirroring each other exactly (`on conflict (cat_id, media_id) do nothing`, so a retried write or the same media reused across two updates for one cat never double-archives). Neither insert records *which* update (if any) contributed the entry — `cat_media` only ever answers "is this media in this cat's archive," never "who put it there through what write path."
   - **consistency gap and fix (this issue):** because an update's soft delete (`updates.deleted_at`, see the note above) never touched `cat_media`, a deleted update's attached media stayed visible in the archive indefinitely — orphaned evidence for content whose owning update the timeline no longer shows. The fix is read-time filtering, not a write-time cascade: `ListCatMedia`'s `where` clause excludes a `cat_media` row when every `updates` row referencing its `media_id` (for the same `cat_id`, via `updates.media_id`) is soft-deleted, and includes it when no update ever referenced the media at all (the cover-photo-at-creation case) or at least one referencing update is still live. **Ruled out:** a denormalized `cat_media.update_id` column plus a hard delete or a `hidden_at` flag written by `DeleteOwnUpdate` — rejected because it would duplicate the soft-delete/visibility decision `updates.deleted_at` already owns in a second place, and because the issue's own scope explicitly forbids physically deleting media rows or object-storage objects; a query-time join against the source of truth needs no compensating write, can't drift from it, and costs nothing until `ListCatMedia` actually runs.
   - **the cover exception:** the product decision is that a cat's cover (`cats.primary_photo_id`) must never disappear implicitly as a side effect of deleting its source update — silently falling back to "no cover" or an arbitrary remaining photo was ruled out as a surprising, unrequested side effect of an unrelated delete action. Rather than let the filter above hide a cover and special-case it back in on read, `DeleteOwnUpdate`'s own conditional statement (see the note above) grew one more predicate: `and not exists (select 1 from cats c where c.id = u.cat_id and c.primary_photo_id = u.media_id)`. This makes the two invariants structurally impossible to violate together — a live cover's owning update can never be soft-deleted, so the exclusion filter's "hidden" branch never has to reason about a cover at all. A blocked delete affects zero rows exactly like every other guard on this statement, and `GetUpdateForCorrectionCheck`'s `holds_cover` column (the same `c.primary_photo_id = u.media_id` comparison, read back) disambiguates it from every other zero-rows cause as an explicit `409` conflict (see [[api]]) rather than folding it into `404`/`403`/`410`. **Ruled out:** auto-clearing or auto-replacing the cover on delete — the issue's product decision forbids it outright, and it would also make delete a hidden second write to `cats`, breaking the "the update or upload the photo originally came from is never modified [by a cover change]" invariant `PATCH .../cover` (issue #156) already established in the other direction.
+- `reports` (implemented, migration 00027, issue #233): retention is indefinite — no auto-expiry, no scheduled purge job, matching [[privacy]]'s moderation-records decision. Rows are never public (no `GET` endpoint exposes another account's reports, or any report at all, in this version) and a report never mutates its target: no code path here writes to `cats.status`, `updates.deleted_at`, or any `media` column. `status` (`open`/`resolved`) exists so a future maintainer review flow has somewhere to record disposition without a schema change, even though 0.4 ships no admin/moderator UI to set it — see [[api]]'s own out-of-scope note.
 - badges (issue #80, docs/product/badges.md) have **no dedicated table** — `ListUserOrdinaryUpdatesForBadges`/`ListUserNeedsHelpUpdatesForBadges`/`ListUserCreatedCatsForBadges` (new queries, migration-adjacent) feed a pure, deterministic derivation in `service.badgeProgress` (see [[backend]]) computed fresh on every `GET /v1/me/profile`/`GET /v1/me/badges` request, mirroring the approved prototype's own client-side `badgeProgress()`. The issue's own "avoid storing redundant badge counters unless the architecture requires a derived cache with a rebuild/recovery path" guidance is satisfied by not needing one at mvp scale (5 fixed thresholds, a bounded per-account row count) — the same reasoning this doc already applied when dropping the denormalized `cats.needs_help_until` above. **Known, accepted mvp limitation:** because badges are derived at read time rather than cached, deleting (within its own 10-minute window) the exact ordinary update that crossed a badge's threshold can make that badge appear transiently un-earned again on next view — in tension with badges.md's "permanent once earned." Given the narrowness of the window this requires (the one qualifying contribution, deleted within 10 minutes of being posted), this is accepted rather than adding a `user_badges` earned-pin table for this slice; if it needs fixing later, the fix is a minimal insert-only, never-deleted `user_badges(user_id, badge_id, earned_at)` table populated the first time a threshold is crossed.
 
 ## open questions

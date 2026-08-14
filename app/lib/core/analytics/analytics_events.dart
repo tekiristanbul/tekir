@@ -62,7 +62,8 @@ enum AnalyticsAuthIntent {
   ordinaryUpdate('ordinary_update'),
   needsHelp('needs_help'),
   addCat('add_cat'),
-  profile('profile');
+  profile('profile'),
+  report('report');
 
   const AnalyticsAuthIntent(this.wire);
 

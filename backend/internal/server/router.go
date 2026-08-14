@@ -13,7 +13,7 @@ import (
 	"github.com/tekiristanbul/tekir/backend/internal/handler"
 )
 
-func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, auth *handler.AuthHandler, media *handler.MediaHandler, mediaServe *handler.MediaServeHandler, notifications *handler.NotificationsHandler, profile *handler.ProfileHandler, deviceTokens handler.DeviceTokenResolver, accessTokens handler.AccessTokenValidator, corsOrigins []string) http.Handler {
+func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler.CatsHandler, devices *handler.DevicesHandler, follows *handler.FollowsHandler, auth *handler.AuthHandler, media *handler.MediaHandler, mediaServe *handler.MediaServeHandler, notifications *handler.NotificationsHandler, profile *handler.ProfileHandler, reports *handler.ReportsHandler, deviceTokens handler.DeviceTokenResolver, accessTokens handler.AccessTokenValidator, corsOrigins []string) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -58,6 +58,8 @@ func NewRouter(logger *slog.Logger, health *handler.HealthHandler, cats *handler
 
 	r.With(handler.RequireBearer(accessTokens)).Get("/v1/me/profile", profile.Profile)
 	r.With(handler.RequireBearer(accessTokens)).Get("/v1/me/badges", profile.Badges)
+
+	r.With(handler.RequireBearer(accessTokens)).Post("/v1/reports", reports.Create)
 
 	r.With(handler.RequireBearer(accessTokens), handler.OptionalDeviceToken(deviceTokens)).Post("/v1/media", media.Upload)
 	r.Get("/v1/media/objects/{key}", mediaServe.ServeObject)

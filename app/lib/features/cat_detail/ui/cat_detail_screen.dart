@@ -19,6 +19,8 @@ import 'cat_detail_notifier.dart';
 import 'cat_update_composer_notifier.dart';
 import 'cat_update_sheet.dart';
 import 'edit_cat_name_sheet.dart';
+import 'report_reason.dart';
+import 'report_sheet.dart';
 import 'update_correction_sheet.dart';
 
 const _statusLabelsTr = {
@@ -432,6 +434,11 @@ class _IdentityBlock extends StatelessWidget {
                         detail.name,
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
+              ),
+              _ReportButton(
+                targetType: ReportTargetType.cat,
+                targetId: detail.id,
+                tooltip: 'Kediyi bildir',
               ),
               if (detail.isOwner) _DeleteCatButton(catId: detail.id),
             ],
@@ -1319,7 +1326,47 @@ class _MediaTile extends StatelessWidget {
                 ),
               ),
             ),
+            Positioned(
+              right: 4,
+              top: 4,
+              child: _ReportMediaBadge(catId: catId, mediaId: item.id),
+            ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The media tile's own "bildir" affordance (issue #233) — a compact
+/// translucent circle overlay, mirroring [_FullScreenPhoto]'s own top-left
+/// close-button shape/opacity, scaled down to fit a grid tile the same way
+/// [_TimelineAvatar] is already scaled down for the uploader badge below
+/// it. A distinct hit-testable [Material]/[InkWell], not part of the
+/// tile's own full-area [GestureDetector] — tapping it opens the report
+/// sheet instead of the tile's full-screen view.
+class _ReportMediaBadge extends ConsumerWidget {
+  const _ReportMediaBadge({required this.catId, required this.mediaId});
+
+  final String catId;
+  final String mediaId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.35),
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () => openReportSheet(
+          context,
+          ref,
+          targetType: ReportTargetType.media,
+          targetId: mediaId,
+        ),
+        child: const Padding(
+          padding: EdgeInsets.all(3),
+          child: Icon(Icons.more_vert, size: 14, color: Colors.white),
         ),
       ),
     );
@@ -1677,7 +1724,14 @@ class _TimelineItem extends StatelessWidget {
                       // all, for any reader, so no separate "not deleted"
                       // check is needed here.
                       if (update.authorIsMe && update.isCorrectionOpen())
-                        _CorrectionMenuButton(catId: catId, update: update),
+                        _CorrectionMenuButton(catId: catId, update: update)
+                      else
+                        _ReportButton(
+                          targetType: ReportTargetType.update,
+                          targetId: update.id,
+                          tooltip: 'Güncellemeyi bildir',
+                          iconSize: 16,
+                        ),
                     ],
                   ),
                   if (update.comment != null) ...[
@@ -2091,6 +2145,44 @@ class _CorrectionMenuButton extends StatelessWidget {
         tooltip: 'Güncellemeyi düzelt',
         onPressed: () =>
             openUpdateCorrectionSheet(context, catId: catId, entry: update),
+      ),
+    );
+  }
+}
+
+/// The shared "bildir" affordance (issue #233) for a cat, an update, or a
+/// media item — a `more_vert` icon opening [ReportSheet], mirroring
+/// [_CorrectionMenuButton]'s exact single-action shape and `kTapMin`-square
+/// tap target.
+class _ReportButton extends ConsumerWidget {
+  const _ReportButton({
+    required this.targetType,
+    required this.targetId,
+    required this.tooltip,
+    this.iconSize = 18,
+  });
+
+  final ReportTargetType targetType;
+  final String targetId;
+  final String tooltip;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return SizedBox(
+      width: kTapMin,
+      height: kTapMin,
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        iconSize: iconSize,
+        icon: const Icon(Icons.more_vert, color: AppColors.faint),
+        tooltip: tooltip,
+        onPressed: () => openReportSheet(
+          context,
+          ref,
+          targetType: targetType,
+          targetId: targetId,
+        ),
       ),
     );
   }
