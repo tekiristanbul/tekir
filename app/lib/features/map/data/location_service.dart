@@ -2,8 +2,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
-/// Galata tower — matches the deterministic istanbul cluster in the seed
-/// fixtures, so the fallback view always has cats to show.
+import '../../../core/geo/istanbul_bounds.dart';
+
+/// Galata tower — a fixed, hard-coded point roughly central to the
+/// product's active istanbul area (issue #235). The map opens on this at
+/// [istanbulFallbackZoom], a broad-area zoom, rather than street level, so
+/// the fallback reads as "istanbul" rather than a single landmark. No
+/// live cat-density calculation feeds this; it's deliberately static and
+/// only tuned by hand.
 const istanbulFallback = LatLng(41.0256, 28.9744);
 
 class ResolvedLocation {
@@ -25,8 +31,10 @@ class ResolvedLocation {
 }
 
 /// Resolves the map's initial camera center. Never throws: permission
-/// denial, a disabled location service, or a timeout all fall back to
-/// [istanbulFallback] instead of blocking the map.
+/// denial, a disabled location service, a timeout, an invalid reading, or
+/// a resolved position outside the supported istanbul area all fall back
+/// to [istanbulFallback] instead of blocking the map or centering on an
+/// irrelevant place (issue #235).
 class LocationService {
   Future<ResolvedLocation> resolveInitialCenter() async {
     try {
@@ -59,10 +67,18 @@ class LocationService {
           timeLimit: Duration(seconds: 5),
         ),
       );
-      return ResolvedLocation(
-        center: LatLng(position.latitude, position.longitude),
-        isFallback: false,
-      );
+      final resolved = LatLng(position.latitude, position.longitude);
+      // A device position clearly outside the product's supported area (or,
+      // via NaN comparisons always failing, an invalid reading) is no more
+      // useful than no location at all — issue #235. Falls back exactly
+      // like a disabled service: silently, without permissionDenied.
+      if (!istanbulBounds.contains(resolved)) {
+        return const ResolvedLocation(
+          center: istanbulFallback,
+          isFallback: true,
+        );
+      }
+      return ResolvedLocation(center: resolved, isFallback: false);
     } catch (_) {
       return const ResolvedLocation(center: istanbulFallback, isFallback: true);
     }

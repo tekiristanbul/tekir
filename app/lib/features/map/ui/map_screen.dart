@@ -256,13 +256,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               )
             : _buildMapChrome(
                 center: resolved.center,
-                showFallbackBanner: resolved.isFallback,
+                isFallback: resolved.isFallback,
                 searchHint: searchHint,
               ),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (_, _) => _buildMapChrome(
           center: istanbulFallback,
-          showFallbackBanner: true,
+          isFallback: true,
           searchHint: searchHint,
         ),
       ),
@@ -280,12 +280,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   Widget _buildMapChrome({
     required LatLng center,
-    required bool showFallbackBanner,
+    required bool isFallback,
     required String searchHint,
   }) {
     return Stack(
       children: [
-        _buildMap(center: center, showFallbackBanner: showFallbackBanner),
+        _buildMap(center: center, isFallback: isFallback),
         Positioned(
           top: MediaQuery.of(context).padding.top + AppSpacing.s3,
           left: AppSpacing.s4,
@@ -357,7 +357,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
-  Widget _buildMap({required LatLng center, required bool showFallbackBanner}) {
+  Widget _buildMap({required LatLng center, required bool isFallback}) {
     final mapState = ref.watch(catsMapProvider);
     final isInitialRead = mapState.isLoading && !mapState.hasLoadedOnce;
     final isEmptyRadius =
@@ -371,7 +371,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         GoogleMap(
           initialCameraPosition: CameraPosition(
             target: center,
-            zoom: _initialZoom,
+            // A fallback center is a fixed, hard-coded istanbul point, not
+            // a real location — the close walking-distance zoom would read
+            // as pointing at one specific place. Zooming out to the map's
+            // own widest allowed view instead shows "greater istanbul", per
+            // issue #235.
+            zoom: isFallback ? istanbulFallbackZoom : _initialZoom,
           ),
           style: catsOfIstanbulMapStyle,
           cameraTargetBounds: CameraTargetBounds(istanbulBounds),
@@ -393,13 +398,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           onCameraIdle: _onCameraIdle,
           onCameraMove: _onCameraMove,
         ),
-        if (showFallbackBanner) const _FallbackLocationBanner(),
+        if (isFallback) const _FallbackLocationBanner(),
         if (isInitialRead)
           // state 13 · harita yükleniyor. keyed on the attempt counter so
           // a retry remounts the gate and earns a fresh 400 ms of silence.
           _InitialReadOverlay(
             key: ValueKey(mapState.attempt),
-            locationKnown: !showFallbackBanner,
+            locationKnown: !isFallback,
             onRetry: _retryVisible,
           )
         else ...[

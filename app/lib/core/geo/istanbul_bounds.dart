@@ -13,3 +13,11 @@ final istanbulBounds = LatLngBounds(
 );
 const istanbulMinZoom = 12.0;
 const istanbulMaxZoom = 20.0;
+
+/// Zoom for the istanbul fallback viewport (issue #235) — the widest the
+/// map ever allows, so a launch without a useful location reads as
+/// "greater istanbul" rather than a single street or landmark. Named
+/// separately from [istanbulMinZoom] even though the value matches today:
+/// one is the map's technical pan floor, the other is a product choice
+/// about what the fallback should show, and they don't have to stay equal.
+const istanbulFallbackZoom = istanbulMinZoom;
