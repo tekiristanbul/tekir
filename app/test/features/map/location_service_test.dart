@@ -10,12 +10,23 @@ class _FakeGeolocatorPlatform extends GeolocatorPlatform {
   bool serviceEnabled = true;
   Position? position;
   Object? positionError;
+  int requestPermissionCalls = 0;
+  int openAppSettingsCalls = 0;
 
   @override
   Future<LocationPermission> checkPermission() async => checkResult;
 
   @override
-  Future<LocationPermission> requestPermission() async => requestResult;
+  Future<LocationPermission> requestPermission() async {
+    requestPermissionCalls++;
+    return requestResult;
+  }
+
+  @override
+  Future<bool> openAppSettings() async {
+    openAppSettingsCalls++;
+    return true;
+  }
 
   @override
   Future<bool> isLocationServiceEnabled() async => serviceEnabled;
@@ -54,6 +65,8 @@ void main() {
     fakePlatform.serviceEnabled = true;
     fakePlatform.position = _positionAt(41.03, 28.98);
     fakePlatform.positionError = null;
+    fakePlatform.requestPermissionCalls = 0;
+    fakePlatform.openAppSettingsCalls = 0;
   });
 
   group('LocationService.resolveInitialCenter', () {
@@ -119,6 +132,38 @@ void main() {
         expect(resolved.center, istanbulFallback);
         expect(resolved.isFallback, isTrue);
         expect(resolved.permissionDenied, isFalse);
+      },
+    );
+  });
+
+  group('LocationService.recoverPermission', () {
+    test('denied: re-prompts through the OS permission dialog', () async {
+      fakePlatform.checkResult = LocationPermission.denied;
+
+      await LocationService().recoverPermission();
+
+      expect(fakePlatform.requestPermissionCalls, 1);
+      expect(fakePlatform.openAppSettingsCalls, 0);
+    });
+
+    test('deniedForever: opens app settings instead of re-prompting', () async {
+      fakePlatform.checkResult = LocationPermission.deniedForever;
+
+      await LocationService().recoverPermission();
+
+      expect(fakePlatform.requestPermissionCalls, 0);
+      expect(fakePlatform.openAppSettingsCalls, 1);
+    });
+
+    test(
+      'unableToDetermine: opens app settings rather than a no-op prompt',
+      () async {
+        fakePlatform.checkResult = LocationPermission.unableToDetermine;
+
+        await LocationService().recoverPermission();
+
+        expect(fakePlatform.requestPermissionCalls, 0);
+        expect(fakePlatform.openAppSettingsCalls, 1);
       },
     );
   });

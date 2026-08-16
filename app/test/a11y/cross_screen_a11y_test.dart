@@ -212,6 +212,9 @@ class _FakeLocationService implements LocationService {
   @override
   Future<ResolvedLocation> resolveInitialCenter() async =>
       const ResolvedLocation(center: istanbulFallback, isFallback: false);
+
+  @override
+  Future<void> recoverPermission() async {}
 }
 
 /// Same fixed-state technique as widget_test.dart's _FixedCatsMapNotifier:

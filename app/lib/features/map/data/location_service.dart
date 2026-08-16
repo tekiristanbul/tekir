@@ -83,6 +83,25 @@ class LocationService {
       return const ResolvedLocation(center: istanbulFallback, isFallback: true);
     }
   }
+
+  /// The `konum iznini aç` cta's recovery action (issue #262). iOS only
+  /// ever shows its own permission dialog once per install — after that,
+  /// [Geolocator.checkPermission] reports `deniedForever` (its mapping for
+  /// both an explicit prior denial and OS-level `restricted`), and
+  /// [Geolocator.requestPermission] is a silent no-op against it. `denied`
+  /// is the one status still worth prompting; everything else can only be
+  /// reversed from the app's settings page, which is why the previous cta
+  /// handler — invalidating [initialLocationProvider] to re-run
+  /// [resolveInitialCenter], which itself only re-requests on `denied` —
+  /// did nothing visible once a user had denied once.
+  Future<void> recoverPermission() async {
+    final permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      await Geolocator.requestPermission();
+    } else {
+      await Geolocator.openAppSettings();
+    }
+  }
 }
 
 final locationServiceProvider = Provider<LocationService>(

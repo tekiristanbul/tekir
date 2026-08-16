@@ -102,6 +102,9 @@ class _FakeLocationService implements LocationService {
 
   @override
   Future<ResolvedLocation> resolveInitialCenter() async => result;
+
+  @override
+  Future<void> recoverPermission() async {}
 }
 
 // Pre-populated in-memory storage so AuthNotifier.verifyCode's device
