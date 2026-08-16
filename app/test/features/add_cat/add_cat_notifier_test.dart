@@ -90,6 +90,9 @@ class _FakeLocationService implements LocationService {
 
   @override
   Future<ResolvedLocation> resolveInitialCenter() async => _resolved;
+
+  @override
+  Future<void> recoverPermission() async {}
 }
 
 void main() {

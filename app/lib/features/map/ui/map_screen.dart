@@ -54,7 +54,8 @@ class MapScreen extends ConsumerStatefulWidget {
   ConsumerState<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends ConsumerState<MapScreen> {
+class _MapScreenState extends ConsumerState<MapScreen>
+    with WidgetsBindingObserver {
   GoogleMapController? _controller;
   Timer? _debounce;
   Set<Marker> _markers = {};
@@ -74,10 +75,29 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _sheetOpen = false;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _debounce?.cancel();
     _controller?.dispose();
     super.dispose();
+  }
+
+  // Covers returning from the settings app the `konum iznini aç` cta may
+  // have opened (issue #262) — that path has no in-app callback of its
+  // own, only "the app came back to the foreground", so this is the one
+  // place that can catch a permission change made there and update the
+  // map/banner without requiring a restart.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ref.invalidate(initialLocationProvider);
+    }
   }
 
   // rebuilds the marker set (fetching/decoding each cat's photo into a
@@ -285,12 +305,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
-  // Re-runs [initialLocationProvider] so LocationService.resolveInitialCenter
-  // re-checks/re-requests the OS permission — the same path the app takes on
-  // first launch. If the OS still won't reprompt (permanently denied), state
-  // 06 simply reappears; a settings deep-link is out of this pass's approved
-  // scope (only the primary action ships).
+  // The `konum iznini aç` cta's handler (issue #262): recoverable denial
+  // re-prompts through the OS dialog and non-recoverable denial opens the
+  // app's settings page (LocationService.recoverPermission decides which),
+  // then re-runs resolveInitialCenter so the map/banner reflect whatever
+  // the user actually chose. Returning from settings is covered separately
+  // by didChangeAppLifecycleState, since that path never returns here.
   void _requestLocationPermission() {
+    unawaited(_recoverLocationPermission());
+  }
+
+  Future<void> _recoverLocationPermission() async {
+    await ref.read(locationServiceProvider).recoverPermission();
+    if (!mounted) return;
     ref.invalidate(initialLocationProvider);
   }
 
