@@ -91,9 +91,17 @@ final _validPngBytes = base64Decode(
 );
 
 class _FakeLocationService implements LocationService {
+  _FakeLocationService([
+    this.result = const ResolvedLocation(
+      center: LatLng(41.03, 28.98),
+      isFallback: false,
+    ),
+  ]);
+
+  final ResolvedLocation result;
+
   @override
-  Future<ResolvedLocation> resolveInitialCenter() async =>
-      const ResolvedLocation(center: LatLng(41.03, 28.98), isFallback: false);
+  Future<ResolvedLocation> resolveInitialCenter() async => result;
 }
 
 // Pre-populated in-memory storage so AuthNotifier.verifyCode's device
@@ -155,6 +163,7 @@ Future<void> _pumpAddCat(
   SessionIdentityService? session,
   AuthApi? authApi,
   DeviceIdentityService? deviceIdentityService,
+  LocationService? locationService,
 }) async {
   final router = GoRouter(
     initialLocation: '/add-cat',
@@ -180,7 +189,9 @@ Future<void> _pumpAddCat(
     ProviderScope(
       overrides: [
         addCatApiProvider.overrideWithValue(api),
-        locationServiceProvider.overrideWith((ref) => _FakeLocationService()),
+        locationServiceProvider.overrideWith(
+          (ref) => locationService ?? _FakeLocationService(),
+        ),
         if (session != null)
           sessionIdentityServiceProvider.overrideWithValue(session),
         if (authApi != null) authApiProvider.overrideWithValue(authApi),
@@ -221,6 +232,46 @@ void main() {
       await _pumpAddCat(tester, _FakeAddCatApi());
 
       expect(find.text('Konumu seç'), findsOneWidget);
+      await tester.tap(find.text('Bu konumu kullan'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Kedi ekle'), findsOneWidget);
+      expect(find.text('Fotoğraf (zorunlu)'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    // issue #259: when device location can't be resolved (permission
+    // denied, service disabled, timeout, or a reading outside istanbul),
+    // LocationService.resolveInitialCenter falls back to istanbulFallback
+    // rather than leaving lat/lng null — "Bu konumu kullan" must still be
+    // enabled and confirmable, not stuck disabled or dead-ended, matching
+    // the app-review screenshot's expected location-confirmation step.
+    'the istanbul fallback center is confirmable when device location is '
+    'unavailable',
+    (tester) async {
+      await _pumpAddCat(
+        tester,
+        _FakeAddCatApi(),
+        locationService: _FakeLocationService(
+          const ResolvedLocation(
+            center: istanbulFallback,
+            isFallback: true,
+            permissionDenied: true,
+          ),
+        ),
+      );
+
+      expect(
+        find.text('Konum bulunamadı. Haritadan elle seç.'),
+        findsOneWidget,
+      );
+      final confirmButton = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Bu konumu kullan'),
+      );
+      expect(confirmButton.onPressed, isNotNull);
+
       await tester.tap(find.text('Bu konumu kullan'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
