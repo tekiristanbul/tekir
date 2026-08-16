@@ -11,9 +11,10 @@ import 'package:app/features/profile/data/profile.dart';
 import 'package:app/features/profile/data/profile_api.dart';
 import 'package:app/features/profile/ui/profile_notifier.dart';
 
-// Mirrors cat_update_composer_notifier_test.dart's fakes exactly — same
-// stale-device-credential recovery mechanism, applied here to the login
-// flow instead of the update composer.
+// Shares cat_update_composer_notifier_test.dart's storage/registration
+// fakes — the underlying stale-device-credential invalidate/re-register
+// mechanism is the same, though the login flow (issue #256) additionally
+// retries transparently once instead of always surfacing the error.
 class _FakeDeviceStorage implements DeviceKeyValueStorage {
   final _data = <String, String>{'device_id': 'did-1', 'device_token': 'tok-1'};
 
@@ -92,11 +93,19 @@ class _FakeAuthApi implements AuthApi {
   Object? nextSetNameError;
   AuthSession? nextSession;
 
+  /// Consumed one entry per [verifyOtp] call, ahead of [nextVerifyError] —
+  /// lets a test script "throws once, then succeeds" to exercise the
+  /// automatic single-retry path distinctly from [nextVerifyError]'s
+  /// "throws on every call" behavior (used for the still-broken-after-retry
+  /// case).
+  final verifyErrorQueue = <Object?>[];
+
   String? lastRequestedPhone;
   String? lastVerifiedPhone;
   String? lastVerifiedCode;
   String? lastDisplayName;
   int requestCalls = 0;
+  int verifyCalls = 0;
 
   @override
   Future<void> requestOtp(String phone) async {
@@ -110,8 +119,14 @@ class _FakeAuthApi implements AuthApi {
     required String phone,
     required String code,
   }) async {
+    verifyCalls++;
     lastVerifiedPhone = phone;
     lastVerifiedCode = code;
+    if (verifyErrorQueue.isNotEmpty) {
+      final error = verifyErrorQueue.removeAt(0);
+      if (error != null) throw error;
+      return nextSession!;
+    }
     if (nextVerifyError != null) throw nextVerifyError!;
     return nextSession!;
   }
@@ -332,7 +347,12 @@ void main() {
     );
 
     test(
-      'a stale device credential invalidates and re-registers on the next attempt',
+      // issue #256: a device-token rejection must not surface as the
+      // "token changed, please try again" dead end when it's silently
+      // recoverable — verifyCode() invalidates the stale credential and
+      // retries once, automatically, inside the same call.
+      'a stale device credential recovers transparently within one '
+      'verifyCode() call, never reaching the user as an error',
       () async {
         final storage = _FakeDeviceStorage(); // pre-populated with did-1/tok-1
         final registrationAdapter = _CountingRegistrationAdapter();
@@ -342,7 +362,13 @@ void main() {
             ..httpClientAdapter = registrationAdapter,
         );
         final api = _FakeAuthApi()
-          ..nextVerifyError = const AuthDeviceTokenInvalidException();
+          ..verifyErrorQueue.add(const AuthDeviceTokenInvalidException())
+          ..nextSession = const AuthSession(
+            accessToken: 'at',
+            refreshToken: 'rt',
+            userId: 'user-1',
+            isNewAccount: false,
+          );
         final container = _containerWith(
           api,
           deviceIdentityService: deviceService,
@@ -351,47 +377,97 @@ void main() {
         notifier.setPhone('5321112233');
         notifier.setCode('123456');
 
-        final firstDone = await notifier.verifyCode();
+        final done = await notifier.verifyCode();
 
-        expect(firstDone, isFalse);
-        expect(
-          container.read(authProvider).error,
-          AuthError.staleDeviceCredential,
-        );
-        expect(container.read(authProvider).isSubmitting, isFalse);
-        expect(authErrorMessageTr(AuthError.staleDeviceCredential), isNotEmpty);
-        expect(
-          deviceService.cached,
-          isNull,
-          reason: 'stale credential dropped',
-        );
-        expect(storage._data.containsKey('device_token'), isFalse);
-        expect(
-          registrationAdapter.callCount,
-          0,
-          reason: 'invalidate() only clears state, it does not re-register',
-        );
-
-        // Retryable: a following successful attempt re-registers first.
-        api
-          ..nextVerifyError = null
-          ..nextSession = const AuthSession(
-            accessToken: 'at',
-            refreshToken: 'rt',
-            userId: 'user-1',
-            isNewAccount: false,
-          );
-        final secondDone = await notifier.verifyCode();
-
-        expect(secondDone, isTrue);
+        expect(done, isTrue);
         expect(container.read(authProvider).error, isNull);
+        expect(container.read(authProvider).isSubmitting, isFalse);
+        expect(
+          api.verifyCalls,
+          2,
+          reason: 'the doomed attempt plus exactly one automatic retry',
+        );
+        expect(
+          api.lastVerifiedCode,
+          '123456',
+          reason:
+              'the retry replays the same code — the rejected attempt never '
+              'reached AuthHandler.VerifyOTP, so it was never consumed',
+        );
         expect(
           registrationAdapter.callCount,
           1,
-          reason: 'stale credential must not be replayed; a fresh one is used',
+          reason: 'exactly one fresh device registration, not a storm',
         );
+        expect(storage._data['device_token'], 'tok-fresh-1');
       },
     );
+
+    test('a device credential still invalid after the automatic retry surfaces '
+        'staleDeviceCredential, bounded to exactly one retry', () async {
+      final storage = _FakeDeviceStorage(); // pre-populated with did-1/tok-1
+      final registrationAdapter = _CountingRegistrationAdapter();
+      final deviceService = DeviceIdentityService(
+        storage: storage,
+        dio: Dio(BaseOptions(baseUrl: 'http://localhost:8080'))
+          ..httpClientAdapter = registrationAdapter,
+      );
+      final api = _FakeAuthApi()
+        ..nextVerifyError = const AuthDeviceTokenInvalidException();
+      final container = _containerWith(
+        api,
+        deviceIdentityService: deviceService,
+      );
+      final notifier = container.read(authProvider.notifier);
+      notifier.setPhone('5321112233');
+      notifier.setCode('123456');
+
+      final firstDone = await notifier.verifyCode();
+
+      expect(firstDone, isFalse);
+      expect(
+        container.read(authProvider).error,
+        AuthError.staleDeviceCredential,
+      );
+      expect(container.read(authProvider).isSubmitting, isFalse);
+      expect(authErrorMessageTr(AuthError.staleDeviceCredential), isNotEmpty);
+      expect(
+        api.verifyCalls,
+        2,
+        reason:
+            'the doomed attempt plus exactly one automatic retry, never '
+            'an unbounded loop',
+      );
+      expect(
+        registrationAdapter.callCount,
+        1,
+        reason: 'one fresh registration from the bounded automatic retry',
+      );
+
+      // The bounded retry's own fresh credential was rejected too, so it
+      // gets invalidated exactly like the original — a manual retry (e.g.
+      // the user tapping "tekrar dene" again) registers yet another one
+      // and still works once the underlying problem is gone.
+      api
+        ..nextVerifyError = null
+        ..nextSession = const AuthSession(
+          accessToken: 'at',
+          refreshToken: 'rt',
+          userId: 'user-1',
+          isNewAccount: false,
+        );
+      final secondDone = await notifier.verifyCode();
+
+      expect(secondDone, isTrue);
+      expect(container.read(authProvider).error, isNull);
+      expect(
+        registrationAdapter.callCount,
+        2,
+        reason:
+            'a second fresh registration for the manual retry, since the '
+            'first retry\'s own credential was rejected too',
+      );
+    });
 
     test(
       'a device identity init() failure maps to AuthError.network, no verify api call',
