@@ -160,12 +160,28 @@ class AuthNotifier extends Notifier<AuthState> {
     }
 
     state = state.copyWith(isSubmitting: true, clearError: true);
+    return _verifyCode(retryStaleDevice: true);
+  }
+
+  /// [retryStaleDevice] gates the one automatic retry below — true only for
+  /// the outermost call from [verifyCode]. A device-token rejection here
+  /// (issue #256) means the credential looked valid locally but the server
+  /// no longer recognizes it (e.g. a review device whose secure-storage
+  /// credential survived a reinstall against a backend that no longer has
+  /// that device's row) — this must not surface as a generic "token
+  /// changed, try again" dead end when it's silently recoverable.
+  /// `RequireDeviceToken` middleware rejects the request before
+  /// `AuthHandler.VerifyOTP` ever runs (backend/internal/server/router.go),
+  /// so the presented otp code is never checked on that rejected attempt —
+  /// retrying once with the exact same code after registering a fresh
+  /// device credential is safe, not a replay of an already-consumed code.
+  Future<bool> _verifyCode({required bool retryStaleDevice}) async {
     try {
       // Lazily initializes (or awaits an in-flight, or retries a
       // previously invalidated) device identity — mirrors
       // cat_update_composer_notifier's own explicit init-before-submit
-      // call. This is what actually lets a retry recover after the
-      // AuthDeviceTokenInvalidException branch below invalidates a stale
+      // call. This is what actually lets the retry below recover after
+      // the AuthDeviceTokenInvalidException branch invalidates a stale
       // credential: without re-running init() here, nothing would ever
       // register a replacement, and every subsequent attempt would keep
       // sending no device token at all.
@@ -219,16 +235,26 @@ class AuthNotifier extends Notifier<AuthState> {
     } on AuthDeviceTokenInvalidException {
       // The stored device credential looked valid locally but the server
       // no longer recognizes it — replaying the same token on retry would
-      // just 401 again, so drop it and let the next attempt's init() call
-      // above register a fresh one (mirrors
-      // cat_update_composer_notifier's identical recovery for its own
-      // stale-credential case). Best-effort: a secure-storage deletion
+      // just 401 again, so drop it so the recursive call's own init() call
+      // above registers a fresh one. Best-effort: a secure-storage deletion
       // failure must not leave the user stuck in isSubmitting forever
       // without ever seeing the retryable error.
       try {
         await ref.read(deviceIdentityServiceProvider).invalidate();
       } catch (_) {
-        // Ignored — falling through still surfaces the retryable error.
+        state = state.copyWith(
+          isSubmitting: false,
+          error: AuthError.staleDeviceCredential,
+        );
+        return false;
+      }
+      if (retryStaleDevice) {
+        // Transparent, bounded to exactly one retry: a fresh device
+        // credential resolves this deterministically, so the reviewer (or
+        // any user) should never see this as an error at all — only a
+        // second, still-invalid attempt is a genuine problem worth
+        // surfacing instead of silently looping.
+        return _verifyCode(retryStaleDevice: false);
       }
       state = state.copyWith(
         isSubmitting: false,

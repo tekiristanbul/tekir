@@ -530,6 +530,22 @@ class _DetailsStep extends ConsumerWidget {
       context.go('/cats/$catId');
       return;
     }
+    // issue #256: the session can die mid-flow (e.g. a review device whose
+    // refresh token stopped being valid) — AddCatNotifier.save only clears
+    // the entered photo/name/location on success, so re-authenticating and
+    // retrying resumes this exact attempt instead of losing it. Pushes
+    // straight to /login (mirrors account_screen.dart's own direct
+    // re-login), not AuthGate's "do you want to log in" sheet — the app
+    // already knows re-auth is required, there is nothing left to ask.
+    // Bounded: a cancelled/failed login just leaves the retryable
+    // unauthorized banner below, it never loops on its own.
+    if (ref.read(addCatProvider).error == AddCatError.unauthorized) {
+      final reauthenticated = await context.push<bool>('/login');
+      if (reauthenticated == true && context.mounted) {
+        await _save(context, ref);
+      }
+      return;
+    }
     // State 11 · gönderilemedi (docs/design/app-states.md, slice 5): the
     // transient connection failure gets the contract's failure sheet. The
     // form behind it keeps every entered value; retry reuses the flow's
