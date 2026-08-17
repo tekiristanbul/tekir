@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- release builds need INTERNET explicitly (the flutter template only
          grants it in debug/profile manifests) -->
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -9,10 +10,40 @@
     <!-- firebase_messaging on android 13+: runtime permission requested via
          the in-app opt-in sheet (features/notifications), never at launch -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- firebase_analytics merges advertising-id and attribution permissions
+         into the manifest by default. the product never uses an advertising
+         identifier, ad personalization, or attribution (docs/product/privacy.md,
+         website/privacy.html), and leaving them in would force a contradicting
+         "device or other ids" declaration in the play data-safety form — so
+         they are removed at merge time and the analytics sdk is told not to
+         collect the id (meta-data below). -->
+    <uses-permission
+        android:name="com.google.android.gms.permission.AD_ID"
+        tools:node="remove"/>
+    <uses-permission
+        android:name="android.permission.ACCESS_ADSERVICES_AD_ID"
+        tools:node="remove"/>
+    <uses-permission
+        android:name="android.permission.ACCESS_ADSERVICES_ATTRIBUTION"
+        tools:node="remove"/>
     <application
         android:label="tekir"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- google_maps_flutter: the android maps sdk reads its key here; the
+             value comes from the gitignored android/maps.properties via a
+             manifest placeholder (see app/build.gradle.kts) -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${googleMapsApiKey}" />
+        <!-- matches the removed AD_ID permission above: no advertising id, no
+             ad personalization signals, no attribution -->
+        <meta-data
+            android:name="google_analytics_adid_collection_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="google_analytics_default_allow_ad_personalization_signals"
+            android:value="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

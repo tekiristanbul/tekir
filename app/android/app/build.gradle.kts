@@ -16,6 +16,44 @@ val keystoreProperties = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 
+// Google Maps SDK for Android reads its key from a manifest meta-data entry,
+// filled in from the gitignored android/maps.properties (see
+// maps.properties.example) — same posture as the ios GoogleMaps.xcconfig.
+// Debug/profile builds stay buildable without it (the map renders blank and
+// the sdk logs an authorization failure); release builds fail fast below
+// rather than shipping a keyless artifact to play.
+val mapsApiKey: String =
+    Properties()
+        .apply {
+            val f = rootProject.file("maps.properties")
+            if (f.exists()) f.inputStream().use { load(it) }
+        }
+        .getProperty("GOOGLE_MAPS_API_KEY")
+        ?.trim()
+        .orEmpty()
+
+tasks.configureEach {
+    if (name == "preReleaseBuild" || name == "bundleRelease" || name == "assembleRelease") {
+        doFirst {
+            if (mapsApiKey.isEmpty()) {
+                throw GradleException(
+                    "Google Maps Android API key is missing. Copy " +
+                        "app/android/maps.properties.example to " +
+                        "app/android/maps.properties and set GOOGLE_MAPS_API_KEY. " +
+                        "See DEVELOPMENT.md > \"google maps sdk (android)\".",
+                )
+            }
+        }
+    }
+}
+
+// Firebase on android needs app/google-services.json, which is not committed
+// (same as the ios GoogleService-Info.plist). Applying the plugin
+// unconditionally would break a fresh clone, so key it off the file.
+if (rootProject.file("app/google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "istanbul.tekir"
     compileSdk = flutter.compileSdkVersion
@@ -35,6 +73,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["googleMapsApiKey"] = mapsApiKey
     }
 
     signingConfigs {
