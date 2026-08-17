@@ -35,12 +35,23 @@ logo, and replacing it must not require product or architecture changes.
   feature graphic at `assets/store/listing/play-feature-graphic.png`.
   the release artifact is `flutter build appbundle` — play-ready as-is
   once `android/key.properties` points at the upload keystore (see
-  `android/key.properties.example`; no code changes needed). remaining
-  console-side work: play console listing + data-safety form, play app
-  signing enrollment, firebase android app registration if
-  push/analytics ship enabled, and screenshots captured from the real
-  android build at sizes verified against current official play
-  documentation
+  `android/key.properties.example`; no code changes needed).
+
+  **published to internal testing 2026-08-17** (`0.4.2`, versionCode 3).
+  console work done in that pass: store listing with the phone captures
+  below plus 9:16 tablet variants (play requires exactly 16:9 or 9:16
+  with a 1080px minimum side there, which the 780x1688 phone captures do
+  not satisfy — they are letterboxed onto a 1080x1920 terracotta canvas,
+  never stretched), app content declarations, data safety, content
+  rating (12+ / parental guidance, driven by the user-generated-content
+  answers), target audience, play app signing, and the firebase android
+  app. note that the approved short description above is 97 characters
+  and play's limit is 80, so the listing carries a trimmed variant —
+  record the exact wording here once it is settled, since this file is
+  the source of truth.
+
+  production access still needs a 12-tester, 14-day closed test
+  (personal developer account rule)
 
 ## locales
 
