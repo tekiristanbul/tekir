@@ -215,8 +215,8 @@ build with `ANALYTICS_PROVIDER=firebase` against the non-production project and 
 ### release targets (0.1)
 
 - **web**: supported for foreground push and analytics out of the box; background/terminated web push additionally requires the configured `firebase-messaging-sw.js` and `FCM_VAPID_KEY`.
-- **android**: 0.1 release target (product-owner decision 2026-07-29); publish timing is the product owner's. the Flutter Android target (`app/android`, package id `istanbul.tekir`, portrait-only, `minSdk` 24 / `targetSdk` 36) builds a signed, Play-ready `.aab` from this repo, with maps, push, and analytics all wired — see [android development](#android-development) for the full setup and play path. the machine-local prerequisites are an upload keystore (`android/key.properties`), an android maps sdk key (`android/maps.properties`), and the firebase android client config (`app/android/app/google-services.json`); none of the three is committed, and a clone without them still builds. still console-side: play listing + data-safety form, play app signing enrollment, and adding the play app signing sha-1 to the maps key restriction. a **personal** developer account additionally needs 12 testers on a 14-day closed test before production access.
-- **ios**: 0.1 release target (product-owner decision 2026-07-29). the Flutter iOS target (`app/ios`, bundle id `istanbul.tekir`, min iOS 15) builds and has shipped through testflight; app store submission is in progress, not yet in review, as of 0.3.0. a fresh clone still needs its own `pod install` + Xcode build on a mac, registration of the `istanbul.tekir` iOS app in Firebase (`GoogleService-Info.plist` is not committed), and the APNs key for push before running or archiving locally. see [ios development](#ios-development) for the full setup and testflight path.
+- **android**: 0.1 release target (product-owner decision 2026-07-29); publish timing is the product owner's. the Flutter Android target (`app/android`, package id `istanbul.tekir`, portrait-only, `minSdk` 24 / `targetSdk` 36) builds a signed, Play-ready `.aab` from this repo, with maps, push, and analytics all wired — see [android development](#android-development) for the full setup and play path. the machine-local prerequisites are an upload keystore (`android/key.properties`), an android maps sdk key (`android/maps.properties`), and the firebase android client config (`app/android/app/google-services.json`); none of the three is committed, and a clone without them still builds. console-side work is complete as of 2026-08-17: store listing, app content declarations (privacy policy, app access with the review test number, ads, content rating, target audience, data safety, advertising id), play app signing enrollment, and all four signing fingerprints on the maps key restriction. a signed bundle (`0.4.2`, versionCode 3) is on internal testing. because the developer account is **personal**, production access still needs 12 testers on a 14-day closed test.
+- **ios**: 0.1 release target (product-owner decision 2026-07-29). the Flutter iOS target (`app/ios`, bundle id `istanbul.tekir`, min iOS 15) builds and has shipped through testflight; the app store submission is in review as of 2026-08-17. a fresh clone still needs its own `pod install` + Xcode build on a mac, registration of the `istanbul.tekir` iOS app in Firebase (`GoogleService-Info.plist` is not committed), and the APNs key for push before running or archiving locally. see [ios development](#ios-development) for the full setup and testflight path.
 
 ## object storage providers
 
@@ -622,6 +622,47 @@ a **personal** developer account created after november 13, 2023 cannot reach pr
 - **play rejects the bundle as debug-signed**: `android/key.properties` is missing or points at a path that doesn't exist, so the build fell back to the debug key — verify with `jarsigner` before every upload.
 - **play rejects the version code**: bump `+N` in `app/pubspec.yaml` — see [version codes for play](#version-codes-for-play).
 - **push or analytics dead on android only**: the build didn't get `--dart-define=NOTIFICATION_PROVIDER=fcm`/`ANALYTICS_PROVIDER=firebase`, or `google-services.json` was absent at build time so the google-services plugin never applied. firebase failing to initialize degrades instead of crashing (issue #84), so this is silent — check the `bootstrapFirebase()` diagnostic in logcat.
+
+## production deployment
+
+production is a single digitalocean droplet plus managed postgres, with the stack in `/opt/tekir`: `docker-compose.production.yml`, `.env.production`, a `Caddyfile`, and the service-account secret. caddy terminates tls, strips `/api/*` to the api container, and serves everything else from the web container. the droplet host, credentials, and every value in `.env.production` live outside this repository.
+
+there is no ci deployment pipeline. images are built on a maintainer's machine, shipped as tarballs, and switched by tag — each service is versioned and deployed independently, so **the running versions routinely differ from each other and from `main`**. check what is actually deployed before assuming:
+
+```text
+curl -s https://app.tekir.istanbul/version.json     # the flutter web bundle
+ssh <droplet> 'docker ps --format "{{.Image}}"'     # api, notifier, web, caddy
+```
+
+### shipping a new web bundle
+
+```text
+cd app
+flutter build web --release \
+  --dart-define=API_BASE_URL=/api \
+  --dart-define=NOTIFICATION_PROVIDER=fcm \
+  --dart-define=ANALYTICS_PROVIDER=firebase \
+  --dart-define=FCM_VAPID_KEY=...
+```
+
+`API_BASE_URL=/api` keeps the client same-origin behind caddy, so no cors configuration is involved; it is compile-time, so changing it means rebuilding. then substitute the production web maps key into **`build/web/index.html`** — the build output, never `app/web/index.html`, which must keep its `__GOOGLE_MAPS_API_KEY__` placeholder — and build, ship, and switch the image:
+
+```text
+docker build -t tekir-web:<version> -f Dockerfile.web .
+docker save tekir-web:<version> | gzip -1 > tekir-web-<version>.tar.gz
+scp tekir-web-<version>.tar.gz <droplet>:/opt/tekir/
+ssh <droplet> 'docker load -i /opt/tekir/tekir-web-<version>.tar.gz'
+```
+
+on the droplet, bump the `tekir-web` tag in `docker-compose.production.yml` and recreate only that service. **always pass `--env-file .env.production`** — the file is not named `.env`, so without the flag compose resolves every variable to a blank string:
+
+```text
+docker compose --env-file .env.production -f docker-compose.production.yml up -d web
+```
+
+recreating `web` that way is harmless because the web container reads none of those variables, but recreating `api`/`notifier` without the flag makes them fail startup by design ([mobile runtime configuration validation](#mobile-runtime-configuration-validation-issue-131) covers the same fail-closed posture on the client). rollback is the reverse tag switch plus another `up -d` — the previous image stays on the droplet.
+
+the api and notifier follow the same tarball flow from `backend/Dockerfile` and `backend/Dockerfile.notifier`. migrations are not baked into the images: run goose from a maintainer machine against the managed database before starting an api version that needs them.
 
 ## validation
 

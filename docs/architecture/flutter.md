@@ -47,7 +47,7 @@ lib/
 - each feature has a small `data/` and `ui/` boundary; no separate domain layer is required for mvp.
 - the shipped implementation and `docs/design/implementation-contract.md` are the source of truth for final visual tokens and component behavior.
 - `app_theme.dart` implements those approved tokens; visual choices are not left as an architecture open question.
-- production maps api keys are injected by the github actions → digitalocean app platform deployment pipeline and restricted separately from development keys.
+- production maps api keys are restricted separately from development keys, one key per platform (the restriction types are mutually exclusive, so a web key cannot serve android). there is no ci deployment pipeline: the web key is substituted into `build/web/index.html` when the image is built by hand, and the android key comes from `app/android/maps.properties` — see DEVELOPMENT.md's "production deployment" and "google maps sdk (android)".
 
 ### identity / auth flow
 
