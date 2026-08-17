@@ -12,3 +12,8 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# android maps sdk key (see maps.properties.example) and the firebase android
+# client config — never committed, same posture as the ios equivalents
+maps.properties
+google-services.json

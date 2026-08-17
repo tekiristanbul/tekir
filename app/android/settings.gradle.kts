@@ -21,6 +21,9 @@ plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "9.0.1" apply false
     id("org.jetbrains.kotlin.android") version "2.3.20" apply false
+    // applied by :app only when app/google-services.json exists (issue #84
+    // posture: the file is not committed, so a fresh clone still builds)
+    id("com.google.gms.google-services") version "4.5.0" apply false
 }
 
 include(":app")

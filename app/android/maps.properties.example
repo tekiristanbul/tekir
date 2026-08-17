@@ -1,0 +1,10 @@
+# Copy to android/maps.properties (gitignored) and set a real, restricted
+# android key before the first release build. See DEVELOPMENT.md >
+# "google maps sdk (android)".
+#
+# Restrict the key to the "Maps SDK for Android" api and to the app:
+# package name istanbul.tekir plus BOTH signing certificate SHA-1
+# fingerprints — the upload key and the play app signing key google
+# generates. A key restricted to the upload key alone works in local
+# release builds and fails in every play-distributed install.
+GOOGLE_MAPS_API_KEY=YOUR_ANDROID_MAPS_KEY
