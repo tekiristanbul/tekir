@@ -215,7 +215,7 @@ build with `ANALYTICS_PROVIDER=firebase` against the non-production project and 
 ### release targets (0.1)
 
 - **web**: supported for foreground push and analytics out of the box; background/terminated web push additionally requires the configured `firebase-messaging-sw.js` and `FCM_VAPID_KEY`.
-- **android**: 0.1 release target (product-owner decision 2026-07-29); publish timing is the product owner's. the Flutter Android target exists (`app/android`, package id `istanbul.tekir`, portrait-only) with generated launcher/adaptive icons and a prototype-aligned native launch screen, and builds from this repo. `flutter build appbundle` produces the Play-ready artifact once `android/key.properties` points at an upload keystore (see `android/key.properties.example`); without it, release builds fall back to debug signing for local runs. still console-side: play listing + data-safety form, play app signing, firebase android app registration if push/analytics ship enabled, real-build screenshots.
+- **android**: 0.1 release target (product-owner decision 2026-07-29); publish timing is the product owner's. the Flutter Android target (`app/android`, package id `istanbul.tekir`, portrait-only, `minSdk` 24 / `targetSdk` 36) builds a signed, Play-ready `.aab` from this repo, with maps, push, and analytics all wired — see [android development](#android-development) for the full setup and play path. the machine-local prerequisites are an upload keystore (`android/key.properties`), an android maps sdk key (`android/maps.properties`), and the firebase android client config (`app/android/app/google-services.json`); none of the three is committed, and a clone without them still builds. still console-side: play listing + data-safety form, play app signing enrollment, and adding the play app signing sha-1 to the maps key restriction. a **personal** developer account additionally needs 12 testers on a 14-day closed test before production access.
 - **ios**: 0.1 release target (product-owner decision 2026-07-29). the Flutter iOS target (`app/ios`, bundle id `istanbul.tekir`, min iOS 15) builds and has shipped through testflight; app store submission is in progress, not yet in review, as of 0.3.0. a fresh clone still needs its own `pod install` + Xcode build on a mac, registration of the `istanbul.tekir` iOS app in Firebase (`GoogleService-Info.plist` is not committed), and the APNs key for push before running or archiving locally. see [ios development](#ios-development) for the full setup and testflight path.
 
 ## object storage providers
@@ -312,7 +312,7 @@ required mobile config fails in one of two deliberately different ways:
 
 `runStartupConfigDiagnostics()` (`app/lib/core/config/startup_validation.dart`) runs the non-fatal checks once, from `main()`, before any feature that reads them initializes.
 
-android's google maps sdk key is not wired up yet (no api key setup exists in `app/android` at all) — out of scope here, tracked separately.
+the android maps sdk key follows the "degrades" side deliberately: android reads it from a manifest meta-data entry, so a missing key cannot be detected at startup the way the ios `GMSServices` call can — the map renders blank and the sdk logs an authorization failure. the check moves to build time instead: a release build with no key fails in gradle with a diagnostic naming the fix, so a keyless artifact can never reach play. see [google maps sdk (android)](#google-maps-sdk-android).
 
 ## flutter development
 
@@ -507,6 +507,122 @@ or edit `version: 1.0.0+2` in `app/pubspec.yaml` directly. the marketing version
 - **App Store Connect rejects the upload with "already used a build number"**: bump `+N` in `app/pubspec.yaml` or pass `--build-number` — see [build numbers for testflight](#build-numbers-for-testflight).
 - **push permission prompt never appears on device**: confirm the build used `--dart-define=NOTIFICATION_PROVIDER=fcm` — the local `fake` default keeps the opt-in sheet ui-only and never requests the real system permission (same behavior documented in [firebase](#firebase-push--analytics-issue-84) above).
 
+## android development
+
+this covers the path from a clean clone to a play-ready app bundle. unlike ios, all of it works on linux — no proprietary toolchain, no second machine. the shared push/analytics setup this builds on is in [firebase](#firebase-push--analytics-issue-84) above.
+
+### android-specific prerequisites
+
+- the android sdk with platform `android-36` and build-tools `36.0.0` (android studio installs these, or `sdkmanager` from the command-line tools)
+- a jdk 17 on `PATH` with `JAVA_HOME` set — gradle and `keytool` both need it. with asdf: `asdf plugin add java && asdf install java temurin-17.0.20+8 && asdf set -u java temurin-17.0.20+8`
+- `flutter doctor` must report the android toolchain as `[✓]` before anything below works
+
+### upload keystore and `key.properties`
+
+release builds are signed with an upload key that never leaves the machine. google re-signs every artifact with the play app signing key it holds, so the upload key is a credential for talking to play, not the key users' devices verify — losing it is recoverable through an upload-key reset in the play console.
+
+create it once, outside the repository:
+
+```text
+keytool -genkeypair -v -keystore "$HOME/tekir-upload.jks" -storetype PKCS12 \
+  -keyalg RSA -keysize 2048 -validity 10000 -alias upload \
+  -dname "CN=tekir, O=tekir, L=Istanbul, ST=Istanbul, C=TR"
+```
+
+then point `app/android/key.properties` at it (copy `key.properties.example`). the file and every `*.jks`/`*.keystore` are gitignored; store the password in a password manager and back the keystore up somewhere that is not this machine.
+
+when `key.properties` is absent, release builds fall back to the debug key so a fresh clone can still run `flutter run --release` locally — such a build is not uploadable to play.
+
+print the upload key's fingerprints when a service needs them (the maps key restriction below does):
+
+```text
+keytool -list -v -keystore "$HOME/tekir-upload.jks" -alias upload
+```
+
+### google maps sdk (android)
+
+`google_maps_flutter` reads the key from a `com.google.android.geo.API_KEY` manifest meta-data entry. the value is a manifest placeholder filled in from `app/android/maps.properties` (gitignored, copy `maps.properties.example`):
+
+```text
+cd app/android
+cp maps.properties.example maps.properties
+```
+
+debug and profile builds work without the file — the map renders blank. release builds fail in gradle with a message naming the fix, so no keyless bundle reaches play.
+
+restrict the key in the google cloud console to the **maps sdk for android** api and to the app: package name `istanbul.tekir` plus **every** signing certificate sha-1 fingerprint. a key restricted to the upload fingerprint alone works in a local release build and fails in every play-distributed install, which is the single easiest way to ship a blank map to real users.
+
+the app is enrolled in play's **quantum-ready hybrid signing**, so google holds three keys, not one: a classical rsa 4096 key for pre-android-17 devices, plus a second classical key and an ml-dsa-65 post-quantum key that sign together for android 17+ (apk signature scheme v3.2). play's own guidance is to register all three with every api provider. download them from **play console → app signing → app signing key certificate** (`certificates.zip`, containing `deployment_cert.der`, `hybrid_classical_cert.der`, `hybrid_pqc_cert.der`) and read each fingerprint with:
+
+```text
+keytool -printcert -file deployment_cert.der
+```
+
+so the maps key ends up with four android entries for `istanbul.tekir`: the three play fingerprints and the local upload key's. note that hybrid signing is not compatible with apk signature scheme v4, so play-as-you-download optimization is off for this app.
+
+use a separate restricted production key from the development one, with its own quota and billing controls.
+
+### firebase (`google-services.json`)
+
+register the android app in the firebase project and generate its client config from `app/`:
+
+```text
+~/.pub-cache/bin/flutterfire configure --project=<project-id> \
+  --platforms=android --android-package-name=istanbul.tekir
+```
+
+this writes `app/android/app/google-services.json` and fills in the android entry of `app/lib/firebase_options.dart` (previously a placeholder that threw `UnsupportedError`). as on ios, the platform config file is not committed and `firebase_options.dart` is — it is public client configuration.
+
+the `com.google.gms.google-services` gradle plugin is declared in `app/android/settings.gradle.kts` but applied by `app/android/app/build.gradle.kts` **only when `google-services.json` exists**, so a clone without the file still builds. fcm on android needs no signing fingerprint, unlike ios which needs an apns key.
+
+### building the play app bundle
+
+```text
+cd app
+flutter build appbundle \
+  --dart-define=API_BASE_URL=https://app.tekir.istanbul/api \
+  --dart-define=NOTIFICATION_PROVIDER=fcm \
+  --dart-define=ANALYTICS_PROVIDER=firebase
+```
+
+the artifact is `build/app/outputs/bundle/release/app-release.aab`. verify it is signed by the upload key, not the debug key, before uploading:
+
+```text
+jarsigner -verify -verbose:summary -certs build/app/outputs/bundle/release/app-release.aab
+```
+
+the `--dart-define` flags are the same ones documented in [api base url](#api-base-url) and [flutter variables](#flutter-variables-appenvlocal-forwarded-by-scriptsrun_websh). a release build with no `API_BASE_URL` fails at startup by design (issue #128); the provider flags default to `fake`/`none`, which silently ships an app with no push and no analytics — pass them explicitly for anything that goes to play.
+
+### version codes for play
+
+play rejects an upload whose version code it has already seen, and requires each new release to have a strictly higher one. the version code is the `+N` suffix in `app/pubspec.yaml`'s `version:`, shared with the ios build number — bump it before every upload, including replacements within the same testing track:
+
+```text
+flutter build appbundle --build-number=4 ...
+```
+
+### play console path
+
+the app is `istanbul.tekir`, tr-TR only for 0.1. store assets and the approved copy live in `assets/store/` (`listing/listing.md` is the source of truth). console order:
+
+1. **create app** — name `tekir`, default language tr-TR, app, free (free → paid cannot be changed later)
+2. **app integrity → play app signing** — enrolled by default for new apps; the keystore above is the upload key
+3. **store listing** — 512×512 icon (`assets/app-icon/android/play-icon-512.png`), 1024×500 feature graphic (`assets/store/listing/play-feature-graphic.png`), screenshots from `assets/store/screenshots/`
+4. **app content** — privacy policy `https://tekir.istanbul/privacy`, account deletion `https://tekir.istanbul/privacy#account-deletion` (`privacy.html` redirects there, so use the canonical path), data safety (phone number, display name, precise location, photos, fcm token), content rating questionnaire, target audience, ads: none
+5. **internal testing** — up to 100 testers, no review wait; use it to verify the real signed artifact
+6. **closed testing → production**
+
+a **personal** developer account created after november 13, 2023 cannot reach production without running a closed test with at least 12 testers opted in continuously for 14 days, followed by a production access application. plan the release around that window and start the closed test on a build whose map and push already work. organization accounts are exempt but require d-u-n-s verification.
+
+### common android failure modes
+
+- **blank/gray map, no crash, `Authorization failure` in logcat**: the maps key is missing, not restricted to the maps sdk for android, or restricted to a fingerprint that isn't the one that signed this install — see [google maps sdk (android)](#google-maps-sdk-android). a map that works locally and fails from play is almost always the missing play app signing fingerprint.
+- **gradle fails with "Google Maps Android API key is missing"**: intended — a release build without `android/maps.properties`.
+- **`No Java Development Kit (JDK) found` from `flutter doctor`**: see [android-specific prerequisites](#android-specific-prerequisites).
+- **play rejects the bundle as debug-signed**: `android/key.properties` is missing or points at a path that doesn't exist, so the build fell back to the debug key — verify with `jarsigner` before every upload.
+- **play rejects the version code**: bump `+N` in `app/pubspec.yaml` — see [version codes for play](#version-codes-for-play).
+- **push or analytics dead on android only**: the build didn't get `--dart-define=NOTIFICATION_PROVIDER=fcm`/`ANALYTICS_PROVIDER=firebase`, or `google-services.json` was absent at build time so the google-services plugin never applied. firebase failing to initialize degrades instead of crashing (issue #84), so this is silent — check the `bootstrapFirebase()` diagnostic in logcat.
+
 ## validation
 
 run backend validation:
@@ -574,7 +690,9 @@ for disposable local data, recreate the docker volume and apply migrations again
 
 ### flutter map is blank
 
-confirm `.env.local` exists, the api key is enabled for the maps javascript api, and its browser restrictions include the local origin. run through `./scripts/run_web.sh`; do not place the key permanently in `app/web/index.html`.
+confirm `.env.local` exists, the api key is enabled for the maps javascript api, and its browser restrictions include the local origin. run through `./scripts/run_web.sh`; do not place the key permanently in `app/web/index.html`. if the run script is killed hard, it can leave the substituted key in that file — check `git diff app/web/index.html` before committing.
+
+on android the equivalent cause is a missing or wrongly restricted native key — see [common android failure modes](#common-android-failure-modes).
 
 ### flutter cannot reach the api
 
