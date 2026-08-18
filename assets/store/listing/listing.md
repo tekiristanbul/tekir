@@ -37,7 +37,8 @@ logo, and replacing it must not require product or architecture changes.
   once `android/key.properties` points at the upload keystore (see
   `android/key.properties.example`; no code changes needed).
 
-  **published to internal testing 2026-08-17** (`0.4.2`, versionCode 3).
+  **published to internal testing 2026-08-17** (`0.4.2`, versionCode 3),
+  replaced 2026-08-18 by `0.4.3` versionCode 4.
   console work done in that pass: store listing with the phone captures
   below plus 9:16 tablet variants (play requires exactly 16:9 or 9:16
   with a 1080px minimum side there, which the 780x1688 phone captures do
