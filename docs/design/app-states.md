@@ -62,22 +62,28 @@ small spinners appear only inside buttons and inline rows.
 
 ## states
 
-### 06 · konum izni yok
+### 06 · konum yok — istanbul merkezi
 
-- screen: map (`app/lib/features/map/`). shown on first launch before the
-  permission decision and whenever permission is denied.
-- copy: title "nerede olduğunu bilmeden haritayı açamıyoruz"; primary
+- screen: map (`app/lib/features/map/`) and keşfet's two location-aware
+  tabs (`app/lib/features/discover/`). shown whenever a location never
+  resolves to a usable in-area position: permission denied, location
+  services off, a resolve timeout, or a position outside istanbul.
+- copy: one line, "konum yok — istanbul merkezi gösteriliyor"; action
   "konum iznini aç".
-- visuals: blurred, desaturated decorative map behind a cream gradient;
-  paw-and-pin glyph in a muted disc with a brick slash.
-- **shipped scope (issue #121 approval, 2026-08-06):** the sub-line
-  "konumun sadece yakınındaki kedileri göstermek için kullanılır,
-  kaydedilmez." and the secondary action "haritada elle mahalle seç" are
-  **dropped from this pass**, not deferred-and-forgotten. the sub-line
-  stays unverified against gap 4 (edge/hosting access-log retention of
-  coordinate query strings); the secondary action has no implementation
-  owner. either can return once its blocker resolves, tracked as its own
-  issue rather than reopening this one.
+- visuals: a single elevated row over the working screen
+  (`core/states/fallback_location_note.dart`), shared by both surfaces.
+- **no location condition blocks a screen or renders as an error.** the map
+  opens on greater istanbul at the fallback zoom with its cats loaded, and
+  keşfet lists cats anchored on the same point. the one thing given up is
+  the distance column, which is suppressed while the fallback is in effect
+  — a figure measured from the istanbul center reads as "distance from you"
+  and would be wrong. ordering is unaffected.
+- **history (0.4.3):** this replaced a full-screen block that rendered
+  instead of the map on a denied permission, and a retry-labelled error
+  card on keşfet. app store review 0.4.2 hit both and rejected the build
+  under guideline 2.1(a) as "the app displayed an error". the issue #121
+  scope notes about a privacy sub-line and a "haritada elle mahalle seç"
+  secondary action lapse with the state they described.
 - slice 1.
 
 ### 07 · civarda kayıt yok
@@ -301,10 +307,10 @@ explicitly per slice — slices 1–4 and 7 are mutually independent; slice
 reduced-motion behavior and its tests ship inside every slice that
 animates.
 
-1. **map states** — 06, 07, 13: permission state, in-radius empty state,
-   cached-pin loading with the timing contract. 06 ships without its
-   privacy sub-line and secondary action per the issue #121 approval —
-   see 06's shipped-scope note above.
+1. **map states** — 06, 07, 13: fallback-location note, in-radius empty
+   state, cached-pin loading with the timing contract. 06 was reshaped in
+   0.4.3 from a blocking permission screen into a note over a working
+   map — see its entry above.
 2. **notifications quiet day** — 09: olive banner and followed list from
    `GET /v1/me/follows`, count-drop rule included.
 3. **discover skeleton and empty follow** — 08, 14: skeleton geometry,
@@ -340,10 +346,10 @@ animates.
 
 ## open questions
 
-both resolved by the issue #121 approval (2026-08-06): state 06 ships with
-only its primary action, dropping the secondary action and the privacy
-sub-line from this pass rather than blocking on either. kept below for
-history — either can be reopened as its own issue if still wanted.
+both resolved by the issue #121 approval (2026-08-06), and both lapsed in
+0.4.3 with the blocking screen they belonged to. kept below for history —
+either can be reopened as its own issue if still wanted, now against the
+fallback note rather than a full-screen state.
 
 - state 06's secondary action "haritada elle mahalle seç" has no current
   or planned implementation owner.

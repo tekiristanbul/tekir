@@ -1,12 +1,14 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/session_identity.dart';
 import '../../../core/models/active_alert.dart';
+import '../../../core/states/fallback_location_note.dart';
 import '../../../core/states/initial_read_gate.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/distance_format.dart';
@@ -239,9 +241,11 @@ class _SegmentButton extends StatelessWidget {
 }
 
 /// Shared body for the two location-aware tabs — resolves down to one of:
-/// full-screen loading, a recoverable location-trouble state (permission
-/// denied/denied forever/service disabled/unavailable), a generic
-/// error-retry, an empty state, or the paginated cat list.
+/// full-screen loading, a generic error-retry, an empty state, or the
+/// paginated cat list. A location that never resolved is not one of those
+/// branches: the notifier has already fallen back to the istanbul center,
+/// so the list renders normally under a [FallbackLocationNote] and without
+/// the distance column.
 class _LocationTabBody extends ConsumerWidget {
   const _LocationTabBody({
     required this.tab,
@@ -263,25 +267,49 @@ class _LocationTabBody extends ConsumerWidget {
     }
   }
 
+  // The note's cta: re-prompts or opens the settings page (whichever the
+  // OS still allows), then re-resolves so a grant made there turns the
+  // distance column back on without a restart.
+  Future<void> _enableLocation(WidgetRef ref) async {
+    await ref.read(discoverLocationServiceProvider).recoverPermission();
+    _retry(ref);
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (state.isLoading && !state.hasLoadedOnce) {
       return const _GatedListSkeleton();
     }
 
-    final outcome = state.locationOutcome;
-    if (outcome != null && outcome is! DiscoverLocationResolved) {
-      return _LocationTrouble(outcome: outcome, onRetry: () => _retry(ref));
-    }
-
     if (state.error != null && state.cats.isEmpty) {
       return _ErrorRetry(onRetry: () => _retry(ref));
     }
 
-    if (state.cats.isEmpty) {
-      return _EmptyDiscoverList(tab: tab);
-    }
+    final onFallback = state.usesFallbackLocation;
+    final body = state.cats.isEmpty
+        ? _EmptyDiscoverList(tab: tab)
+        : _buildList(onFallback: onFallback);
+    if (!onFallback) return body;
 
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s5,
+            AppSpacing.s2,
+            AppSpacing.s5,
+            AppSpacing.s3,
+          ),
+          child: FallbackLocationNote(
+            onEnableLocation: () => unawaited(_enableLocation(ref)),
+          ),
+        ),
+        Expanded(child: body),
+      ],
+    );
+  }
+
+  Widget _buildList({required bool onFallback}) {
     return ListView.separated(
       controller: scrollController,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s5),
@@ -309,94 +337,14 @@ class _LocationTabBody extends ConsumerWidget {
           areaLabel: cat.areaLabel,
           activeAlert: cat.activeAlert,
           lastUpdateAt: cat.lastUpdateAt,
-          distanceMeters: cat.distanceMeters,
+          // Measured from the istanbul fallback, not from the caller — a
+          // number that would read as "distance from you" and be wrong.
+          distanceMeters: onFallback ? null : cat.distanceMeters,
           source: tab == DiscoverTab.nearby
               ? AnalyticsSource.discoverNearby
               : AnalyticsSource.discoverNeedsHelp,
         );
       },
-    );
-  }
-}
-
-/// The recoverable location states issue #82 requires explicitly: denied
-/// (ask again may work), denied forever (only the system settings can
-/// help), service disabled (device gps is off), or a plain
-/// unavailable/timeout. Losing location must never break the following
-/// tab — this widget only ever renders inside a location-aware tab's own
-/// body, never affecting `following`.
-class _LocationTrouble extends StatelessWidget {
-  const _LocationTrouble({required this.outcome, required this.onRetry});
-
-  final DiscoverLocationOutcome outcome;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final (title, body) = switch (outcome) {
-      DiscoverLocationPermissionDeniedForever() => (
-        'Konum izni kapalı',
-        'Yakındaki ve yardım bekleyen kedileri görmek için ayarlardan konum iznini açman gerekir.',
-      ),
-      DiscoverLocationPermissionDenied() => (
-        'Konum izni gerekli',
-        'Yakındaki ve yardım bekleyen kedileri mesafeye göre gösterebilmemiz için konumuna ihtiyacımız var.',
-      ),
-      DiscoverLocationServiceDisabled() => (
-        'Konum servisleri kapalı',
-        'Cihazının konum servislerini açtıktan sonra tekrar dene.',
-      ),
-      _ => (
-        'Konum alınamadı',
-        'Konumun alınırken bir sorun oluştu. Tekrar dener misin?',
-      ),
-    };
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.s5),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.location_off_outlined,
-              size: 40,
-              color: AppColors.faint,
-            ),
-            const SizedBox(height: AppSpacing.s3),
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: AppSpacing.s2),
-            Text(
-              body,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: AppColors.muted, height: 1.5),
-            ),
-            const SizedBox(height: AppSpacing.s5),
-            if (outcome is DiscoverLocationPermissionDeniedForever)
-              OutlinedButton(
-                onPressed: Geolocator.openAppSettings,
-                child: const Text('Ayarları aç'),
-              )
-            else if (outcome is DiscoverLocationServiceDisabled)
-              OutlinedButton(
-                onPressed: Geolocator.openLocationSettings,
-                child: const Text('Konum ayarlarını aç'),
-              ),
-            const SizedBox(height: AppSpacing.s2),
-            ElevatedButton(
-              onPressed: onRetry,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.primaryInk,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-              ),
-              child: const Text('Tekrar dene'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

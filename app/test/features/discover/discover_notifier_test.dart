@@ -9,6 +9,7 @@ import 'package:app/features/discover/data/discover_location_service.dart';
 import 'package:app/features/discover/ui/discover_notifier.dart';
 import 'package:app/features/follow/data/follows_api.dart';
 import 'package:app/features/map/data/cat_marker.dart';
+import 'package:app/features/map/data/location_service.dart';
 
 class _FakeSessionIdentityService implements SessionIdentityService {
   SessionIdentity? _cached;
@@ -65,6 +66,7 @@ class _FakeDiscoverApi extends DiscoverApi {
   final List<Object> pages;
   int calls = 0;
   final List<String?> cursorsSeen = [];
+  final List<(double, double)> anchorsSeen = [];
 
   @override
   Future<DiscoverPage> fetch({
@@ -74,6 +76,7 @@ class _FakeDiscoverApi extends DiscoverApi {
     String? cursor,
   }) async {
     cursorsSeen.add(cursor);
+    anchorsSeen.add((lat, lng));
     final next = pages[calls];
     calls++;
     if (next is Exception) throw next;
@@ -121,7 +124,10 @@ void main() {
     final location = _FakeLocationService(
       const DiscoverLocationPermissionDenied(),
     );
-    final api = _FakeDiscoverApi([const DiscoverPage(items: [])]);
+    final api = _FakeDiscoverApi([
+      const DiscoverPage(items: []),
+      const DiscoverPage(items: []),
+    ]);
     final container = _buildContainer(location: location, discoverApi: api);
     addTearDown(container.dispose);
 
@@ -140,7 +146,7 @@ void main() {
       container.read(discoverProvider).nearby.locationOutcome,
       isA<DiscoverLocationResolved>(),
     );
-    expect(api.calls, 1);
+    expect(api.calls, 2);
   });
 
   test(
@@ -184,18 +190,85 @@ void main() {
     expect(api.calls, 1);
   });
 
-  test('loadMoreNearby is a no-op when location was never resolved', () async {
-    final location = _FakeLocationService(
-      const DiscoverLocationPermissionDenied(),
-    );
-    final api = _FakeDiscoverApi([const DiscoverPage(items: [])]);
-    final container = _buildContainer(location: location, discoverApi: api);
-    addTearDown(container.dispose);
+  // Apple review 0.4.2 (guideline 2.1(a)) rejected the app over the error
+  // this group's behaviour replaces: an unresolved location used to empty
+  // the tab and render a retry-labelled error card. The cats are the
+  // product's promise, so the query falls back to the istanbul center and
+  // only the distance column is given up.
+  group('an unresolved location falls back instead of erroring', () {
+    for (final (label, outcome) in <(String, DiscoverLocationOutcome)>[
+      ('permission denied', DiscoverLocationPermissionDenied()),
+      ('permission denied forever', DiscoverLocationPermissionDeniedForever()),
+      ('location service disabled', DiscoverLocationServiceDisabled()),
+      ('position out of the istanbul area', DiscoverLocationOutOfArea()),
+      ('a resolve timeout', DiscoverLocationUnavailable()),
+    ]) {
+      test('$label still lists cats, anchored on istanbul', () async {
+        final location = _FakeLocationService(outcome);
+        final api = _FakeDiscoverApi([
+          const DiscoverPage(
+            items: [DiscoverCat(id: 'a', primaryPhoto: '', distanceMeters: 10)],
+          ),
+        ]);
+        final container = _buildContainer(location: location, discoverApi: api);
+        addTearDown(container.dispose);
 
-    await container.read(discoverProvider.notifier).ensureNearbyLoaded();
-    await container.read(discoverProvider.notifier).loadMoreNearby();
+        await container.read(discoverProvider.notifier).ensureNearbyLoaded();
 
-    expect(api.calls, 0);
+        final nearby = container.read(discoverProvider).nearby;
+        expect(api.calls, 1);
+        expect(api.anchorsSeen.single, (
+          istanbulFallback.latitude,
+          istanbulFallback.longitude,
+        ));
+        expect(nearby.cats.map((c) => c.id), ['a']);
+        expect(nearby.usesFallbackLocation, isTrue);
+        expect(nearby.error, isNull);
+      });
+    }
+
+    test('a real in-area position is not treated as a fallback', () async {
+      final location = _FakeLocationService(_resolved);
+      final api = _FakeDiscoverApi([const DiscoverPage(items: [])]);
+      final container = _buildContainer(location: location, discoverApi: api);
+      addTearDown(container.dispose);
+
+      await container.read(discoverProvider.notifier).ensureNearbyLoaded();
+
+      expect(api.anchorsSeen.single, (41.0, 29.0));
+      expect(
+        container.read(discoverProvider).nearby.usesFallbackLocation,
+        isFalse,
+      );
+    });
+
+    test('a fallback list keeps paging against the same anchor', () async {
+      final location = _FakeLocationService(
+        const DiscoverLocationPermissionDenied(),
+      );
+      final api = _FakeDiscoverApi([
+        const DiscoverPage(
+          items: [DiscoverCat(id: 'a', primaryPhoto: '', distanceMeters: 10)],
+          nextCursor: 'cursor-1',
+        ),
+        const DiscoverPage(
+          items: [DiscoverCat(id: 'b', primaryPhoto: '', distanceMeters: 20)],
+        ),
+      ]);
+      final container = _buildContainer(location: location, discoverApi: api);
+      addTearDown(container.dispose);
+
+      await container.read(discoverProvider.notifier).ensureNearbyLoaded();
+      await container.read(discoverProvider.notifier).loadMoreNearby();
+
+      expect(container.read(discoverProvider).nearby.cats.map((c) => c.id), [
+        'a',
+        'b',
+      ]);
+      expect(api.cursorsSeen, [null, 'cursor-1']);
+      expect(api.anchorsSeen, hasLength(2));
+      expect(api.anchorsSeen.first, api.anchorsSeen.last);
+    });
   });
 
   test('nearby and needsHelp tabs load and page independently', () async {

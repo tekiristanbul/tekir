@@ -3,6 +3,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../../core/geo/istanbul_bounds.dart';
+import '../../../core/geo/location_permission.dart';
 
 /// Galata tower — a fixed, hard-coded point roughly central to the
 /// product's active istanbul area (issue #235). The map opens on this at
@@ -84,24 +85,11 @@ class LocationService {
     }
   }
 
-  /// The `konum iznini aç` cta's recovery action (issue #262). iOS only
-  /// ever shows its own permission dialog once per install — after that,
-  /// [Geolocator.checkPermission] reports `deniedForever` (its mapping for
-  /// both an explicit prior denial and OS-level `restricted`), and
-  /// [Geolocator.requestPermission] is a silent no-op against it. `denied`
-  /// is the one status still worth prompting; everything else can only be
-  /// reversed from the app's settings page, which is why the previous cta
-  /// handler — invalidating [initialLocationProvider] to re-run
-  /// [resolveInitialCenter], which itself only re-requests on `denied` —
-  /// did nothing visible once a user had denied once.
-  Future<void> recoverPermission() async {
-    final permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      await Geolocator.requestPermission();
-    } else {
-      await Geolocator.openAppSettings();
-    }
-  }
+  /// The `konum iznini aç` cta's recovery action (issue #262) — see
+  /// [recoverLocationPermission] for why re-requesting alone isn't enough.
+  /// Discover's own service exposes the identical method against the same
+  /// shared implementation.
+  Future<void> recoverPermission() => recoverLocationPermission();
 }
 
 final locationServiceProvider = Provider<LocationService>(

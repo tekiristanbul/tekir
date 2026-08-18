@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/analytics/analytics.dart';
@@ -26,6 +27,15 @@ Future<void> main() async {
   // means a release build without it crashes at startup instead (issue
   // #128 review).
   Env.apiBaseUrl;
+
+  // Portrait-only, matching the product's phone-portrait design. The native
+  // manifests already lock it on android and on iphone, but an iphone-only
+  // build still runs on ipad in compatibility mode, where the plist's
+  // `~ipad` orientation list applies — this makes the lock hold everywhere
+  // regardless of which manifest the host reads.
+  await SystemChrome.setPreferredOrientations(const [
+    DeviceOrientation.portraitUp,
+  ]);
 
   // The decoded-image cache defaults to 100 MB, which is a liability rather
   // than a budget while the backend serves one full-resolution image to every

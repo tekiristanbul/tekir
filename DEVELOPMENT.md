@@ -480,13 +480,13 @@ this produces `build/ios/archive/Runner.xcarchive` and, if an export method reso
 
 ### build numbers for testflight
 
-App Store Connect rejects a re-upload with a build number it has already seen for the same version. the build number is the `+N` suffix in `app/pubspec.yaml`'s `version:` (currently `1.0.0+1`, feeding `CURRENT_PROJECT_VERSION`/`FLUTTER_BUILD_NUMBER` in Xcode) — bump it before every new TestFlight upload:
+App Store Connect rejects a re-upload with a build number it has already seen for the same version. the build number is the `+N` suffix in `app/pubspec.yaml`'s `version:` (currently `0.4.3+4`, feeding `CURRENT_PROJECT_VERSION`/`FLUTTER_BUILD_NUMBER` in Xcode) — bump it before every new TestFlight upload:
 
 ```text
-flutter build ipa --release --build-number=2
+flutter build ipa --release --build-number=5
 ```
 
-or edit `version: 1.0.0+2` in `app/pubspec.yaml` directly. the marketing version (`1.0.0`, before the `+`) only needs to change for a user-visible release, not every TestFlight build.
+or edit `version: 0.4.3+5` in `app/pubspec.yaml` directly. the marketing version (`0.4.3`, before the `+`) only needs to change for a user-visible release, not every TestFlight build.
 
 ### uploading through transporter / app store connect
 
