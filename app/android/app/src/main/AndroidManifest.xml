@@ -3,8 +3,10 @@
     <!-- release builds need INTERNET explicitly (the flutter template only
          grants it in debug/profile manifests) -->
     <uses-permission android:name="android.permission.INTERNET"/>
-    <!-- geolocator: nearby-cats map/discover distances; the app degrades to
-         a Kadıköy-centered map when denied, mirroring the prototype -->
+    <!-- geolocator: nearby-cats map/discover distances. denying it never
+         blocks anything — both surfaces fall back to the istanbul center
+         and give up only the distance column (docs/design/app-states.md,
+         state 06) -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <!-- firebase_messaging on android 13+: runtime permission requested via
