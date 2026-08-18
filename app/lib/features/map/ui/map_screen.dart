@@ -9,6 +9,7 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../../../core/analytics/analytics.dart';
 import '../../../core/geo/istanbul_bounds.dart';
+import '../../../core/states/fallback_location_note.dart';
 import '../../../core/states/initial_read_gate.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/ui/auth_gate.dart';
@@ -284,17 +285,20 @@ class _MapScreenState extends ConsumerState<MapScreen>
       }
     });
 
+    // No location condition blocks the map. A denied permission, a disabled
+    // service, a timeout and an out-of-area position all resolve to the
+    // fixed istanbul center, and the map opens on greater istanbul with its
+    // cats loaded — the product's promise is istanbul's cats, which a
+    // visitor who never shares a location is still entitled to see. What
+    // changes is the zoom, the suppressed user dot, and the fallback note's
+    // cta; nothing renders as an error or a wall.
     return Scaffold(
       body: initialLocation.when(
-        data: (resolved) => resolved.permissionDenied
-            ? LocationPermissionState(
-                onRequestPermission: _requestLocationPermission,
-              )
-            : _buildMapChrome(
-                center: resolved.center,
-                isFallback: resolved.isFallback,
-                searchHint: searchHint,
-              ),
+        data: (resolved) => _buildMapChrome(
+          center: resolved.center,
+          isFallback: resolved.isFallback,
+          searchHint: searchHint,
+        ),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (_, _) => _buildMapChrome(
           center: istanbulFallback,
@@ -361,6 +365,24 @@ class _MapScreenState extends ConsumerState<MapScreen>
           right: AppSpacing.s4,
           child: PointerInterceptor(child: _NotificationsButton()),
         ),
+        // Below the chip row, which itself sits one tap-target below the
+        // search field. The banner used to live inside _buildMap's stack at
+        // the search field's own offset and was drawn first, so the search
+        // field covered it and it was never actually visible.
+        if (isFallback)
+          Positioned(
+            top:
+                MediaQuery.of(context).padding.top +
+                AppSpacing.s3 +
+                (kTapMin + AppSpacing.s2) * 2,
+            left: AppSpacing.s4,
+            right: AppSpacing.s4,
+            child: PointerInterceptor(
+              child: FallbackLocationNote(
+                onEnableLocation: _requestLocationPermission,
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -441,7 +463,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
           onCameraIdle: _onCameraIdle,
           onCameraMove: _onCameraMove,
         ),
-        if (isFallback) const _FallbackLocationBanner(),
         if (isInitialRead)
           // state 13 · harita yükleniyor. keyed on the attempt counter so
           // a retry remounts the gate and earns a fresh 400 ms of silence.
@@ -544,18 +565,6 @@ class _InitialReadOverlay extends StatelessWidget {
   }
 }
 
-class _FallbackLocationBanner extends StatelessWidget {
-  const _FallbackLocationBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    return const _TopBanner(
-      icon: Icons.location_off,
-      message: 'konum alınamadı — istanbul gösteriliyor',
-    );
-  }
-}
-
 class _LoadingBar extends StatelessWidget {
   const _LoadingBar();
 
@@ -566,37 +575,6 @@ class _LoadingBar extends StatelessWidget {
       left: 0,
       right: 0,
       child: LinearProgressIndicator(minHeight: 3),
-    );
-  }
-}
-
-class _TopBanner extends StatelessWidget {
-  const _TopBanner({required this.icon, required this.message});
-
-  final IconData icon;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-      left: AppSpacing.s3,
-      right: AppSpacing.s3,
-      child: Material(
-        color: AppColors.surface,
-        elevation: 2,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              Icon(icon, size: 18),
-              const SizedBox(width: 8),
-              Expanded(child: Text(message)),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

@@ -4,6 +4,7 @@ import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/session_identity.dart';
 import '../../follow/data/follows_api.dart';
 import '../../map/data/cat_marker.dart';
+import '../../map/data/location_service.dart';
 import '../data/discover_api.dart';
 import '../data/discover_cat.dart';
 import '../data/discover_location_service.dart';
@@ -17,14 +18,20 @@ import '../data/discover_location_service.dart';
 enum DiscoverTab { nearby, needsHelp, following }
 
 /// One of the two location-aware tabs' state: which page of
-/// [DiscoverCat]s has loaded so far, and — since a location-aware tab can
-/// fail in more ways than a plain network call — the last resolved (or
-/// failed) [DiscoverLocationOutcome], so the screen can show a state that
-/// actually explains what's wrong (permission denied vs. service disabled
-/// vs. a plain server error) rather than one generic error block.
+/// [DiscoverCat]s has loaded so far, the coordinate that page was queried
+/// against ([anchorLat]/[anchorLng]), and the last [DiscoverLocationOutcome]
+/// that produced it.
+///
+/// A failed resolve never empties the tab. The query falls back to the
+/// fixed istanbul center and the list loads normally — losing location
+/// costs the caller the distance column ([usesFallbackLocation]), not the
+/// cats. The outcome is still kept so the screen can say which point the
+/// results are anchored to, and so paging keeps hitting that same point.
 class DiscoverLocationTabState {
   const DiscoverLocationTabState({
     this.locationOutcome,
+    this.anchorLat,
+    this.anchorLng,
     this.cats = const [],
     this.nextCursor,
     this.isLoading = false,
@@ -34,6 +41,8 @@ class DiscoverLocationTabState {
   });
 
   final DiscoverLocationOutcome? locationOutcome;
+  final double? anchorLat;
+  final double? anchorLng;
   final List<DiscoverCat> cats;
   final String? nextCursor;
   final bool isLoading;
@@ -43,8 +52,17 @@ class DiscoverLocationTabState {
 
   bool get hasMore => nextCursor != null;
 
+  /// True once a resolve has finished on anything but a real in-area
+  /// position. Drives both the fallback note and the suppressed distance
+  /// column — a `distanceMeters` measured from the istanbul center would
+  /// read as "distance from you" and be wrong.
+  bool get usesFallbackLocation =>
+      locationOutcome != null && locationOutcome is! DiscoverLocationResolved;
+
   DiscoverLocationTabState copyWith({
     DiscoverLocationOutcome? locationOutcome,
+    double? anchorLat,
+    double? anchorLng,
     List<DiscoverCat>? cats,
     String? nextCursor,
     bool? isLoading,
@@ -56,6 +74,8 @@ class DiscoverLocationTabState {
   }) {
     return DiscoverLocationTabState(
       locationOutcome: locationOutcome ?? this.locationOutcome,
+      anchorLat: anchorLat ?? this.anchorLat,
+      anchorLng: anchorLng ?? this.anchorLng,
       cats: cats ?? this.cats,
       nextCursor: clearCursor ? null : (nextCursor ?? this.nextCursor),
       isLoading: isLoading ?? this.isLoading,
@@ -208,31 +228,32 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
             DiscoverLocationPermissionDeniedForever() =>
               AnalyticsResult.permissionDenied,
             DiscoverLocationServiceDisabled() ||
+            DiscoverLocationOutOfArea() ||
             DiscoverLocationUnavailable() => AnalyticsResult.offline,
           }),
         );
-    if (outcome is! DiscoverLocationResolved) {
-      _setTab(
-        filter,
-        _tabFor(filter).copyWith(
-          isLoading: false,
-          hasLoadedOnce: true,
-          locationOutcome: outcome,
-          cats: const [],
-          clearCursor: true,
-        ),
-      );
-      return;
-    }
+
+    // A resolve that didn't produce a usable in-area position anchors the
+    // query on the same fixed istanbul center the map falls back to, rather
+    // than emptying the tab: the product's promise is istanbul's cats, and
+    // a visitor who never shares a location can still browse, read updates
+    // and hand the phone to someone else. Only the distance column is lost,
+    // which the screen drops via [DiscoverLocationTabState.usesFallbackLocation].
+    final (lat, lng) = switch (outcome) {
+      DiscoverLocationResolved(:final lat, :final lng) => (lat, lng),
+      _ => (istanbulFallback.latitude, istanbulFallback.longitude),
+    };
 
     try {
       final page = await ref
           .read(discoverApiProvider)
-          .fetch(filter: filter, lat: outcome.lat, lng: outcome.lng);
+          .fetch(filter: filter, lat: lat, lng: lng);
       _setTab(
         filter,
         DiscoverLocationTabState(
           locationOutcome: outcome,
+          anchorLat: lat,
+          anchorLng: lng,
           cats: page.items,
           nextCursor: page.nextCursor,
           hasLoadedOnce: true,
@@ -245,6 +266,8 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
           isLoading: false,
           hasLoadedOnce: true,
           locationOutcome: outcome,
+          anchorLat: lat,
+          anchorLng: lng,
           error: e,
         ),
       );
@@ -253,10 +276,13 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
 
   Future<void> _loadMoreLocationTab(DiscoverFilter filter) async {
     final current = _tabFor(filter);
-    final outcome = current.locationOutcome;
-    if (current.isLoadingMore ||
-        !current.hasMore ||
-        outcome is! DiscoverLocationResolved) {
+    // Pages against the anchor the first page used, whether that was a real
+    // position or the istanbul fallback — a fallback list has to keep
+    // paging, and re-resolving mid-scroll could shift the cursor's origin.
+    final lat = current.anchorLat;
+    final lng = current.anchorLng;
+    if (current.isLoadingMore || !current.hasMore || lat == null ||
+        lng == null) {
       return;
     }
 
@@ -266,8 +292,8 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
           .read(discoverApiProvider)
           .fetch(
             filter: filter,
-            lat: outcome.lat,
-            lng: outcome.lng,
+            lat: lat,
+            lng: lng,
             cursor: current.nextCursor,
           );
       final latest = _tabFor(filter);

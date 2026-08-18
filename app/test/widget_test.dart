@@ -22,7 +22,7 @@ class _FixedCatsMapNotifier extends CatsMapNotifier {
 
 void main() {
   testWidgets(
-    'opens on the map and shows the fallback banner when location is unavailable',
+    'opens on the map and shows the fallback note when location is unavailable',
     (tester) async {
       await tester.pumpWidget(
         ProviderScope(
@@ -45,7 +45,7 @@ void main() {
 
       expect(find.byType(GoogleMap), findsOneWidget);
       expect(
-        find.text('konum alınamadı — istanbul gösteriliyor'),
+        find.text('konum yok — istanbul merkezi gösteriliyor'),
         findsOneWidget,
       );
     },

@@ -205,50 +205,54 @@ void main() {
     });
   });
 
-  group('state 06 · konum izni yok', () {
+  group('no usable location never blocks the map', () {
     const empty = CatsMapState();
 
-    testWidgets('blocks the map behind the primary action only', (
+    testWidgets('a denied permission still opens the map, with the note', (
       tester,
     ) async {
       await _pumpSettledLocation(
         tester,
-        _harness(state: empty, permissionDenied: true),
+        _harness(state: empty, permissionDenied: true, fallbackLocation: true),
       );
       await tester.pump();
 
+      // The pre-0.4.3 behaviour was a full-screen block instead of the map
+      // (old state 06). Apple review 0.4.2 hit it by denying the prompt and
+      // reported it as an error; nothing about a missing location is an
+      // error, so the map renders and the note explains the anchor.
       expect(
         find.text('nerede olduğunu bilmeden haritayı açamıyoruz'),
+        findsNothing,
+      );
+      expect(find.byType(GoogleMap), findsOneWidget);
+      expect(
+        find.text('konum yok — istanbul merkezi gösteriliyor'),
         findsOneWidget,
       );
       expect(find.text('konum iznini aç'), findsOneWidget);
-      // approved scope (issue #121): no secondary action and no unverified
-      // privacy sub-line ship in this pass.
-      expect(find.text('haritada elle mahalle seç'), findsNothing);
-      expect(find.textContaining('kaydedilmez'), findsNothing);
-      expect(find.byType(GoogleMap), findsNothing);
     });
 
-    testWidgets('the primary action meets the 44 px minimum target', (
+    testWidgets('the note action meets the 44 px minimum target', (
       tester,
     ) async {
       await _pumpSettledLocation(
         tester,
-        _harness(state: empty, permissionDenied: true),
+        _harness(state: empty, permissionDenied: true, fallbackLocation: true),
       );
       await tester.pump();
 
       expect(
-        tester.getSize(find.widgetWithText(InkWell, 'konum iznini aç')).height,
+        tester
+            .getSize(find.widgetWithText(TextButton, 'konum iznini aç'))
+            .height,
         greaterThanOrEqualTo(kTapMin),
       );
     });
 
-    testWidgets('a disabled service or timeout keeps the map with a banner', (
+    testWidgets('a disabled service or timeout shows the same note', (
       tester,
     ) async {
-      // fallback without permissionDenied is the *other* fallback reasons
-      // (service disabled, timeout/error) — those never trigger state 06.
       await _pumpSettledLocation(
         tester,
         _harness(state: empty, fallbackLocation: true),
@@ -256,12 +260,20 @@ void main() {
       await tester.pump();
 
       expect(
-        find.text('nerede olduğunu bilmeden haritayı açamıyoruz'),
-        findsNothing,
-      );
-      expect(
-        find.text('konum alınamadı — istanbul gösteriliyor'),
+        find.text('konum yok — istanbul merkezi gösteriliyor'),
         findsOneWidget,
+      );
+    });
+
+    testWidgets('a real in-area location shows no note at all', (
+      tester,
+    ) async {
+      await _pumpSettledLocation(tester, _harness(state: empty));
+      await tester.pump();
+
+      expect(
+        find.text('konum yok — istanbul merkezi gösteriliyor'),
+        findsNothing,
       );
     });
   });

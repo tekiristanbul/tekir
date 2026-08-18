@@ -1,16 +1,19 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+
+import '../../../core/geo/istanbul_bounds.dart';
+import '../../../core/geo/location_permission.dart';
 
 /// The result of resolving the caller's own location for discover's two
 /// location-aware tabs (nearby/needs-help, issue #82). Distinct from
-/// [LocationService] (features/map/data/location_service.dart), which the
-/// map screen keeps using unchanged: that service always succeeds by
-/// silently falling back to a fixed istanbul landmark, which is the right
-/// behavior for centering a camera but the wrong one here — this screen
-/// shows the caller a real "distance from you" figure, so silently
-/// substituting a fake point would just show a wrong number with no way to
-/// tell it's wrong. Every failure mode is instead a distinct, recoverable
-/// state the screen can show and offer to retry.
+/// [LocationService] (features/map/data/location_service.dart) only in what
+/// it reports, not in what the screen does with it: both surfaces fall back
+/// to the same fixed istanbul center, and neither ever blocks. The reason
+/// this still enumerates its failure modes is the distance column — a
+/// figure the caller reads as "how far from me", which would be a plain lie
+/// against a substituted point. So discover keeps the outcome, falls back
+/// for the query, and drops the distance instead of faking it.
 sealed class DiscoverLocationOutcome {
   const DiscoverLocationOutcome();
 }
@@ -48,6 +51,15 @@ class DiscoverLocationUnavailable extends DiscoverLocationOutcome {
   const DiscoverLocationUnavailable();
 }
 
+/// A position resolved cleanly but lands outside the product's supported
+/// istanbul area — a reviewer or a traveller opening the app from another
+/// city. Sending it to `GET /v1/cats/discover` earns a `400 invalid area`,
+/// so it is caught here and treated exactly like the map's own
+/// out-of-bounds fallback ([LocationService.resolveInitialCenter]).
+class DiscoverLocationOutOfArea extends DiscoverLocationOutcome {
+  const DiscoverLocationOutOfArea();
+}
+
 /// Resolves the caller's current location for discover's nearby/needs-help
 /// tabs. Never throws — every failure mode maps to one of the outcomes
 /// above instead.
@@ -75,6 +87,11 @@ class DiscoverLocationService {
           timeLimit: Duration(seconds: 8),
         ),
       );
+      if (!istanbulBounds.contains(
+        LatLng(position.latitude, position.longitude),
+      )) {
+        return const DiscoverLocationOutOfArea();
+      }
       return DiscoverLocationResolved(
         lat: position.latitude,
         lng: position.longitude,
@@ -83,6 +100,11 @@ class DiscoverLocationService {
       return const DiscoverLocationUnavailable();
     }
   }
+
+  /// The `konum iznini aç` action on discover's fallback note. Shares the
+  /// map cta's implementation ([recoverLocationPermission]) — a plain
+  /// re-resolve can't recover a denial iOS has stopped re-prompting for.
+  Future<void> recoverPermission() => recoverLocationPermission();
 }
 
 final discoverLocationServiceProvider = Provider<DiscoverLocationService>(

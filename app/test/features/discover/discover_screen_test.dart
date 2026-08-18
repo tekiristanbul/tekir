@@ -78,12 +78,16 @@ class _FixedDiscoverLocationService extends DiscoverLocationService {
 
   DiscoverLocationOutcome outcome;
   int calls = 0;
+  int recoverCalls = 0;
 
   @override
   Future<DiscoverLocationOutcome> resolve() async {
     calls++;
     return outcome;
   }
+
+  @override
+  Future<void> recoverPermission() async => recoverCalls++;
 }
 
 class _FakeDiscoverApi extends DiscoverApi {
@@ -313,42 +317,134 @@ void main() {
       expect(api.calls, 2);
     });
 
-    testWidgets(
-      'permission denied shows a recoverable state, retry re-resolves',
-      (tester) async {
-        final location = _FixedDiscoverLocationService(
-          const DiscoverLocationPermissionDenied(),
-        );
-        await _pump(tester, session: null, locationService: location);
-
-        expect(find.text('Konum izni gerekli'), findsOneWidget);
-        expect(location.calls, 1);
-
-        location.outcome = const DiscoverLocationResolved(lat: 41.0, lng: 29.0);
-        await tester.tap(find.text('Tekrar dene'));
-        await tester.pumpAndSettle();
-
-        expect(location.calls, 2);
-        expect(find.text('Yakında kedi bulunamadı'), findsOneWidget);
-      },
-    );
-
-    testWidgets('permission denied forever offers to open settings', (
+    // Apple review 0.4.2 (guideline 2.1(a)) screenshotted the retry-labelled
+    // error card these tests used to assert. No location outcome renders as
+    // an error any more: the list loads against the istanbul center and
+    // gives up only the distance column.
+    testWidgets('an unresolved location lists cats without distances', (
       tester,
     ) async {
+      final api = _FakeDiscoverApi()
+        ..nextNearby = const [
+          DiscoverCat(
+            id: 'a',
+            name: 'Tekir',
+            primaryPhoto: '',
+            distanceMeters: 320,
+          ),
+        ];
       await _pump(
         tester,
         session: null,
+        discoverApi: api,
         locationService: _FixedDiscoverLocationService(
-          const DiscoverLocationPermissionDeniedForever(),
+          const DiscoverLocationPermissionDenied(),
         ),
       );
 
-      expect(find.text('Konum izni kapalı'), findsOneWidget);
-      expect(find.text('Ayarları aç'), findsOneWidget);
+      expect(api.calls, 1);
+      expect(find.text('Tekir'), findsOneWidget);
+      expect(
+        find.text('konum yok — istanbul merkezi gösteriliyor'),
+        findsOneWidget,
+      );
+      expect(find.text('konum iznini aç'), findsOneWidget);
+      expect(find.text('320 m'), findsNothing);
+      expect(find.text('Tekrar dene'), findsNothing);
     });
 
-    testWidgets('location service disabled offers to open location settings', (
+    testWidgets('a position outside istanbul falls back the same way', (
+      tester,
+    ) async {
+      // A reviewer granting the permission from california is the other
+      // half of the 0.4.2 rejection: cupertino coordinates earned a
+      // `400 invalid area` that reached the screen as a retry error.
+      final api = _FakeDiscoverApi()
+        ..nextNearby = const [
+          DiscoverCat(
+            id: 'a',
+            name: 'Tekir',
+            primaryPhoto: '',
+            distanceMeters: 320,
+          ),
+        ];
+      await _pump(
+        tester,
+        session: null,
+        discoverApi: api,
+        locationService: _FixedDiscoverLocationService(
+          const DiscoverLocationOutOfArea(),
+        ),
+      );
+
+      expect(find.text('Tekir'), findsOneWidget);
+      expect(
+        find.text('konum yok — istanbul merkezi gösteriliyor'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a real in-area position keeps the distances and the note off', (
+      tester,
+    ) async {
+      final api = _FakeDiscoverApi()
+        ..nextNearby = const [
+          DiscoverCat(
+            id: 'a',
+            name: 'Tekir',
+            primaryPhoto: '',
+            distanceMeters: 320,
+          ),
+        ];
+      await _pump(tester, session: null, discoverApi: api);
+
+      expect(find.text('320 m'), findsOneWidget);
+      expect(
+        find.text('konum yok — istanbul merkezi gösteriliyor'),
+        findsNothing,
+      );
+    });
+
+    testWidgets('the note cta recovers the permission and re-resolves', (
+      tester,
+    ) async {
+      // A plain re-resolve can't recover a denial iOS has stopped
+      // re-prompting for (issue #262) — the cta has to go through
+      // recoverPermission, which reaches the settings page instead.
+      final api = _FakeDiscoverApi()
+        ..nextNearby = const [
+          DiscoverCat(
+            id: 'a',
+            name: 'Tekir',
+            primaryPhoto: '',
+            distanceMeters: 320,
+          ),
+        ];
+      final location = _FixedDiscoverLocationService(
+        const DiscoverLocationPermissionDenied(),
+      );
+      await _pump(
+        tester,
+        session: null,
+        discoverApi: api,
+        locationService: location,
+      );
+      expect(location.calls, 1);
+
+      location.outcome = const DiscoverLocationResolved(lat: 41.03, lng: 28.98);
+      await tester.tap(find.text('konum iznini aç'));
+      await tester.pumpAndSettle();
+
+      expect(location.recoverCalls, 1);
+      expect(location.calls, 2);
+      expect(
+        find.text('konum yok — istanbul merkezi gösteriliyor'),
+        findsNothing,
+      );
+      expect(find.text('320 m'), findsOneWidget);
+    });
+
+    testWidgets('an empty fallback list still explains the anchor', (
       tester,
     ) async {
       await _pump(
@@ -359,21 +455,11 @@ void main() {
         ),
       );
 
-      expect(find.text('Konum servisleri kapalı'), findsOneWidget);
-      expect(find.text('Konum ayarlarını aç'), findsOneWidget);
-    });
-
-    testWidgets('generic location failure shows a plain retry', (tester) async {
-      await _pump(
-        tester,
-        session: null,
-        locationService: _FixedDiscoverLocationService(
-          const DiscoverLocationUnavailable(),
-        ),
+      expect(find.text('Yakında kedi bulunamadı'), findsOneWidget);
+      expect(
+        find.text('konum yok — istanbul merkezi gösteriliyor'),
+        findsOneWidget,
       );
-
-      expect(find.text('Konum alınamadı'), findsOneWidget);
-      expect(find.text('Tekrar dene'), findsOneWidget);
     });
 
     testWidgets(
