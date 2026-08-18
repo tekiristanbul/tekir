@@ -265,9 +265,7 @@ void main() {
       );
     });
 
-    testWidgets('a real in-area location shows no note at all', (
-      tester,
-    ) async {
+    testWidgets('a real in-area location shows no note at all', (tester) async {
       await _pumpSettledLocation(tester, _harness(state: empty));
       await tester.pump();
 

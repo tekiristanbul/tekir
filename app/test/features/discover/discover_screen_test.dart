@@ -384,26 +384,27 @@ void main() {
       );
     });
 
-    testWidgets('a real in-area position keeps the distances and the note off', (
-      tester,
-    ) async {
-      final api = _FakeDiscoverApi()
-        ..nextNearby = const [
-          DiscoverCat(
-            id: 'a',
-            name: 'Tekir',
-            primaryPhoto: '',
-            distanceMeters: 320,
-          ),
-        ];
-      await _pump(tester, session: null, discoverApi: api);
+    testWidgets(
+      'a real in-area position keeps the distances and the note off',
+      (tester) async {
+        final api = _FakeDiscoverApi()
+          ..nextNearby = const [
+            DiscoverCat(
+              id: 'a',
+              name: 'Tekir',
+              primaryPhoto: '',
+              distanceMeters: 320,
+            ),
+          ];
+        await _pump(tester, session: null, discoverApi: api);
 
-      expect(find.text('320 m'), findsOneWidget);
-      expect(
-        find.text('konum yok — istanbul merkezi gösteriliyor'),
-        findsNothing,
-      );
-    });
+        expect(find.text('320 m'), findsOneWidget);
+        expect(
+          find.text('konum yok — istanbul merkezi gösteriliyor'),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets('the note cta recovers the permission and re-resolves', (
       tester,

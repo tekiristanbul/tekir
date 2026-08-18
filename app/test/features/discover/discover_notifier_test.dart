@@ -261,10 +261,10 @@ void main() {
       await container.read(discoverProvider.notifier).ensureNearbyLoaded();
       await container.read(discoverProvider.notifier).loadMoreNearby();
 
-      expect(
-        container.read(discoverProvider).nearby.cats.map((c) => c.id),
-        ['a', 'b'],
-      );
+      expect(container.read(discoverProvider).nearby.cats.map((c) => c.id), [
+        'a',
+        'b',
+      ]);
       expect(api.cursorsSeen, [null, 'cursor-1']);
       expect(api.anchorsSeen, hasLength(2));
       expect(api.anchorsSeen.first, api.anchorsSeen.last);

@@ -281,7 +281,9 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
     // paging, and re-resolving mid-scroll could shift the cursor's origin.
     final lat = current.anchorLat;
     final lng = current.anchorLng;
-    if (current.isLoadingMore || !current.hasMore || lat == null ||
+    if (current.isLoadingMore ||
+        !current.hasMore ||
+        lat == null ||
         lng == null) {
       return;
     }
