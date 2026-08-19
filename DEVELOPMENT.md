@@ -671,9 +671,10 @@ run backend validation:
 ```text
 cd backend
 make fmt
+go vet ./...
+make lint
 make build
 make test
-make lint
 ```
 
 run flutter validation:
@@ -697,9 +698,23 @@ make migrate-status
 
 ## ci behavior
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the repository validation on pushes and pull requests. reproduce a failing job with the matching commands above before changing workflow configuration.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the canonical automated verification gate. it runs on every pull request and on pushes to `main`, and its result is what decides whether a change validates. everything above is local developer feedback and the evidence a pull request carries — none of it overrides a red ci run.
 
-backend ci covers build, vet, lint, formatting, migrations, and tests against postgres/postgis. flutter ci covers formatting, analysis, and tests.
+three independent jobs, each check its own step, so the failing check names the area it came from:
+
+| job | ci runs | local equivalent |
+| --- | --- | --- |
+| `backend` | `gofmt`, `go vet`, `golangci-lint`, `go build`, goose migrations against postgis, `go test` | `make fmt`, `go vet ./...`, `make lint`, `make build`, `make migrate-up`, `make test` from `backend/` |
+| `flutter` | `flutter pub get`, `dart format --set-exit-if-changed`, `flutter analyze`, `flutter test` | the same commands from `app/` |
+| `docs` | `scripts/check-docs.py` | `python3 scripts/check-docs.py` from the repository root |
+
+the `docs` job is deterministic and offline: it resolves every relative link and heading anchor in tracked markdown, and checks that `docs/adr/` and its index in [`docs/adr/README.md`](docs/adr/README.md) list the same records. it fetches no external url, so a dead third-party link never turns ci red on an unrelated change.
+
+no shell step chains validations, so an earlier failure can never be masked by a later command. the job names are stable and safe to make required branch-protection checks.
+
+reproduce a failing job with its local equivalent before changing workflow configuration.
+
+ci deliberately does not cover the cloudflare moderation smoke suite (a manual release gate, above), device and emulator tests, or deployment — there is no cd pipeline.
 
 ## troubleshooting
 

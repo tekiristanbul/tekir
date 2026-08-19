@@ -34,6 +34,7 @@ follow `AGENTS.md` for readiness, delivery, review, evidence, and definition-of-
 ## agent responsibilities
 
 - implementation must stay within accepted issue scope, validate affected paths, update durable documentation, and open one draft pr.
+- `.github/workflows/ci.yml` is the canonical automated verification gate. an agent's local run is evidence, not the gate; no agent claim, confidence score, or review finding overrides a failed ci check.
 - technical review must prioritize correctness, data safety, migration safety, compatibility, security, privacy, performance, tests, documentation, and scope control. for changed product or architecture concepts, it must perform a cross-document semantic-consistency pass across the applicable source-of-truth documents rather than reviewing changed files in isolation. it must report blocking findings, non-blocking findings, open questions, residual risks, required human review, evidence, and confidence by area.
 - product review must evaluate only user behavior, turkish copy, visual output, edge states, acceptance criteria, and approved design references. it must not invent technical architecture or approve on behalf of the human product owner.
 - when review confidence is below 80% in any material area, recommend human technical review explicitly.

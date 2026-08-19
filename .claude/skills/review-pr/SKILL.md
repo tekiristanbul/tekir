@@ -21,6 +21,10 @@ Never claim a check passed without running it. Run the repository's validation
 commands yourself when the working tree allows it, and say which ones you ran
 and which you could not.
 
+Check the pull request's ci run (`gh pr checks <n>`). `.github/workflows/ci.yml`
+is the canonical automated gate: a red run is a blocking finding no local
+result, author claim, or review judgement can clear.
+
 Decide which validations the diff actually requires before judging its
 evidence. Derive that from the paths it touches — `backend/` and `app/` have
 their own commands in `CONTRIBUTING.md`, and a diff touching neither may

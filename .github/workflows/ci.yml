@@ -5,6 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# this workflow is the canonical automated verification gate for the
+# repository. every check gets its own step so a failure is attributed to
+# one area and cannot be hidden by a later command in the same shell, and
+# every job runs with the least privilege it needs.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -77,3 +88,11 @@ jobs:
 
       - name: test
         run: flutter test
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: links and adr index
+        run: python3 scripts/check-docs.py

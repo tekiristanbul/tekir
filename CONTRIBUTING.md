@@ -68,16 +68,19 @@ contributors must not invent unresolved product behavior or expand an issue beyo
 
 ## validation
 
-run the checks relevant to the changed area.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the canonical automated verification gate. it runs on every pull request and on `main` in three independent jobs — `backend`, `flutter`, and `docs` — and every check is its own step, so a failing check names the area it came from. a red ci run is the repository's answer, whatever a local run, a contributor, or an agent reports.
+
+the commands below are the local equivalents of those jobs. run the ones relevant to the changed area: they are faster feedback and the evidence a pull request carries, but they do not substitute for a required ci check.
 
 backend:
 
 ```sh
 cd backend
 make fmt
+go vet ./...
+make lint
 make build
 make test
-make lint
 ```
 
 flutter:
@@ -87,6 +90,12 @@ cd app
 dart format --output=none --set-exit-if-changed .
 flutter analyze
 flutter test
+```
+
+documentation, from the repository root:
+
+```sh
+python3 scripts/check-docs.py
 ```
 
 include migration, integration, accessibility, small-screen, privacy, or manual evidence when the issue requires it.

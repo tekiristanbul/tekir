@@ -67,6 +67,8 @@ before assigning implementation, the issue must define:
 
 - add or update tests for changed behavior and keep regression coverage intact.
 - run the repository's real validation commands for every affected area. never report an unrun or failed check as successful.
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the canonical automated verification surface. it runs on every pull request and on `main` in three independent jobs — `backend`, `flutter`, and `docs` — and each check is its own step, so a failure names the area it came from.
+- local commands are developer feedback and the evidence a pull request carries. they never substitute for ci: a passing local run, an agent's judgement, or a review claim does not override a failed ci check, and an agent never reports a change as validated while ci is red.
 - open a draft pull request. do not mark it ready, approve it, or assume product owner approval.
 - let the pull request closing keyword close the issue on merge; do not close issues manually.
 - the pull request description must include closing keywords, implementation summary, important schema/api decisions, risk level, validations run, intentional exclusions, product owner review status, and screenshots or demo evidence for user-visible changes.
