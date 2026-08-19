@@ -6,6 +6,12 @@ define the mvp schema backing [[api]], on postgres + postgis.
 
 ## decisions
 
+rationale and rejected alternatives for the decisions this schema encodes:
+[adr-0002](../adr/0002-postgis-geography-as-the-location-primitive.md) (location
+primitive), [adr-0003](../adr/0003-updates-as-an-append-only-history.md) (updates
+history), [adr-0004](../adr/0004-forward-only-immutable-migrations.md) (migration
+policy).
+
 ```sql
 create extension if not exists postgis;
 create extension if not exists pgcrypto; -- gen_random_uuid()
