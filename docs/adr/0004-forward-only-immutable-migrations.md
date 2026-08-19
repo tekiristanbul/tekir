@@ -9,9 +9,10 @@
 ## context
 
 tekir runs one production database with real user content and no ci deployment
-pipeline (see [adr-0005](0005-single-droplet-deployment-without-cd.md)):
-migrations are applied by hand from a maintainer machine, ahead of the api
-version that needs them. deployed service versions routinely differ from `main`.
+pipeline (see [`docs/architecture/backend.md`](../architecture/backend.md) and
+`DEVELOPMENT.md`): migrations are applied by hand from a maintainer machine,
+ahead of the api version that needs them. deployed service versions routinely
+differ from `main`.
 
 under those conditions a schema change that is not strictly additive, or a
 migration whose content changed after it was applied somewhere, is not

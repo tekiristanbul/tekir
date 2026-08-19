@@ -23,6 +23,6 @@ part of the released version.
   `v0.1.0`, `v0.2.0`, `v0.3.0`, `v0.4.2`, `v0.4.3` only.
 - the api and the flutter app are versioned independently and deploy
   independently, so a single row above does not describe one atomic release —
-  see [adr-0005](docs/adr/0005-single-droplet-deployment-without-cd.md). what is
+  see [`docs/architecture/backend.md`](docs/architecture/backend.md). what is
   actually running is read from `https://app.tekir.istanbul/version.json` and
   from the droplet, not from this file.

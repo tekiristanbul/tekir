@@ -14,15 +14,17 @@ define how [[api]] and [[db]] get deployed and operated for a solo, currently-un
 
 ### data layer
 
+rationale and rejected alternatives: [adr-0005](../adr/0005-managed-services-over-self-hosting.md).
+
 - **postgres + postgis**: digitalocean managed postgresql.
 - **media storage**: digitalocean spaces through the s3-compatible api (implemented — issue #89). application code depends on the s3 api rather than a digitalocean-specific storage sdk.
 - backups, failover, and database upgrades are managed by digitalocean rather than self-hosted by the project.
 
 ### deployment
 
-- api, notification worker, and the flutter web bundle run as containers on a single digitalocean droplet, behind caddy, against digitalocean managed postgres. see [adr-0005](../adr/0005-single-droplet-deployment-without-cd.md) for why, and `DEVELOPMENT.md` ("production deployment") for the procedure.
+- api, notification worker, and the flutter web bundle run as containers on a single digitalocean droplet, behind caddy, against digitalocean managed postgres. `DEVELOPMENT.md` ("production deployment") carries the procedure. this is the current topology, not a durable decision — it follows from [adr-0005](../adr/0005-managed-services-over-self-hosting.md) and may change without a new one.
 - github actions runs ci only — format, lint, build, migrations, and tests. it does not build, publish, or deploy images. images are built on a maintainer's machine and switched by tag on the droplet, so running versions routinely differ from each other and from `main`.
-- digitalocean app platform was the original intent and is not what shipped. moving to app platform, or to any automated pipeline, is a new decision and a new adr.
+- digitalocean app platform was the original intent and is not what shipped. moving to app platform, or to any automated pipeline, is a fresh decision — nothing here commits the project to staying on one droplet.
 - mvp traffic is expected to run without kubernetes.
 - kubernetes migration is reconsidered only after sponsorship or external funding provides a reason and budget to own the additional platform complexity. traffic growth alone is handled first by resizing the droplet or moving to a managed container platform.
 - no gateway api, cert-manager, self-hosted postgres operator, or cluster lifecycle platform is part of mvp.

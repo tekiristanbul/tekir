@@ -24,9 +24,19 @@ proposal process beyond what is written here.
   [`AGENTS.md`](AGENTS.md). agents implement and review. they never approve and
   never merge.
 
-no role can approve its own work. every change reaches `main` through a pull
-request a human merged, and a change to user-visible behavior, copy, or visual
-output records product owner approval before that happens.
+agents never approve, never merge, and never sign off on their own work. humans
+are held to what this project can actually provide: every change reaches `main`
+through a pull request carrying its validation output and evidence, and a change
+to user-visible behavior, copy, or visual output records product owner approval
+before it is merged.
+
+there is one code maintainer, so a maintainer-authored technical change has no
+independent technical approver. it still goes through a pull request, still
+carries evidence, and is still merged by a human — but that review is the
+maintainer's own, and this document says so rather than dressing it up as
+independent. product owner approval is the only genuinely independent gate the
+project has today, and it covers product decisions, not technical ones. adding a
+second maintainer would change this, and would be recorded here.
 
 ## where decisions live
 
@@ -112,8 +122,8 @@ there is no rfc process. the issue is the proposal.
 one person holds each role, so each is a single point of failure for what it
 owns. while the code maintainer is unavailable nothing merges and nothing
 deploys — production deployment requires a maintainer machine and credentials
-that are not in this repository
-([adr-0005](docs/adr/0005-single-droplet-deployment-without-cd.md)). while the
+that are not in this repository, as
+[`docs/architecture/backend.md`](docs/architecture/backend.md) describes. while the
 product owner is unavailable, work that does not change user-visible behavior
 still proceeds; work that does waits for approval rather than assuming it.
 

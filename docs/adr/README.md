@@ -40,7 +40,7 @@ boundary.
 | [0002](0002-postgis-geography-as-the-location-primitive.md) | postgis `geography(point, 4326)` as the location primitive | accepted | 2026-08-19 |
 | [0003](0003-updates-as-an-append-only-history.md) | updates as an append-only history with keyset pagination | accepted | 2026-08-19 |
 | [0004](0004-forward-only-immutable-migrations.md) | forward-only immutable migrations | accepted | 2026-08-19 |
-| [0005](0005-single-droplet-deployment-without-cd.md) | single droplet deployment without a cd pipeline | accepted | 2026-08-19 |
+| [0005](0005-managed-services-over-self-hosting.md) | managed services over a self-hosted platform | accepted | 2026-08-19 |
 
 these five records were written after the fact, in issue #271, from decisions the
 project had already made and documented in prose. they carry the date they were
