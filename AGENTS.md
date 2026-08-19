@@ -2,11 +2,15 @@
 
 ## workflow roles
 
-- `tekir implementation` implements one accepted issue and opens one draft pull request.
-- `tekir technical review` performs the first correctness, architecture, migration, compatibility, security, privacy, test, and documentation review.
-- `tekir product review` checks user behavior, turkish copy, visual output, edge states, acceptance criteria, and approved design references.
-- agents never approve or merge pull requests. human maintainers own final decisions.
-- during the bootstrap phase, the technical founder uses chatgpt to spot-check technical-review findings and improves repository instructions when gaps are found.
+this contract binds three kinds of work, whatever tool performs them:
+
+- **implementation** — implements one accepted issue and opens one draft pull request. sequenced by [`.claude/skills/implement-issue`](.claude/skills/implement-issue/SKILL.md), after the planning pass in [`.claude/skills/analyze-issue`](.claude/skills/analyze-issue/SKILL.md).
+- **technical review** — first correctness, architecture, migration, compatibility, security, privacy, test, and documentation review. sequenced by [`.claude/skills/review-pr`](.claude/skills/review-pr/SKILL.md).
+- **product review** — user behavior, turkish copy, visual output, edge states, acceptance criteria, and approved design references. sequenced by [`.github/agents/tekir-product-review.agent.md`](.github/agents/tekir-product-review.agent.md).
+
+agents never approve or merge pull requests, and a first-pass review is never
+the approval itself. human maintainers own final decisions, on the terms
+[`GOVERNANCE.md`](GOVERNANCE.md) sets.
 
 ## definition of ready
 
