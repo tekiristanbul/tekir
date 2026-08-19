@@ -8,6 +8,8 @@ define the http api surface for the tekir mvp backend, matching the product deci
 
 ### identity / auth model
 
+rationale and rejected alternatives: [adr-0001](../adr/0001-server-issued-device-and-account-identity.md).
+
 two-tier, matching [[trust]]: public read access requires no account login; following a cat and every user contribution require a phone-verified account. following, ordinary updates, needs-help updates, media uploads, and new-cat creation therefore require `Authorization: Bearer` (issue #65 moved following and ordinary updates onto this model; the rest were bearer-required from the start).
 
 a client-generated identifier is not sufficient identity on its own — anything the client can choose or copy can be replayed. the device credential remains server-issued and gets its own header so device association and bearer authorization stay separate:
@@ -102,6 +104,8 @@ active_alert: { category, category_label, comment|null, created_at, expires_at }
 issue #42 removed permanent cat traits from the mvp surface. behavioral observations such as playful, shy, or friendly belong in update comments ([[updates]]), not permanent profile attributes.
 
 ### updates
+
+rationale and rejected alternatives: [adr-0003](../adr/0003-updates-as-an-append-only-history.md).
 
 an update is an authenticated contribution that may carry structured statuses, the help flag (`yardıma ihtiyacı var` — issue #101, contract issue #100), or both in one record. the create invariant is "at least one status, or `needs_help: true`"; comment-only requests remain invalid.
 

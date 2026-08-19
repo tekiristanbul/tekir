@@ -45,7 +45,11 @@ with no real alternative on the table get nothing.
 A separate ADR is for consequential decisions with meaningful
 alternatives and long-term tradeoffs — persistent data model semantics,
 public API contracts, auth boundaries, component boundaries, expensive to
-reverse technology choices. An ordinary bug fix is not one. If a change
+reverse technology choices, deployment topology. An ordinary bug fix is
+not one. An ADR is a numbered file in `docs/adr/`, copied from
+`docs/adr/0000-template.md` and added to that directory's index, written
+in the same change that makes the decision; `GOVERNANCE.md` carries the
+full threshold. If a change
 is user-visible behavior or a data contract, the update belongs in the
 product or architecture doc, per `AGENTS.md`, not in a new file.
 

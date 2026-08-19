@@ -19,6 +19,7 @@ follow `AGENTS.md` for readiness, delivery, review, evidence, and definition-of-
 - `docs/product/`: accepted product behavior and durable product decisions
 - `docs/architecture/`: technical contracts and durable architectural decisions
 - `docs/design/`: design contracts and reviewed screenshots
+- `docs/adr/`: architecture decision records — why a durable decision was made and what was rejected; `GOVERNANCE.md` carries the threshold for writing one
 
 ## ownership
 

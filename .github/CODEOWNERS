@@ -1,0 +1,8 @@
+# see MAINTAINERS.md and GOVERNANCE.md.
+
+# everything defaults to the code maintainer.
+*                   @okanck
+
+# the product contract and approved design references are the product owner's.
+/docs/product/      @olyacivelek
+/docs/design/       @olyacivelek

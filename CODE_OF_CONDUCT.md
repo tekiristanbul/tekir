@@ -26,7 +26,7 @@ examples of unacceptable behavior include:
 
 ## enforcement responsibilities
 
-project maintainers are responsible for clarifying and enforcing acceptable behavior and may remove, edit, or reject comments, commits, code, issues, and other contributions that are not aligned with this code of conduct.
+the project maintainers listed in [`MAINTAINERS.md`](MAINTAINERS.md) are responsible for clarifying and enforcing acceptable behavior and may remove, edit, or reject comments, commits, code, issues, and other contributions that are not aligned with this code of conduct.
 
 ## scope
 
@@ -34,7 +34,7 @@ this code applies in all project spaces and when an individual officially repres
 
 ## enforcement
 
-report abusive, harassing, or otherwise unacceptable behavior privately to `security@tekir.istanbul`. reports will be reviewed promptly and fairly. maintainers will respect the privacy and security of reporters.
+report abusive, harassing, or otherwise unacceptable behavior privately to `security@tekir.istanbul`. reports go to the maintainers in [`MAINTAINERS.md`](MAINTAINERS.md) and will be reviewed promptly and fairly. maintainers will respect the privacy and security of reporters.
 
 ## attribution
 
