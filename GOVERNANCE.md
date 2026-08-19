@@ -1,19 +1,23 @@
 # governance
 
-tekir is a small, single-maintainer open source project. this document says who
-decides what, how a decision gets recorded, and when a change needs more than a
-github issue. it exists so those answers are readable without asking.
+tekir is a small open source project with two people holding decision authority:
+a code maintainer and a product owner. this document says who decides what, how a
+decision gets recorded, and when a change needs more than a github issue. it
+exists so those answers are readable without asking.
 
 it is deliberately light. there is no steering committee, no voting, and no
 proposal process beyond what is written here.
 
 ## roles
 
-- **maintainer** — owns product scope, architecture, issue creation, release
-  sequencing, and every merge. named in [`MAINTAINERS.md`](MAINTAINERS.md).
-- **product owner** — approves user-visible behavior, turkish copy, and visual
-  output. currently the same person as the maintainer; the roles are kept
-  separate in writing because the review questions are different.
+- **code maintainer** — owns architecture, api contracts, the data model,
+  security, infrastructure, code quality, issue creation, release sequencing,
+  and every merge. named in [`MAINTAINERS.md`](MAINTAINERS.md).
+- **product owner** — owns user scope, ux, visual direction, and user-facing
+  turkish copy, and approves any change to them. named in
+  [`MAINTAINERS.md`](MAINTAINERS.md). product owner approval is never implied by
+  an implementation, a passing test suite, a draft pull request, a technical
+  review, or an agent.
 - **contributor** — anyone reporting a bug, joining a discussion, or
   implementing an acknowledged issue. see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **agent** — an automated implementation or review agent working under
@@ -21,7 +25,8 @@ proposal process beyond what is written here.
   never merge.
 
 no role can approve its own work. every change reaches `main` through a pull
-request a human maintainer merged.
+request a human merged, and a change to user-visible behavior, copy, or visual
+output records product owner approval before that happens.
 
 ## where decisions live
 
@@ -90,30 +95,34 @@ there is no rfc process. the issue is the proposal.
 
 ## how a decision is approved
 
-- **technical decisions** — the maintainer decides, on the issue or in review.
-  durable ones get an adr; the rest get a `## decisions` line.
+- **technical decisions** — the code maintainer decides, on the issue or in
+  review. durable ones get an adr; the rest get a `## decisions` line.
 - **product decisions** — the product owner decides. a pull request that changes
   approved user-visible behavior, copy, or visual output records product owner
-  approval before it is merged.
+  approval before it is merged. documentation maintenance that only synchronizes
+  an already accepted decision does not need it.
 - **security decisions** — handled privately per [`SECURITY.md`](SECURITY.md)
   until a fix ships, then recorded like any other change.
-- **release decisions** — the maintainer decides what ships and when. each
+- **release decisions** — the code maintainer decides what ships and when. each
   release gets a file in [`docs/releases/`](docs/releases/) stating what it
   contains and whether it is published.
 
-## if the maintainer is unavailable
+## availability
 
-this is a single-maintainer project. if the maintainer is unavailable, nothing
-merges and nothing deploys — production deployment requires a maintainer machine
-and credentials that are not in this repository
-([adr-0005](docs/adr/0005-single-droplet-deployment-without-cd.md)). issues and
-discussions stay open and are answered when the maintainer returns. this is a
-known limitation, stated rather than papered over.
+one person holds each role, so each is a single point of failure for what it
+owns. while the code maintainer is unavailable nothing merges and nothing
+deploys — production deployment requires a maintainer machine and credentials
+that are not in this repository
+([adr-0005](docs/adr/0005-single-droplet-deployment-without-cd.md)). while the
+product owner is unavailable, work that does not change user-visible behavior
+still proceeds; work that does waits for approval rather than assuming it.
 
-adding a second maintainer would be recorded here and in
-[`MAINTAINERS.md`](MAINTAINERS.md).
+issues and discussions stay open in the meantime. this is a known limitation,
+stated rather than papered over. adding anyone to either role is recorded here
+and in [`MAINTAINERS.md`](MAINTAINERS.md).
 
 ## conduct
 
 participation is governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
-enforcement is the maintainer's responsibility.
+enforcement is the responsibility of the maintainers in
+[`MAINTAINERS.md`](MAINTAINERS.md).

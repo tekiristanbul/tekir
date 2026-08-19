@@ -1,16 +1,15 @@
 # maintainers
 
-tekir currently has one maintainer.
-
-| name | github | role |
+| github | role | owns |
 | --- | --- | --- |
-| okan civelek | [@okanck](https://github.com/okanck) | maintainer, product owner |
+| [@okanck](https://github.com/okanck) | code maintainer | architecture, api contracts, data model, security, infrastructure, code quality, issue creation, review, release sequencing, and every merge |
+| [@olyacivelek](https://github.com/olyacivelek) | product owner | user scope, ux, visual direction, and user-facing turkish copy |
 
-the maintainer owns product scope, architecture, issue creation, review,
-release sequencing, and every merge. the product owner role — approving
-user-visible behavior, turkish copy, and visual output — is held by the same
-person today but is kept separate in writing because the review questions are
-different. see [`GOVERNANCE.md`](GOVERNANCE.md).
+the two roles decide different things and neither substitutes for the other. a
+change to user-visible behavior, copy, or visual output needs product owner
+approval; a technical decision does not. product owner approval is never implied
+by an implementation, a passing test suite, a draft pull request, a technical
+review, or an agent. see [`GOVERNANCE.md`](GOVERNANCE.md).
 
 ## contact
 
@@ -22,9 +21,9 @@ do not use these addresses for support questions or feature requests; see
 - privacy: `privacy@tekir.istanbul`
 - anything else: `hello@tekir.istanbul`
 
-## areas
+## code ownership
 
-there is no per-area ownership split while the project has one maintainer.
-[`.github/CODEOWNERS`](.github/CODEOWNERS) reflects that: the whole repository is
-owned by [@okanck](https://github.com/okanck). if that changes, both files change
-together.
+[`.github/CODEOWNERS`](.github/CODEOWNERS) is the machine-readable form of the
+table above: the repository defaults to the code maintainer, and the product
+contract and design references are owned by the product owner. if the roles
+change, both files change together.

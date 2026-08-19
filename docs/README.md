@@ -10,14 +10,14 @@ mixes both and marks each file explicitly; the convention is defined in
 
 ## where to look
 
-| directory | contains | owned by |
+| directory | contains | approval owner |
 | --- | --- | --- |
-| [`product/`](product/) | what tekir does and why — the product contract | maintainers and the product owner |
-| [`architecture/`](architecture/) | technical contracts: api surface, schema, backend operations, client architecture, standards in use | maintainers |
-| [`adr/`](adr/) | why durable decisions were made, and what was rejected | maintainers |
-| [`design/`](design/) | approved visual and interaction references, plus superseded drafts marked as historical | maintainers and the product owner |
-| [`releases/`](releases/) | one file per release: what shipped, when, and whether it is published | maintainers |
-| [`brand.md`](brand.md) | canonical product, domain, and repository naming | maintainers |
+| [`product/`](product/) | what tekir does and why — the product contract | the product owner |
+| [`architecture/`](architecture/) | technical contracts: api surface, schema, backend operations, client architecture, standards in use | the code maintainer |
+| [`adr/`](adr/) | why durable decisions were made, and what was rejected | the code maintainer |
+| [`design/`](design/) | approved visual and interaction references, plus superseded drafts marked as historical | the product owner |
+| [`releases/`](releases/) | one file per release: what shipped, when, and whether it is published | the code maintainer |
+| [`brand.md`](brand.md) | canonical product, domain, and repository naming | the product owner |
 
 ## the ones to read first
 
