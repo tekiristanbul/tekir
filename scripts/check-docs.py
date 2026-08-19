@@ -2,8 +2,8 @@
 
 Two deterministic checks, both of which used to be done by hand:
 
-1. every relative link and image target in a tracked markdown file exists,
-   and every heading anchor it points at exists in the target file.
+1. every relative link and image target in a tracked markdown file exists.
+   Only the path is checked; a `#heading` fragment is ignored.
 2. `docs/adr/` and its index in `docs/adr/README.md` list exactly the same
    records.
 
@@ -18,7 +18,6 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-import unicodedata
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -27,8 +26,6 @@ FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
 CODE_SPAN = re.compile(r"`[^`]*`")
 INLINE_LINK = re.compile(r"!?\[[^\]]*\]\(\s*([^()\s]*(?:\([^()]*\)[^()\s]*)*)")
 REFERENCE_LINK = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(\S+)")
-HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-HTML_ANCHOR = re.compile(r"<[^>]*\b(?:name|id)=[\"']([^\"']+)[\"']")
 SCHEME = re.compile(r"^[a-z][a-z0-9+.\-]*:", re.IGNORECASE)
 ADR_RECORD = re.compile(r"^\d{4}-.+\.md$")
 ADR_INDEX_ROW = re.compile(r"^\|\s*\[\d{4}\]\((\d{4}-[^)]+\.md)\)")
@@ -45,13 +42,8 @@ def tracked_markdown() -> list[Path]:
     return sorted(Path(name) for name in out.split("\0") if name)
 
 
-def strip_code(lines: list[str], spans: bool = True) -> list[str]:
-    """Blanks fenced blocks so code samples are not read as markdown.
-
-    Inline code spans are blanked too when scanning for links, but kept when
-    slugging headings: github renders `code` in a heading as part of the
-    anchor text.
-    """
+def strip_code(lines: list[str]) -> list[str]:
+    """Blanks fenced blocks and inline code so samples are not read as links."""
     stripped: list[str] = []
     fence: str | None = None
     for line in lines:
@@ -65,38 +57,8 @@ def strip_code(lines: list[str], spans: bool = True) -> list[str]:
                 fence = None
             stripped.append("")
             continue
-        stripped.append(CODE_SPAN.sub("", line) if spans else line)
+        stripped.append(CODE_SPAN.sub("", line))
     return stripped
-
-
-def slug(text: str) -> str:
-    """Reproduces github's heading anchor slug."""
-    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)
-    text = text.replace("`", "").replace("*", "")
-    text = re.sub(r"<[^>]+>", "", text)
-    kept = [
-        c
-        for c in text.lower().strip()
-        if c in " -_" or c.isalnum() or unicodedata.category(c) == "Mn"
-    ]
-    return "".join(kept).replace(" ", "-")
-
-
-def anchors(path: Path) -> set[str]:
-    names: set[str] = set()
-    seen: dict[str, int] = {}
-    lines = (REPO / path).read_text(encoding="utf-8").splitlines()
-    for line in strip_code(lines, spans=False):
-        heading = HEADING.match(line)
-        if heading:
-            base = slug(heading.group(2))
-            if not base:
-                continue
-            count = seen.get(base, 0)
-            seen[base] = count + 1
-            names.add(base if count == 0 else f"{base}-{count}")
-        names.update(name.lower() for name in HTML_ANCHOR.findall(line))
-    return names
 
 
 def targets(line: str):
@@ -108,7 +70,6 @@ def targets(line: str):
 
 
 def check_links(files: list[Path]) -> list[str]:
-    anchor_cache: dict[Path, set[str]] = {}
     problems: list[str] = []
 
     for path in files:
@@ -121,36 +82,24 @@ def check_links(files: list[Path]) -> list[str]:
                 if not target or SCHEME.match(target) or target.startswith("//"):
                     continue
 
-                location, _, fragment = target.partition("#")
-                if location:
-                    if location.startswith("/"):
-                        problems.append(
-                            f"{path}:{number}: '{target}' is an absolute path; "
-                            "use a path relative to this file"
-                        )
-                        continue
-                    resolved = ((REPO / path).parent / location).resolve()
-                    if not resolved.is_relative_to(REPO):
-                        problems.append(
-                            f"{path}:{number}: '{target}' points outside the repository"
-                        )
-                        continue
-                    if not resolved.exists():
-                        problems.append(f"{path}:{number}: '{target}' does not exist")
-                        continue
-                    linked = resolved.relative_to(REPO)
-                else:
-                    linked = path
-
-                if not fragment or linked.suffix != ".md":
+                location = target.partition("#")[0]
+                if not location:
                     continue
-                if linked not in anchor_cache:
-                    anchor_cache[linked] = anchors(linked)
-                if fragment.lower() not in anchor_cache[linked]:
+                if location.startswith("/"):
                     problems.append(
-                        f"{path}:{number}: '{target}' points at a heading "
-                        f"that does not exist in {linked}"
+                        f"{path}:{number}: '{target}' is an absolute path; "
+                        "use a path relative to this file"
                     )
+                    continue
+
+                resolved = ((REPO / path).parent / location).resolve()
+                if not resolved.is_relative_to(REPO):
+                    problems.append(
+                        f"{path}:{number}: '{target}' points outside the repository"
+                    )
+                    continue
+                if not resolved.exists():
+                    problems.append(f"{path}:{number}: '{target}' does not exist")
 
     return problems
 

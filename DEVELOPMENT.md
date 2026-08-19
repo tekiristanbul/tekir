@@ -708,7 +708,7 @@ three independent jobs, each check its own step, so the failing check names the 
 | `flutter` | `flutter pub get`, `dart format --set-exit-if-changed`, `flutter analyze`, `flutter test` | the same commands from `app/` |
 | `docs` | `scripts/check-docs.py` | `python3 scripts/check-docs.py` from the repository root |
 
-the `docs` job is deterministic and offline: it resolves every relative link and heading anchor in tracked markdown, and checks that `docs/adr/` and its index in [`docs/adr/README.md`](docs/adr/README.md) list the same records. it fetches no external url, so a dead third-party link never turns ci red on an unrelated change.
+the `docs` job is deterministic and offline: it resolves the path of every relative link in tracked markdown, and checks that `docs/adr/` and its index in [`docs/adr/README.md`](docs/adr/README.md) list the same records. `#heading` fragments are not checked. it fetches no external url, so a dead third-party link never turns ci red on an unrelated change.
 
 no shell step chains validations, so an earlier failure can never be masked by a later command. the job names are stable and safe to make required branch-protection checks.
 
