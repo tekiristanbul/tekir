@@ -47,22 +47,12 @@ what. Follow them; this skill only sequences the work.
 Run the real commands for every area touched, fresh, and read the full output
 before reporting anything.
 
-Backend, from `backend/`:
-
-```sh
-make fmt
-make build
-make test
-make lint
-```
-
-Flutter, from `app/`:
-
-```sh
-dart format --output=none --set-exit-if-changed .
-flutter analyze
-flutter test
-```
+`CONTRIBUTING.md`'s validation section lists the current commands per area —
+read it rather than assuming a command from memory, because it moves. Backend
+checks are `make` targets defined in `backend/Makefile`; flutter checks run
+from `app/`. What you run locally is evidence, not the gate — CI in
+`.github/workflows/` decides. When the two disagree, treat CI as right and the
+drift in `CONTRIBUTING.md` as something to fix.
 
 Run the whole test file or suite the change touches, not only the test added —
 a change can pass its own new test while breaking siblings through shared

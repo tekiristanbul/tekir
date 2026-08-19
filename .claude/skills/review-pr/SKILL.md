@@ -17,11 +17,20 @@ Read the actual diff, not the description. Use `gh pr view <n>` and
 `gh pr diff <n>`, or `git diff` against the base branch for a local branch,
 plus the linked issue and every existing comment.
 
-Never claim a check passed without running it. When the pull request's own
-validation evidence is missing, partial ("the new test passes" is not "the
-test file passes"), or does not match the diff, that is a blocking finding,
-not a detail. Run the repository's validation commands yourself when the
-working tree allows it, and say which ones you ran and which you could not.
+Never claim a check passed without running it. Run the repository's validation
+commands yourself when the working tree allows it, and say which ones you ran
+and which you could not.
+
+Decide which validations the diff actually requires before judging its
+evidence. Derive that from the paths it touches — `backend/` and `app/` have
+their own commands in `CONTRIBUTING.md`, and a diff touching neither may
+legitimately have none. Missing evidence is a blocking finding only for a
+validation the diff genuinely required. Say so explicitly when none applied,
+rather than treating an empty evidence section as a defect by default.
+
+Where a validation was required, evidence that is absent, partial ("the new
+test passes" is not "the test file passes"), or inconsistent with the diff is
+blocking — an unverified claim is a finding, not a detail.
 
 ## what to check
 
@@ -58,7 +67,9 @@ working tree allows it, and say which ones you ran and which you could not.
    observability.
 8. **Evidence.** Validations run were the right ones for the paths changed,
    and user-visible changes carry screenshots or a demo covering the main
-   state and applicable loading, empty, error, and not-found states.
+   state and applicable loading, empty, error, and not-found states. A diff
+   that required no validation and no visual evidence is complete without
+   them.
 9. **Decision records.** A durable decision with real alternatives has an adr
    in this pull request per `GOVERNANCE.md`; a smaller tradeoff has a line in
    the relevant topic document's `## decisions` section. Call out a missing or
@@ -69,7 +80,8 @@ working tree allows it, and say which ones you ran and which you could not.
 
 - **blocking findings** — correctness, data loss, security, contract,
   acceptance-criteria, semantic contradiction, weakened invariant, material
-  omission, wrong-baseline exception, or missing/false validation evidence.
+  omission, wrong-baseline exception, or missing/false evidence for a
+  validation the diff required.
   Write `none` when empty.
 - **non-blocking findings** — maintainability, clarity, performance, or
   follow-up improvements that do not block merge. Write `none` when empty.
