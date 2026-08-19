@@ -20,7 +20,8 @@ closes #
 
 ## validation
 
-- [ ] relevant format, build, analysis, lint, and tests pass
+- [ ] ci on this pull request is green
+- [ ] relevant format, build, analysis, lint, and tests pass locally
 - [ ] migration or integration checks pass where applicable
 - [ ] manual states were exercised where applicable
 
