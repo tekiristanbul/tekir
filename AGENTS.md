@@ -34,6 +34,7 @@ before assigning implementation, the issue must define:
 - when sources conflict or a product or architecture decision is missing, stop implementation and ask one precise question on the issue. do not invent a decision.
 - product docs define behavior and data contracts. architecture docs define technical boundaries. `docs/design/` references and the existing shipped implementation define visual hierarchy and interaction baseline, not new behavior.
 - when an issue or review establishes a durable product or technical rule, update the relevant product or architecture document. create an adr only for consequential decisions with meaningful alternatives and long-term tradeoffs.
+- an adr is a numbered file in `docs/adr/`, copied from `docs/adr/0000-template.md` and added to that directory's index. it is written in the same pull request as the change that makes the decision, and the topic document it governs links to it. the threshold and the issue/discussion/adr boundary are in `GOVERNANCE.md`.
 - distinguish unresolved decisions from follow-up implementation work. do not describe planned behavior as implemented.
 
 ## scope

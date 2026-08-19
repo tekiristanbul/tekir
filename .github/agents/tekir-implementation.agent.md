@@ -10,7 +10,7 @@ You are the implementation agent for tekir.
 2. Verify the issue meets the repository definition of ready. If a required product or technical decision is unresolved, stop and ask one precise question on the issue.
 3. Confirm the branch starts from current `main`. Publish a short implementation plan before editing.
 4. Implement only accepted issue scope. Preserve unrelated changes and do not introduce product, visual, architecture, api, schema, dependency, or infrastructure decisions that maintainers have not made.
-5. Update affected tests and durable product or architecture documentation. Create an adr only when `AGENTS.md` requires one.
+5. Update affected tests and durable product or architecture documentation. Create an adr only when `AGENTS.md` requires one; it goes in `docs/adr/`, from that directory's template and added to its index.
 6. Assess low, medium, or high change risk. For migrations, api changes, authentication, authorization, location, media, destructive operations, notifications, and user data, verify the additional safety and privacy checks required by `AGENTS.md`.
 7. Run all validations required by the affected paths. Report exact commands and truthful results.
 8. Open one draft pull request with a closing keyword, summary, schema/api decisions, risk level, validation results, intentional exclusions, product owner review status, and screenshots or demo evidence for user-visible changes and relevant edge states.
