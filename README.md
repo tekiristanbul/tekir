@@ -45,7 +45,7 @@ tekir uses a controlled workflow while the product and architecture are still be
 - comment on the issue and wait for maintainer acknowledgement before starting
 - unsolicited pull requests are not accepted
 
-see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the complete workflow.
+see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the complete workflow and [`GOVERNANCE.md`](GOVERNANCE.md) for who decides what, where each kind of decision is recorded, and when a change needs an architecture decision record instead of just an issue.
 
 ## repository guide
 
@@ -56,6 +56,8 @@ see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the complete workflow.
 | [`docs/product/`](docs/product/) | product contract |
 | [`docs/architecture/`](docs/architecture/) | technical contracts |
 | [`docs/design/`](docs/design/) | design references |
+| [`docs/adr/`](docs/adr/) | architecture decision records |
+| [`docs/releases/`](docs/releases/) | per-release notes |
 | [`website/`](website/) | public landing page |
 
 ## development
@@ -71,8 +73,12 @@ see [`DEVELOPMENT.md`](DEVELOPMENT.md) for prerequisites, migrations, seed data,
 ## community and policies
 
 - [contributing](CONTRIBUTING.md)
+- [governance](GOVERNANCE.md)
+- [maintainers](MAINTAINERS.md)
+- [support](SUPPORT.md)
 - [code of conduct](CODE_OF_CONDUCT.md)
 - [security](SECURITY.md)
+- [changelog](CHANGELOG.md)
 - [license](LICENSE)
 - [github discussions](https://github.com/tekiristanbul/tekir/discussions)
 - [open issues](https://github.com/tekiristanbul/tekir/issues)

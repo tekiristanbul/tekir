@@ -1,6 +1,17 @@
 # contributing
 
-tekir is in early development. maintainers control product scope, architecture, issue creation, and release sequencing.
+tekir is in early development. maintainers control product scope, architecture, issue creation, and release sequencing. [`GOVERNANCE.md`](GOVERNANCE.md) says who decides what and how a decision is recorded; [`MAINTAINERS.md`](MAINTAINERS.md) names the maintainer.
+
+## how work actually flows
+
+most changes here are maintainer-authored end to end, and that is worth stating plainly rather than describing a process nobody is running:
+
+1. a maintainer opens an issue with accepted scope and testable acceptance criteria, using the implementation issue form.
+2. the work is implemented by the maintainer or by an automated agent working under [`AGENTS.md`](AGENTS.md).
+3. a pull request links the issue, carries validation output and evidence, and stays draft while review or approval is pending.
+4. a human maintainer reviews, approves, and merges. agents never approve and never merge.
+
+external contribution runs through the `help wanted` path below. it is open, and it is genuinely how an outside contribution gets accepted — it is simply not the path most changes take today.
 
 ## where to participate
 
@@ -39,6 +50,8 @@ use maintainer-created issues for concrete feature requests, approved product wo
 
 - product decisions live in `docs/product/` and are owned by maintainers and the product owner.
 - architecture decisions live in `docs/architecture/` and are owned by maintainers.
+- durable decisions with real alternatives get an architecture decision record in [`docs/adr/`](docs/adr/); everything else is a line in the relevant topic document. the threshold is in [`GOVERNANCE.md`](GOVERNANCE.md).
+- the open standards the project implements are inventoried in [`docs/architecture/standards.md`](docs/architecture/standards.md).
 - approved design artifacts live in `docs/design/`.
 - implementation work is tracked through individual maintainer-created issues, not a single tracker.
 
@@ -105,3 +118,7 @@ security vulnerabilities must not be reported publicly. follow [`SECURITY.md`](S
 ## conduct
 
 participation is governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+## getting help
+
+[`SUPPORT.md`](SUPPORT.md) routes bug reports, ideas, security reports, and questions to the right place.
