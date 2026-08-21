@@ -64,6 +64,86 @@ class CatDetail {
   /// owns (issue #234) — what the "engelle" action on cat detail acts on.
   final String? ownerUserId;
 
+  /// Returns a copy with only the named fields replaced.
+  ///
+  /// Exists because hand-rebuilding this model in a notifier silently drops
+  /// whatever the call site forgot: `CatDetailNotifier.prependUpdate` used
+  /// to construct a fresh [CatDetail] field by field and omitted
+  /// [lastSeenAt], [lastFedAt], [lastWaterAt] and [ownerUserId], all four of
+  /// which are optional with a null default — so posting an update wiped the
+  /// three-stat header and the cat's owner in one move, with no compile
+  /// error to notice it. Every future optional field added to this class
+  /// would have inherited the same failure. Mutate this model through
+  /// `copyWith`, never by re-invoking the constructor with a subset.
+  ///
+  /// A null argument means "leave unchanged", never "set to null": nothing
+  /// in this app needs to clear one of these fields locally, and a
+  /// sentinel-based API would buy that at the cost of every call site's
+  /// readability.
+  CatDetail copyWith({
+    String? name,
+    double? lat,
+    double? lng,
+    String? areaLabel,
+    String? primaryPhoto,
+    DateTime? lastUpdateAt,
+    DateTime? lastSeenAt,
+    DateTime? lastFedAt,
+    DateTime? lastWaterAt,
+    ActiveAlert? activeAlert,
+    int? mediaCount,
+    bool? isOwner,
+    String? ownerUserId,
+  }) {
+    return CatDetail(
+      id: id,
+      name: name ?? this.name,
+      lat: lat ?? this.lat,
+      lng: lng ?? this.lng,
+      areaLabel: areaLabel ?? this.areaLabel,
+      primaryPhoto: primaryPhoto ?? this.primaryPhoto,
+      createdAt: createdAt,
+      lastUpdateAt: lastUpdateAt ?? this.lastUpdateAt,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+      lastFedAt: lastFedAt ?? this.lastFedAt,
+      lastWaterAt: lastWaterAt ?? this.lastWaterAt,
+      activeAlert: activeAlert ?? this.activeAlert,
+      mediaCount: mediaCount ?? this.mediaCount,
+      isOwner: isOwner ?? this.isOwner,
+      ownerUserId: ownerUserId ?? this.ownerUserId,
+    );
+  }
+
+  /// Advances the three-stat header's own timestamps for whichever
+  /// structured statuses [entry] carries, leaving the other two untouched.
+  ///
+  /// The three questions — görüldü / mama / su — are independent of each
+  /// other and of [lastUpdateAt], so a `fed` entry may only move
+  /// [lastFedAt]. Derived locally rather than re-fetched: the entry is
+  /// already server-confirmed, and a round trip to learn a timestamp the
+  /// client is holding would be the slow way to be no more correct.
+  ///
+  /// Only ever moves a timestamp forward. A correction or an out-of-order
+  /// arrival can carry an older `created_at`, and the header answers "when
+  /// was this cat last fed" — never "which entry landed most recently".
+  ///
+  /// The keys mirror `catUpdateStatusOptions`; an entry carrying anything
+  /// else (a future or legacy status) moves nothing rather than guessing
+  /// which question it answers.
+  CatDetail withStatusTimes(CatUpdateEntry entry) {
+    DateTime? advanced(String status, DateTime? current) {
+      if (!entry.statuses.contains(status)) return null;
+      if (current != null && !entry.createdAt.isAfter(current)) return null;
+      return entry.createdAt;
+    }
+
+    return copyWith(
+      lastSeenAt: advanced('seen', lastSeenAt),
+      lastFedAt: advanced('fed', lastFedAt),
+      lastWaterAt: advanced('water_provided', lastWaterAt),
+    );
+  }
+
   factory CatDetail.fromJson(Map<String, dynamic> json) {
     final area = json['area'] as Map<String, dynamic>;
     final rawLastUpdate = json['last_update_at'] as String?;

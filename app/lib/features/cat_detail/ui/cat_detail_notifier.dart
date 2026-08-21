@@ -140,19 +140,15 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
         : detail.activeAlert;
     state = state.copyWith(
       updates: [entry, ...state.updates],
-      detail: CatDetail(
-        id: detail.id,
-        name: detail.name,
-        lat: detail.lat,
-        lng: detail.lng,
-        areaLabel: detail.areaLabel,
-        primaryPhoto: detail.primaryPhoto,
-        createdAt: detail.createdAt,
-        lastUpdateAt: entry.createdAt,
-        activeAlert: activeAlert,
-        mediaCount: detail.mediaCount,
-        isOwner: detail.isOwner,
-      ),
+      // copyWith, never a fresh constructor call: this used to rebuild
+      // CatDetail field by field and silently dropped lastSeenAt/lastFedAt/
+      // lastWaterAt and ownerUserId, so posting an update reset the whole
+      // three-stat header to "henüz yok" — including the very question the
+      // user had just answered — and stripped "engelle" from the cat's own
+      // menu for the rest of the session.
+      detail: detail
+          .copyWith(lastUpdateAt: entry.createdAt, activeAlert: activeAlert)
+          .withStatusTimes(entry),
     );
   }
 
