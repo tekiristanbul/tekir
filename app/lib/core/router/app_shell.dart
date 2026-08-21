@@ -5,6 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../analytics/analytics.dart';
+import '../motion/press_response.dart';
+import '../motion/tekir_motion.dart';
+import '../motion/tekir_haptics.dart';
 import '../../features/auth/ui/auth_gate.dart';
 import '../theme/app_theme.dart';
 
@@ -41,10 +44,18 @@ class AppShell extends StatelessWidget {
       body: navigationShell,
       bottomNavigationBar: _BottomNav(
         currentIndex: navigationShell.currentIndex,
-        onTabSelected: (index) => navigationShell.goBranch(
-          index,
-          initialLocation: index == navigationShell.currentIndex,
-        ),
+        onTabSelected: (index) {
+          // Only a real destination change ticks: re-tapping the current
+          // tab returns to that branch's initial location, which is not a
+          // selection changing.
+          if (index != navigationShell.currentIndex) {
+            unawaited(TekirHaptics.acknowledge());
+          }
+          navigationShell.goBranch(
+            index,
+            initialLocation: index == navigationShell.currentIndex,
+          );
+        },
       ),
       // Map tab only (product owner, issue #91 review): on Keşfet/Profil
       // the centerFloat fab overlapped real content (e.g. the profile
@@ -125,28 +136,42 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = isActive ? AppColors.primaryStrong : AppColors.faint;
-    return Semantics(
-      button: true,
-      selected: isActive,
-      label: label,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 22, color: color),
-              const SizedBox(height: 3),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: color,
+    final motion = TekirMotion.of(context);
+    return PressResponse(
+      child: Semantics(
+        button: true,
+        selected: isActive,
+        label: label,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // The tab's own color carries the change, so it crosses
+                // rather than cuts — the destination is switching, not being
+                // replaced.
+                TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(end: color),
+                  duration: motion(TekirMotion.state),
+                  curve: TekirMotion.enter,
+                  builder: (context, value, _) =>
+                      Icon(icon, size: 22, color: value ?? color),
                 ),
-              ),
-            ],
+                const SizedBox(height: 3),
+                AnimatedDefaultTextStyle(
+                  duration: motion(TekirMotion.state),
+                  curve: TekirMotion.enter,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: color,
+                  ),
+                  child: Text(label),
+                ),
+              ],
+            ),
           ),
         ),
       ),

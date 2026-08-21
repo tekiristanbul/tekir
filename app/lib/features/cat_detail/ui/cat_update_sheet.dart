@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/motion/press_response.dart';
+import '../../../core/motion/tekir_haptics.dart';
 import '../../../core/states/photo_upload_progress.dart';
 import '../../../core/theme/app_theme.dart';
 import 'cat_update_composer_notifier.dart';
@@ -237,20 +239,38 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
                       return _StatusOption(
                         label: _statusLabelsTr[status]!,
                         selected: state.selectedStatuses.contains(status),
-                        onTap: () => ref
-                            .read(
-                              catUpdateComposerProvider(widget.catId).notifier,
-                            )
-                            .toggleStatus(status),
+                        onTap: () {
+                          unawaited(TekirHaptics.acknowledge());
+                          ref
+                              .read(
+                                catUpdateComposerProvider(
+                                  widget.catId,
+                                ).notifier,
+                              )
+                              .toggleStatus(status);
+                        },
                       );
                     }),
                     _HelpOption(
                       selected: state.needsHelp,
-                      onTap: () => ref
-                          .read(
-                            catUpdateComposerProvider(widget.catId).notifier,
-                          )
-                          .toggleNeedsHelp(),
+                      // The loudest haptic in the app, and only in the
+                      // selecting direction: raising a help mark is the one
+                      // action that pages other people, and it must not
+                      // feel like a görüldü in the hand any more than it
+                      // looks like one on screen. Clearing it is an
+                      // ordinary deselection.
+                      onTap: () {
+                        unawaited(
+                          state.needsHelp
+                              ? TekirHaptics.acknowledge()
+                              : TekirHaptics.raised(),
+                        );
+                        ref
+                            .read(
+                              catUpdateComposerProvider(widget.catId).notifier,
+                            )
+                            .toggleNeedsHelp();
+                      },
                     ),
                   ],
                 ),
@@ -425,37 +445,41 @@ class _StatusOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected ? AppColors.primarySoft : AppColors.surfaceAlt,
-      borderRadius: BorderRadius.circular(AppRadius.full),
-      child: InkWell(
+    return PressResponse(
+      child: Material(
+        color: selected ? AppColors.primarySoft : AppColors.surfaceAlt,
         borderRadius: BorderRadius.circular(AppRadius.full),
-        onTap: onTap,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: kTapMin),
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
-          alignment: Alignment.center,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (selected) ...[
-                const Icon(
-                  Icons.check,
-                  size: 16,
-                  color: AppColors.primaryStrong,
-                ),
-                const SizedBox(width: AppSpacing.s1),
-              ],
-              Flexible(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: selected ? AppColors.primaryStrong : AppColors.muted,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          onTap: onTap,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: kTapMin),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+            alignment: Alignment.center,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (selected) ...[
+                  const Icon(
+                    Icons.check,
+                    size: 16,
+                    color: AppColors.primaryStrong,
+                  ),
+                  const SizedBox(width: AppSpacing.s1),
+                ],
+                Flexible(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: selected
+                          ? AppColors.primaryStrong
+                          : AppColors.muted,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -475,35 +499,39 @@ class _HelpOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected ? AppColors.helpStrong : AppColors.helpSoft,
-      borderRadius: BorderRadius.circular(AppRadius.full),
-      child: InkWell(
+    return PressResponse(
+      child: Material(
+        color: selected ? AppColors.helpStrong : AppColors.helpSoft,
         borderRadius: BorderRadius.circular(AppRadius.full),
-        onTap: onTap,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: kTapMin),
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
-          alignment: Alignment.center,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.warning_amber_rounded,
-                size: 16,
-                color: selected ? AppColors.helpInk : AppColors.helpStrong,
-              ),
-              const SizedBox(width: AppSpacing.s1),
-              Flexible(
-                child: Text(
-                  'yardım',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: selected ? AppColors.helpInk : AppColors.helpStrong,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          onTap: onTap,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: kTapMin),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+            alignment: Alignment.center,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.warning_amber_rounded,
+                  size: 16,
+                  color: selected ? AppColors.helpInk : AppColors.helpStrong,
+                ),
+                const SizedBox(width: AppSpacing.s1),
+                Flexible(
+                  child: Text(
+                    'yardım',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: selected
+                          ? AppColors.helpInk
+                          : AppColors.helpStrong,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
