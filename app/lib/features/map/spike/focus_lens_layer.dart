@@ -1,9 +1,11 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/gestures.dart'
-    show PointerDeviceKind, PointerScrollEvent;
+import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 
+import '../../../core/motion/tekir_haptics.dart';
 import '../../../core/motion/tekir_motion.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/cat_marker.dart';
@@ -36,6 +38,17 @@ import 'map_projection.dart';
 /// position and a small anchor sitting on it, so the true geography is on
 /// screen the whole time and the displacement reads as a temporary lens
 /// artefact rather than as a location.
+/// How long a press has to hold still before it becomes the lens. Roughly
+/// the platform long-press, which is what a reader already expects to mean
+/// "look closer" rather than "move this".
+const Duration _holdToLens = Duration(milliseconds: 220);
+
+/// How far a press may wander in that time and still count as holding
+/// still.
+const double _panSlop = 12;
+
+enum _Pointer { idle, deciding, panning, lens }
+
 class FocusLensLayer extends StatefulWidget {
   const FocusLensLayer({
     super.key,
@@ -80,11 +93,20 @@ class _FocusLensLayerState extends State<FocusLensLayer>
   );
 
   Offset? _focus;
-  Offset? _dragging;
+
+  /// What the pointer currently down is doing. Deciding until the press
+  /// either holds still long enough to be a lens or moves far enough to be
+  /// a pan.
+  _Pointer _pointer = _Pointer.idle;
+  Offset _pressAt = Offset.zero;
+  Offset _lastAt = Offset.zero;
+  Timer? _holdTimer;
+
   final _photos = <String, ImageProvider>{};
 
   @override
   void dispose() {
+    _holdTimer?.cancel();
     _strength.dispose();
     super.dispose();
   }
@@ -148,42 +170,66 @@ class _FocusLensLayerState extends State<FocusLensLayer>
     final byId = {for (final cat in widget.cats) cat.id: cat};
 
     return MouseRegion(
-      // Desktop and web: no button, no gesture — the lens is wherever the
-      // cursor is, which is the closest a mouse gets to a finger resting on
-      // glass.
-      onHover: (event) => _moveFocus(event.localPosition),
+      // Where hover exists it needs no gesture at all: the lens is
+      // wherever the cursor is, which is the closest a mouse gets to a
+      // finger resting on glass. Suppressed while a press is deciding or
+      // panning, so a drag does not drag a lens with it.
+      onHover: (event) {
+        if (_pointer != _Pointer.idle) return;
+        _moveFocus(event.localPosition);
+      },
       onExit: (_) => _endFocus(),
       child: Listener(
-        // A mouse with a button held is dragging the map, not reading it,
-        // so the drag is forwarded to the camera and the lens stands
-        // still. A finger is the lens: touch has no hover to read, so the
-        // pointer being down *is* the focus.
+        // The lens and the map both want the same drag, and which one the
+        // user meant cannot be read off the device: a trackpad, a touch
+        // screen and a mouse all arrive here, and Flutter web does not
+        // report them consistently enough to branch on. So the press
+        // itself decides, the way a magnifier does everywhere else — hold
+        // still and the glass comes up under your finger, move off and you
+        // are dragging the map.
         onPointerDown: (event) {
-          if (event.kind == PointerDeviceKind.mouse) {
-            _dragging = event.localPosition;
-            return;
-          }
-          _moveFocus(event.localPosition);
+          _endFocus();
+          _pointer = _Pointer.deciding;
+          _pressAt = event.localPosition;
+          _lastAt = event.localPosition;
+          _holdTimer?.cancel();
+          _holdTimer = Timer(_holdToLens, () {
+            if (!mounted || _pointer != _Pointer.deciding) return;
+            _pointer = _Pointer.lens;
+            // The hand is what confirms the lens came up; the pins take a
+            // frame or two to say so.
+            unawaited(TekirHaptics.acknowledge());
+            _moveFocus(_lastAt);
+          });
         },
         onPointerMove: (event) {
-          final from = _dragging;
-          if (from != null) {
-            widget.onPan(event.localPosition - from);
-            _dragging = event.localPosition;
-            return;
+          final position = event.localPosition;
+          switch (_pointer) {
+            case _Pointer.deciding:
+              _lastAt = position;
+              if ((position - _pressAt).distance <= _panSlop) return;
+              _holdTimer?.cancel();
+              _pointer = _Pointer.panning;
+              widget.onPan(position - _pressAt);
+              _lastAt = position;
+            case _Pointer.panning:
+              widget.onPan(position - _lastAt);
+              _lastAt = position;
+            case _Pointer.lens:
+              _moveFocus(position);
+            case _Pointer.idle:
+              break;
           }
-          _moveFocus(event.localPosition);
         },
         onPointerUp: (_) {
-          if (_dragging != null) {
-            _dragging = null;
-            return;
-          }
-          _endFocus();
+          _holdTimer?.cancel();
+          if (_pointer == _Pointer.lens) _endFocus();
+          _pointer = _Pointer.idle;
         },
         onPointerCancel: (_) {
-          _dragging = null;
-          _endFocus();
+          _holdTimer?.cancel();
+          if (_pointer == _Pointer.lens) _endFocus();
+          _pointer = _Pointer.idle;
         },
         // The wheel keeps zooming the map: a lens that took the scroll
         // wheel away would trade one way of reading the map for another.

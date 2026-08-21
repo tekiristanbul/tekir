@@ -164,10 +164,10 @@ void main() {
       const Offset(228, 404),
     ];
     final gesture = await tester.startGesture(path.first);
-    // The first frame starts the ramp; the second is the first one with
-    // time on it. Without both, every frame below would be caught while
-    // the lens was still arriving.
-    await tester.pump();
+    // Held still first: a press that moves before the hold elapses is a
+    // pan, which is the whole point of the gesture split. Then a frame
+    // with time on it, so the ramp has finished before the sweep starts.
+    await tester.pump(const Duration(milliseconds: 250));
     await tester.pump(const Duration(milliseconds: 300));
     for (final (index, point) in path.indexed) {
       await gesture.moveTo(point);
