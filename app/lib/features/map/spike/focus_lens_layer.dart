@@ -1,11 +1,9 @@
-import 'dart:async';
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
+import 'package:pointer_interceptor/pointer_interceptor.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 
-import '../../../core/motion/tekir_haptics.dart';
 import '../../../core/motion/tekir_motion.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/cat_marker.dart';
@@ -38,24 +36,13 @@ import 'map_projection.dart';
 /// position and a small anchor sitting on it, so the true geography is on
 /// screen the whole time and the displacement reads as a temporary lens
 /// artefact rather than as a location.
-/// How long a press has to hold still before it becomes the lens. Roughly
-/// the platform long-press, which is what a reader already expects to mean
-/// "look closer" rather than "move this".
-const Duration _holdToLens = Duration(milliseconds: 220);
-
-/// How far a press may wander in that time and still count as holding
-/// still.
-const double _panSlop = 12;
-
-enum _Pointer { idle, deciding, panning, lens }
-
 class FocusLensLayer extends StatefulWidget {
   const FocusLensLayer({
     super.key,
     required this.cats,
     required this.projection,
+    required this.armed,
     required this.onSelect,
-    required this.onPan,
     required this.onZoom,
   });
 
@@ -65,14 +52,21 @@ class FocusLensLayer extends StatefulWidget {
   /// welded to the ground while the map moves under them.
   final MapProjection projection;
 
+  /// Whether the glass is in the reader's hand.
+  ///
+  /// This is the whole answer to the gesture problem. Reading the pointer
+  /// continuously means taking every pointer event before the map's own
+  /// html element sees them, and a map whose panning has been
+  /// re-implemented over a platform channel pans like a re-implementation.
+  /// So the layer only takes them while the lens is actually up: with it
+  /// down, nothing is intercepted except the pins themselves, and the map
+  /// pans and zooms with its own native gestures, at its own speed.
+  final bool armed;
+
   final ValueChanged<CatMarker> onSelect;
 
-  /// Drag the camera by a screen delta. The lens has to take every pointer
-  /// event to see hover at all, so panning and zooming are handed back to
-  /// the map from here rather than left to it.
-  final ValueChanged<Offset> onPan;
-
-  /// Zoom the camera by a number of levels.
+  /// Zoom the camera by a number of levels — only used while [armed], when
+  /// the wheel would otherwise be swallowed with everything else.
   final ValueChanged<double> onZoom;
 
   @override
@@ -93,20 +87,19 @@ class _FocusLensLayerState extends State<FocusLensLayer>
   );
 
   Offset? _focus;
-
-  /// What the pointer currently down is doing. Deciding until the press
-  /// either holds still long enough to be a lens or moves far enough to be
-  /// a pan.
-  _Pointer _pointer = _Pointer.idle;
-  Offset _pressAt = Offset.zero;
-  Offset _lastAt = Offset.zero;
-  Timer? _holdTimer;
-
+  Offset? _pressedAt;
   final _photos = <String, ImageProvider>{};
 
   @override
+  void didUpdateWidget(FocusLensLayer old) {
+    super.didUpdateWidget(old);
+    // Putting the glass down settles every pin back onto its coordinate,
+    // exactly as lifting a finger does.
+    if (old.armed && !widget.armed) _endFocus();
+  }
+
+  @override
   void dispose() {
-    _holdTimer?.cancel();
     _strength.dispose();
     super.dispose();
   }
@@ -140,6 +133,31 @@ class _FocusLensLayerState extends State<FocusLensLayer>
     });
   }
 
+  /// Resolves a release into a selection, when the press stayed put and
+  /// landed on a magnified pin. Done here rather than by the pins because
+  /// the glass is above them and takes the pointer first.
+  void _tapped(
+    List<LensPlacement> placements,
+    Map<String, CatMarker> byId,
+    Offset position,
+  ) {
+    final pressed = _pressedAt;
+    _pressedAt = null;
+    // A press that travelled was reading the map, not choosing a cat.
+    if (pressed == null || (position - pressed).distance > 12) return;
+    LensPlacement? hit;
+    var nearest = double.infinity;
+    for (final placement in placements) {
+      final distance = (placement.position - position).distance;
+      if (distance > lensBasePin * placement.scale / 2) continue;
+      if (distance >= nearest) continue;
+      nearest = distance;
+      hit = placement;
+    }
+    if (hit == null) return;
+    if (byId[hit.id] case final cat?) widget.onSelect(cat);
+  }
+
   ImageProvider? _photoOf(CatMarker cat) {
     if (cat.primaryPhoto.isEmpty) return null;
     // Held per cat and never rebuilt at a new decode size: the pin changes
@@ -169,123 +187,109 @@ class _FocusLensLayerState extends State<FocusLensLayer>
     ];
     final byId = {for (final cat in widget.cats) cat.id: cat};
 
-    return MouseRegion(
-      // Where hover exists it needs no gesture at all: the lens is
-      // wherever the cursor is, which is the closest a mouse gets to a
-      // finger resting on glass. Suppressed while a press is deciding or
-      // panning, so a drag does not drag a lens with it.
-      onHover: (event) {
-        if (_pointer != _Pointer.idle) return;
-        _moveFocus(event.localPosition);
+    return AnimatedBuilder(
+      animation: _strength,
+      builder: (context, _) {
+        final placements = lensPlacements(
+          focus: _focus,
+          strength: _strength.value,
+          cats: projected,
+        );
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _LeaderPainter(placements: placements),
+                ),
+              ),
+            ),
+            for (final placement in placements)
+              if (byId[placement.id] case final cat?)
+                _LensPin(
+                  key: ValueKey(cat.id),
+                  cat: cat,
+                  placement: placement,
+                  photo: _photoOf(cat),
+                  // While the glass is up the sheet on top owns every
+                  // pointer and resolves taps to pins itself.
+                  onTap: widget.armed ? null : () => widget.onSelect(cat),
+                ),
+            // Drawn last, over the pins: the anchor is the answer to
+            // "where is this cat really", and a pin sitting on top of it
+            // would take that answer away exactly when the displacement is
+            // largest.
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _AnchorPainter(placements: placements),
+                ),
+              ),
+            ),
+            // The glass itself, over everything it magnifies. It has to be
+            // the topmost thing: a pin catching the press first would mean
+            // the lens never came up over the very cats it exists for.
+            // Taps are therefore resolved here, against the placements
+            // this frame actually drew.
+            if (widget.armed)
+              Positioned.fill(
+                child: PointerInterceptor(
+                  child: MouseRegion(
+                    // Where hover exists the lens needs no gesture at all:
+                    // it is wherever the cursor is.
+                    onHover: (event) => _moveFocus(event.localPosition),
+                    onExit: (_) => _endFocus(),
+                    child: Listener(
+                      // Opaque: an empty box hit-tests to nothing, and a
+                      // listener that defers to its child would then never
+                      // see a pointer at all.
+                      behavior: HitTestBehavior.opaque,
+                      // And where it does not — every touch screen — the
+                      // finger is the lens for as long as it is down.
+                      onPointerDown: (event) {
+                        _pressedAt = event.localPosition;
+                        _moveFocus(event.localPosition);
+                      },
+                      onPointerMove: (event) => _moveFocus(event.localPosition),
+                      onPointerUp: (event) {
+                        _tapped(placements, byId, event.localPosition);
+                        _endFocus();
+                      },
+                      onPointerCancel: (_) {
+                        _pressedAt = null;
+                        _endFocus();
+                      },
+                      // The wheel is swallowed with everything else while
+                      // armed, so it is handed back to the camera.
+                      onPointerSignal: (event) {
+                        if (event is PointerScrollEvent) {
+                          widget.onZoom(-event.scrollDelta.dy / 220);
+                        }
+                      },
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
       },
-      onExit: (_) => _endFocus(),
-      child: Listener(
-        // The lens and the map both want the same drag, and which one the
-        // user meant cannot be read off the device: a trackpad, a touch
-        // screen and a mouse all arrive here, and Flutter web does not
-        // report them consistently enough to branch on. So the press
-        // itself decides, the way a magnifier does everywhere else — hold
-        // still and the glass comes up under your finger, move off and you
-        // are dragging the map.
-        onPointerDown: (event) {
-          _endFocus();
-          _pointer = _Pointer.deciding;
-          _pressAt = event.localPosition;
-          _lastAt = event.localPosition;
-          _holdTimer?.cancel();
-          _holdTimer = Timer(_holdToLens, () {
-            if (!mounted || _pointer != _Pointer.deciding) return;
-            _pointer = _Pointer.lens;
-            // The hand is what confirms the lens came up; the pins take a
-            // frame or two to say so.
-            unawaited(TekirHaptics.acknowledge());
-            _moveFocus(_lastAt);
-          });
-        },
-        onPointerMove: (event) {
-          final position = event.localPosition;
-          switch (_pointer) {
-            case _Pointer.deciding:
-              _lastAt = position;
-              if ((position - _pressAt).distance <= _panSlop) return;
-              _holdTimer?.cancel();
-              _pointer = _Pointer.panning;
-              widget.onPan(position - _pressAt);
-              _lastAt = position;
-            case _Pointer.panning:
-              widget.onPan(position - _lastAt);
-              _lastAt = position;
-            case _Pointer.lens:
-              _moveFocus(position);
-            case _Pointer.idle:
-              break;
-          }
-        },
-        onPointerUp: (_) {
-          _holdTimer?.cancel();
-          if (_pointer == _Pointer.lens) _endFocus();
-          _pointer = _Pointer.idle;
-        },
-        onPointerCancel: (_) {
-          _holdTimer?.cancel();
-          if (_pointer == _Pointer.lens) _endFocus();
-          _pointer = _Pointer.idle;
-        },
-        // The wheel keeps zooming the map: a lens that took the scroll
-        // wheel away would trade one way of reading the map for another.
-        onPointerSignal: (event) {
-          if (event is PointerScrollEvent) {
-            widget.onZoom(-event.scrollDelta.dy / 220);
-          }
-        },
-        child: AnimatedBuilder(
-          animation: _strength,
-          builder: (context, _) {
-            final placements = lensPlacements(
-              focus: _focus,
-              strength: _strength.value,
-              cats: projected,
-            );
-            return Stack(
-              children: [
-                // Catches the pointer over the whole map area. Without it
-                // the lens would only track while the cursor happens to be
-                // over a pin.
-                const Positioned.fill(
-                  child: ColoredBox(color: Color(0x00000000)),
-                ),
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _LeaderPainter(placements: placements),
-                    ),
-                  ),
-                ),
-                for (final placement in placements)
-                  if (byId[placement.id] case final cat?)
-                    _LensPin(
-                      key: ValueKey(cat.id),
-                      cat: cat,
-                      placement: placement,
-                      photo: _photoOf(cat),
-                      onTap: () => widget.onSelect(cat),
-                    ),
-                // Drawn last, over the pins: the anchor is the answer to
-                // "where is this cat really", and a pin sitting on top of
-                // it would take that answer away exactly when the
-                // displacement is largest.
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _AnchorPainter(placements: placements),
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
+    );
+  }
+}
+
+/// A pin's own tap target, present only while the glass is down.
+class _PinHitTarget extends StatelessWidget {
+  const _PinHitTarget({required this.onTap, required this.child});
+
+  final VoidCallback? onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (onTap == null) return IgnorePointer(child: child);
+    return PointerInterceptor(
+      child: GestureDetector(onTap: onTap, child: child),
     );
   }
 }
@@ -354,7 +358,7 @@ class _LensPin extends StatelessWidget {
   final CatMarker cat;
   final LensPlacement placement;
   final ImageProvider? photo;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -372,7 +376,11 @@ class _LensPin extends StatelessWidget {
         // they are reachable by a screen reader — a side effect of the
         // concept, and a finding about the shipped map.
         label: cat.needsHelp ? '${cat.name}, yardıma ihtiyacı var' : cat.name,
-        child: GestureDetector(
+        // With the glass down nothing else is taking events, and a flutter
+        // widget over a platform view is not tappable on web without an
+        // interceptor of its own. With it up the sheet above owns the
+        // pointer and this is a drawing, so it takes nothing.
+        child: _PinHitTarget(
           onTap: onTap,
           child: DecoratedBox(
             decoration: BoxDecoration(

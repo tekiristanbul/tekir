@@ -139,8 +139,8 @@ void main() {
           body: FocusLensLayer(
             cats: cats,
             projection: projection,
+            armed: true,
             onSelect: (_) {},
-            onPan: (_) {},
             onZoom: (_) {},
           ),
         ),
@@ -164,10 +164,9 @@ void main() {
       const Offset(228, 404),
     ];
     final gesture = await tester.startGesture(path.first);
-    // Held still first: a press that moves before the hold elapses is a
-    // pan, which is the whole point of the gesture split. Then a frame
-    // with time on it, so the ramp has finished before the sweep starts.
-    await tester.pump(const Duration(milliseconds: 250));
+    // One frame to start the ramp and one with time on it, so the sweep
+    // below is captured with the lens fully up rather than arriving.
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     for (final (index, point) in path.indexed) {
       await gesture.moveTo(point);

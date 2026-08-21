@@ -8,9 +8,9 @@ import 'package:app/features/map/spike/focus_lens_layer.dart';
 import 'package:app/features/map/spike/map_projection.dart';
 
 /// Issue #280, concept 1, at the widget level: the lens follows the
-/// pointer, hands the cat under it back to the caller on a tap, and
-/// answers the reduced-motion preference by dropping the ramp rather than
-/// the lens.
+/// pointer while the glass is up, intercepts nothing while it is down,
+/// hands the cat under it back on a tap, and answers the reduced-motion
+/// preference by dropping the ramp rather than the lens.
 void main() {
   const cats = [
     CatMarker(
@@ -36,19 +36,19 @@ void main() {
   );
 
   Widget host({
-    required bool reduceMotion,
+    bool armed = true,
+    bool reduceMotion = false,
     void Function(CatMarker)? onSelect,
-    void Function(Offset)? onPan,
   }) {
     return MaterialApp(
       home: MediaQuery(
         data: MediaQueryData(disableAnimations: reduceMotion),
         child: Scaffold(
           body: FocusLensLayer(
+            armed: armed,
             cats: cats,
             projection: projection,
             onSelect: onSelect ?? (_) {},
-            onPan: onPan ?? (_) {},
             onZoom: (_) {},
           ),
         ),
@@ -59,29 +59,28 @@ void main() {
   Size pinSize(WidgetTester tester, String name) =>
       tester.getSize(find.bySemanticsLabel(name).first);
 
-  /// Long enough for a press to have held still, plus the ramp.
-  Future<void> holdStill(WidgetTester tester) async {
-    await tester.pump(const Duration(milliseconds: 250));
+  /// One frame to start the ramp, one with time on it to finish it.
+  Future<void> settle(WidgetTester tester) async {
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
   }
 
   testWidgets('at rest every cat sits at its own size', (tester) async {
-    await tester.pumpWidget(host(reduceMotion: false));
+    await tester.pumpWidget(host());
 
     expect(pinSize(tester, 'tekir').width, closeTo(lensBasePin, 0.01));
     expect(pinSize(tester, 'boncuk').width, closeTo(lensBasePin, 0.01));
   });
 
-  testWidgets('a press that holds still brings the lens up', (tester) async {
-    await tester.pumpWidget(host(reduceMotion: false));
+  testWidgets('the pointer magnifies what is under it', (tester) async {
+    await tester.pumpWidget(host());
     final tekir = tester.getCenter(find.bySemanticsLabel('tekir').first);
 
     final gesture = await tester.startGesture(tekir);
-    await holdStill(tester);
+    await settle(tester);
 
     expect(pinSize(tester, 'tekir').width, greaterThan(lensBasePin * 1.5));
 
-    // And lets go of it again.
     await gesture.up();
     await tester.pumpAndSettle();
     expect(pinSize(tester, 'tekir').width, closeTo(lensBasePin, 0.01));
@@ -90,20 +89,57 @@ void main() {
   testWidgets('a cat the focus has left comes back to its own size', (
     tester,
   ) async {
-    await tester.pumpWidget(host(reduceMotion: false));
+    await tester.pumpWidget(host());
     final tekir = tester.getCenter(find.bySemanticsLabel('tekir').first);
 
     final gesture = await tester.startGesture(tekir);
-    await holdStill(tester);
+    await settle(tester);
     final magnified = pinSize(tester, 'tekir').width;
 
-    // Dragged well past the lens's reach, without lifting: this is the
-    // continuous part of the concept, and the pin has to be released by
-    // the lens moving on, not only by the finger lifting.
+    // Moved past the lens's reach without lifting: this is the continuous
+    // part of the concept, and a cat has to be released by the lens moving
+    // on, not only by the pointer lifting.
     await gesture.moveTo(tekir + const Offset(lensRadius + 40, 0));
     await tester.pump(const Duration(milliseconds: 16));
 
     expect(pinSize(tester, 'tekir').width, lessThan(magnified));
+    expect(pinSize(tester, 'tekir').width, closeTo(lensBasePin, 0.01));
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('with the glass down the layer magnifies nothing', (
+    tester,
+  ) async {
+    // The point of the arming control: with it off the layer takes no
+    // pointer events at all, and the map underneath keeps its own
+    // panning, flinging and pinching. A pointer landing on the map is the
+    // map's, not the lens's.
+    await tester.pumpWidget(host(armed: false));
+    final tekir = tester.getCenter(find.bySemanticsLabel('tekir').first);
+
+    final gesture = await tester.startGesture(tekir + const Offset(0, 120));
+    await settle(tester);
+
+    expect(pinSize(tester, 'tekir').width, closeTo(lensBasePin, 0.01));
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('putting the glass down settles what it was holding', (
+    tester,
+  ) async {
+    await tester.pumpWidget(host());
+    final tekir = tester.getCenter(find.bySemanticsLabel('tekir').first);
+
+    final gesture = await tester.startGesture(tekir);
+    await settle(tester);
+    expect(pinSize(tester, 'tekir').width, greaterThan(lensBasePin * 1.5));
+
+    // Disarmed mid-press: nothing is left magnified behind the control.
+    await tester.pumpWidget(host(armed: false));
+    await tester.pumpAndSettle();
+
     expect(pinSize(tester, 'tekir').width, closeTo(lensBasePin, 0.01));
     await gesture.up();
     await tester.pumpAndSettle();
@@ -114,11 +150,10 @@ void main() {
     final tekir = tester.getCenter(find.bySemanticsLabel('tekir').first);
 
     final gesture = await tester.startGesture(tekir);
-    // The hold still has to elapse — that is the gesture, not the motion —
-    // but with the ramp gated to zero the lens is fully applied in the
-    // frame it comes up, which is what "immediate scale and displacement
-    // changes" means.
-    await tester.pump(const Duration(milliseconds: 250));
+    // One frame, no time passing: with the ramp gated to zero the lens is
+    // already fully applied, which is what "immediate scale and
+    // displacement changes" means.
+    await tester.pump();
 
     expect(pinSize(tester, 'tekir').width, greaterThan(lensBasePin * 1.5));
 
@@ -127,61 +162,38 @@ void main() {
     expect(pinSize(tester, 'tekir').width, closeTo(lensBasePin, 0.01));
   });
 
-  testWidgets('with motion allowed the lens is still on its way', (
+  testWidgets('with motion allowed the first frame is still on its way', (
     tester,
   ) async {
-    await tester.pumpWidget(host(reduceMotion: false));
+    await tester.pumpWidget(host());
     final tekir = tester.getCenter(find.bySemanticsLabel('tekir').first);
 
     final gesture = await tester.startGesture(tekir);
-    await tester.pump(const Duration(milliseconds: 250));
-
-    // The contrast with the test above: engaging is a 200 ms ramp, so the
-    // frame the lens comes up on has not grown anything yet.
-    expect(pinSize(tester, 'tekir').width, closeTo(lensBasePin, 0.01));
-    await gesture.up();
-    await tester.pumpAndSettle();
-  });
-
-  testWidgets('a press that moves pans the map and never magnifies', (
-    tester,
-  ) async {
-    final panned = <Offset>[];
-    await tester.pumpWidget(host(reduceMotion: false, onPan: panned.add));
-    final tekir = tester.getCenter(find.bySemanticsLabel('tekir').first);
-
-    // Moving off before the hold elapses is a drag, and a drag belongs to
-    // the map. Which of the two the reader meant cannot be read off the
-    // device — trackpads, touch screens and mice all arrive the same way
-    // on web — so the press itself has to decide.
-    final gesture = await tester.startGesture(tekir);
-    await gesture.moveBy(const Offset(60, 0));
-    await tester.pump(const Duration(milliseconds: 16));
-    await gesture.moveBy(const Offset(40, 0));
-    await tester.pump(const Duration(milliseconds: 16));
-
-    expect(panned, isNotEmpty);
-    expect(panned.map((p) => p.dx).reduce((a, b) => a + b), closeTo(100, 0.01));
-    expect(pinSize(tester, 'tekir').width, closeTo(lensBasePin, 0.01));
-
-    // And holding past the hold time now does nothing either: this press
-    // has already been decided.
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(pinSize(tester, 'tekir').width, closeTo(lensBasePin, 0.01));
-
-    await gesture.up();
-    await tester.pumpAndSettle();
-  });
-
-  testWidgets('tapping a magnified cat selects that cat', (tester) async {
-    final selected = <String>[];
-    await tester.pumpWidget(
-      host(reduceMotion: true, onSelect: (cat) => selected.add(cat.id)),
-    );
-
-    await tester.tap(find.bySemanticsLabel('boncuk').first);
     await tester.pump();
 
-    expect(selected, ['b']);
+    // The contrast with the test above: engaging is a 200 ms ramp, so the
+    // frame the pointer lands on has not grown anything yet.
+    expect(pinSize(tester, 'tekir').width, closeTo(lensBasePin, 0.01));
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('tapping a cat selects it, glass up or down', (tester) async {
+    for (final armed in [true, false]) {
+      final selected = <String>[];
+      await tester.pumpWidget(
+        host(
+          armed: armed,
+          reduceMotion: true,
+          onSelect: (cat) => selected.add(cat.id),
+        ),
+      );
+
+      await tester.tap(find.bySemanticsLabel('boncuk').first);
+      await tester.pump();
+
+      expect(selected, ['b'], reason: 'armed: $armed');
+      await tester.pumpAndSettle();
+    }
   });
 }

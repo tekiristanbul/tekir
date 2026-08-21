@@ -62,13 +62,15 @@ There is no opening and no closing. The focus is wherever the pointer is,
 every frame, and the map is locally magnified around it the way a glass
 lens magnifies paper.
 
-1. The press itself decides what it meant. Hold still for a moment and the
-   glass comes up under the pointer, with a haptic to say so; move off
-   before that and you are dragging the map. Where hover exists the lens
-   also simply follows the cursor, no button at all. Which device is in
-   use never enters into it — on web a trackpad, a touch screen and a mouse
-   do not arrive distinguishably, and an earlier build that branched on
-   device kind left real users unable to pan.
+1. The glass is picked up from a control on the map, and put down again.
+   Reading the pointer continuously means taking every pointer event
+   before the map's own html element sees them, and a map whose panning
+   has been re-implemented over a platform channel pans like a
+   re-implementation — two earlier builds tried to keep both and both
+   failed, one by branching on a device kind web does not report reliably,
+   one by making the map crawl. With the glass down the layer intercepts
+   nothing but its own pins and the map keeps its native pan, fling and
+   pinch; with it up, the pointer is the lens.
 2. Cats within about 140 px of the focus grow, most at the focus itself and
    progressively less further out, reaching their normal size exactly at the
    lens's edge. A cat outside it is untouched, to the pixel.
@@ -129,12 +131,14 @@ Two consequences and two limits found:
   against Google's own metres-per-pixel in
   `map_projection_test.dart`. It is only valid for a flat, north-up
   camera, so this concept turns the rotate and tilt gestures off.
-- **The overlay has to take every pointer event**, including hover, which on
-  web means taking them before the map's own html element does. Panning and
-  zooming are therefore handed back to the map by the layer: a drag scrolls
-  the camera, the wheel zooms it. Because the device kind is not reliable
-  on web, the split is by intent — hold to magnify, move to pan — which
-  costs the lens a short delay before it appears.
+- **Reading the pointer and keeping the map's gestures are mutually
+  exclusive**, and the map's gestures are worth more. Intercepting every
+  pointer event is the only way to see hover over a platform view on web,
+  and forwarding the resulting drags back to the camera produced a map that
+  panned visibly worse than the map does. So the lens is armed and
+  disarmed from a control instead: down, the layer takes nothing; up, it
+  takes everything and hands only the wheel back. That is a mode, which is
+  the honest cost of this concept on this sdk.
 - **Clustering is bypassed, not used.** With the cats drawn in Flutter, the
   clusterer has nothing to group — which is also why this interaction puts
   no count anywhere on screen. It is left registered and untouched, and
@@ -374,11 +378,11 @@ fixed on its own terms, not as a motion concept.
 Concept 1 is recommended but is not yet safe to integrate. The remaining
 blockers, in order:
 
-1. **Panning and zooming are re-implemented on top of the map**, because
-   the overlay has to take every pointer event to see hover at all. The
-   forwarding works, and the hold-versus-drag split is learnable, but the
-   map's own gesture handling — momentum, two-finger zoom, double-tap — is
-   bypassed rather than reused, and only the parts written here exist.
+1. **The lens is a mode, not an always-on behaviour.** It has to be, on
+   this sdk: a layer cannot read the pointer continuously and leave the
+   map's own gestures alone at the same time. Whether a map-reading tool
+   the reader has to pick up is acceptable is a product decision, and it
+   is the first one to make about this concept.
 2. **Nothing thins a dense viewport.** Bypassing the clusterer is what
    removes the count from the interaction, and also what removes the only
    thing keeping a few hundred cats from becoming a few hundred Flutter

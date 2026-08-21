@@ -118,6 +118,12 @@ class _MapScreenState extends ConsumerState<MapScreen>
   /// nowhere near the zoom floor.
   double _zoom = _initialZoom;
 
+  /// Concept 1: whether the glass is up. With it down the lens layer
+  /// intercepts nothing but its own pins, so the map pans and zooms with
+  /// its own native gestures — which is the only way panning feels like
+  /// the map panning rather than like a re-implementation of it.
+  bool _lensArmed = false;
+
   /// Concept 3: the cat whose pin is currently a Flutter widget so a hero
   /// can fly it, and where that pin sits on screen.
   CatMarker? _carriedCat;
@@ -284,12 +290,8 @@ class _MapScreenState extends ConsumerState<MapScreen>
     return Offset(point.x / ratio, point.y / ratio);
   }
 
-  /// Concept 1 hands panning and zooming back to the map, because its
-  /// overlay has to intercept every pointer event to see hover at all.
-  void _panBy(Offset delta) {
-    _controller?.moveCamera(CameraUpdate.scrollBy(-delta.dx, -delta.dy));
-  }
-
+  /// Concept 1's wheel, forwarded only while the glass is up and the
+  /// layer is swallowing pointer signals.
   void _zoomBy(double levels) {
     _controller?.moveCamera(CameraUpdate.zoomBy(levels));
   }
@@ -687,6 +689,22 @@ class _MapScreenState extends ConsumerState<MapScreen>
               ),
             ),
           ),
+        // Concept 1's own control: picking the glass up and putting it
+        // down. It exists because reading the pointer continuously and
+        // letting the map keep its native gestures are mutually exclusive
+        // on web, and the map's gestures are worth more.
+        if (mapSpikeEnabled &&
+            ref.watch(mapSpikeProvider) == MapSpikeConcept.lens)
+          Positioned(
+            right: AppSpacing.s4,
+            bottom: _fabClearance + kTapMin + AppSpacing.s3,
+            child: PointerInterceptor(
+              child: _LensArmButton(
+                armed: _lensArmed,
+                onTap: () => setState(() => _lensArmed = !_lensArmed),
+              ),
+            ),
+          ),
         // Issue #280's reviewer control. Not a navigation surface: every
         // option renders this same screen with one interaction rule
         // swapped, and it exists only in a spike build.
@@ -794,27 +812,22 @@ class _MapScreenState extends ConsumerState<MapScreen>
         ),
         if (lensActive)
           Positioned.fill(
-            // The lens has to see every pointer event, including hover,
-            // which on web means taking them before the map's own html
-            // element does.
-            child: PointerInterceptor(
-              child: LayoutBuilder(
-                builder: (context, box) => FocusLensLayer(
-                  cats: _helpFilterOn
-                      ? [
-                          for (final cat in mapState.markers)
-                            if (cat.needsHelp) cat,
-                        ]
-                      : mapState.markers,
-                  projection: MapProjection(
-                    center: camera.target,
-                    zoom: camera.zoom,
-                    size: box.biggest,
-                  ),
-                  onSelect: _onCatSelected,
-                  onPan: _panBy,
-                  onZoom: _zoomBy,
+            child: LayoutBuilder(
+              builder: (context, box) => FocusLensLayer(
+                armed: _lensArmed,
+                cats: _helpFilterOn
+                    ? [
+                        for (final cat in mapState.markers)
+                          if (cat.needsHelp) cat,
+                      ]
+                    : mapState.markers,
+                projection: MapProjection(
+                  center: camera.target,
+                  zoom: camera.zoom,
+                  size: box.biggest,
                 ),
+                onSelect: _onCatSelected,
+                onZoom: _zoomBy,
               ),
             ),
           ),
@@ -1086,6 +1099,42 @@ class _HelpFilterChip extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Issue #280, concept 1: picks the glass up and puts it down. Same visual
+/// language as the map's other corner buttons — a white circle over the
+/// map — because it is one, not a new kind of control.
+class _LensArmButton extends StatelessWidget {
+  const _LensArmButton({required this.armed, required this.onTap});
+
+  final bool armed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      toggled: armed,
+      label: 'mercek',
+      child: Material(
+        color: armed ? AppColors.primary : Colors.white.withValues(alpha: 0.92),
+        shape: const CircleBorder(),
+        elevation: 2,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(
+            width: kTapMin,
+            height: kTapMin,
+            child: Icon(
+              Icons.zoom_in,
+              color: armed ? AppColors.primaryInk : AppColors.ink,
             ),
           ),
         ),
