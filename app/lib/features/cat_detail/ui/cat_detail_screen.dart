@@ -2648,9 +2648,13 @@ class _EmptyHistory extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: AppSpacing.s5),
-          // The contract's brick primary on a sand ground.
+          // Quiet, not brick. The contract allows one primary per state and
+          // the fixed "+ update" bar below is already it — a second brick
+          // button stacked directly above it, opening the same composer,
+          // read as the same button printed twice. The invitation lives in
+          // the copy; this is the shortcut to it.
           Material(
-            color: AppColors.primary,
+            color: AppColors.surfaceAlt,
             borderRadius: BorderRadius.circular(AppRadius.lg),
             child: InkWell(
               borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -2667,7 +2671,7 @@ class _EmptyHistory extends ConsumerWidget {
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
-                    color: AppColors.primaryInk,
+                    color: AppColors.muted,
                   ),
                 ),
               ),
