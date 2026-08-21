@@ -29,13 +29,17 @@ import 'map_projection.dart';
 /// appears anywhere in this interaction. Switching the concept off restores
 /// the marker set and the clusterer with it, unchanged.
 ///
-/// ## What the reader gets back
+/// ## The glass is drawn
 ///
-/// Magnification without a way back would be a map lying about where cats
-/// are. Every pin the lens has moved keeps a hairline drawn to its real
-/// position and a small anchor sitting on it, so the true geography is on
-/// screen the whole time and the displacement reads as a temporary lens
-/// artefact rather than as a location.
+/// The basemap cannot be magnified — it is a platform view, and its pixels
+/// are not ours to sample — so the lens has to declare itself. A ring is
+/// drawn at its rim, with a hairline just inside it for thickness, and the
+/// magnification profile ends vertically at that ring. Together they make
+/// the boundary a place on the map: cross it and a cat is at its own size,
+/// exactly, on the far side of a line you can see.
+///
+/// Nothing is displaced, so nothing needs a leader back to the truth. Every
+/// pin is on its own coordinate at every moment.
 class FocusLensLayer extends StatefulWidget {
   const FocusLensLayer({
     super.key,
@@ -200,10 +204,16 @@ class _FocusLensLayerState extends State<FocusLensLayer>
             Positioned.fill(
               child: IgnorePointer(
                 child: CustomPaint(
-                  painter: _LeaderPainter(placements: placements),
+                  painter: _GlassPainter(
+                    focus: _focus,
+                    strength: _strength.value,
+                  ),
                 ),
               ),
             ),
+            // Back to front, nearest the focus last: the cat the glass is
+            // actually over is the largest one *and* the one on top, which
+            // is what lets a sweep read a stack one cat at a time.
             for (final placement in placements)
               if (byId[placement.id] case final cat?)
                 _LensPin(
@@ -215,17 +225,6 @@ class _FocusLensLayerState extends State<FocusLensLayer>
                   // pointer and resolves taps to pins itself.
                   onTap: widget.armed ? null : () => widget.onSelect(cat),
                 ),
-            // Drawn last, over the pins: the anchor is the answer to
-            // "where is this cat really", and a pin sitting on top of it
-            // would take that answer away exactly when the displacement is
-            // largest.
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(
-                  painter: _AnchorPainter(placements: placements),
-                ),
-              ),
-            ),
             // The glass itself, over everything it magnifies. It has to be
             // the topmost thing: a pin catching the press first would mean
             // the lens never came up over the very cats it exists for.
@@ -294,53 +293,36 @@ class _PinHitTarget extends StatelessWidget {
   }
 }
 
-/// The line home. One logical pixel in the map chrome's own line colour,
-/// with a small filled anchor on the cat's real coordinate: enough to
-/// follow, quiet enough to sit under the pins without competing with the
-/// streets.
-class _LeaderPainter extends CustomPainter {
-  const _LeaderPainter({required this.placements});
+/// The glass itself. Two hairlines, no fill and no blur: the rim, and a
+/// second line just inside it that reads as the thickness of a disc lying
+/// on the map. Enough to say where the lens is; not enough to compete with
+/// the streets it sits on.
+class _GlassPainter extends CustomPainter {
+  const _GlassPainter({required this.focus, required this.strength});
 
-  final List<LensPlacement> placements;
+  final Offset? focus;
+  final double strength;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final line = Paint()
-      ..color = AppColors.lineStrong
+    final centre = focus;
+    if (centre == null || strength <= 0) return;
+    final rim = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..color = AppColors.ink.withValues(alpha: 0.22 * strength);
+    final inner = Paint()
+      ..style = PaintingStyle.stroke
       ..strokeWidth = 1
-      ..style = PaintingStyle.stroke;
+      ..color = AppColors.surface.withValues(alpha: 0.55 * strength);
 
-    for (final placement in placements) {
-      if (placement.displacement < 4) continue;
-      canvas.drawLine(placement.origin, placement.position, line);
-    }
+    canvas.drawCircle(centre, lensRadius, rim);
+    canvas.drawCircle(centre, lensRadius - 3, inner);
   }
 
   @override
-  bool shouldRepaint(_LeaderPainter old) => old.placements != placements;
-}
-
-/// The true coordinates, over everything. A ring of page colour around each
-/// one so it survives being drawn on top of a photograph.
-class _AnchorPainter extends CustomPainter {
-  const _AnchorPainter({required this.placements});
-
-  final List<LensPlacement> placements;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final halo = Paint()..color = AppColors.bg;
-    final anchor = Paint()..color = AppColors.ink;
-
-    for (final placement in placements) {
-      if (placement.displacement < 4) continue;
-      canvas.drawCircle(placement.origin, 4, halo);
-      canvas.drawCircle(placement.origin, 2.5, anchor);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_AnchorPainter old) => old.placements != placements;
+  bool shouldRepaint(_GlassPainter old) =>
+      old.focus != focus || old.strength != strength;
 }
 
 /// One cat under the lens: the shipped marker's language — circular photo,

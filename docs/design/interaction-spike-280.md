@@ -58,50 +58,50 @@ a different number, then a pile.
 
 ### From first touch to completion
 
-There is no opening and no closing. The focus is wherever the pointer is,
-every frame, and the map is locally magnified around it the way a glass
-lens magnifies paper.
+There is no opening and no closing while the glass is up. The focus is
+wherever the pointer is, every frame, and the map under it is magnified the
+way a glass lens magnifies paper.
 
 1. The glass is picked up from a control on the map, and put down again.
-   Reading the pointer continuously means taking every pointer event
-   before the map's own html element sees them, and a map whose panning
-   has been re-implemented over a platform channel pans like a
-   re-implementation — two earlier builds tried to keep both and both
-   failed, one by branching on a device kind web does not report reliably,
-   one by making the map crawl. With the glass down the layer intercepts
-   nothing but its own pins and the map keeps its native pan, fling and
-   pinch; with it up, the pointer is the lens.
-2. Cats within about 140 px of the focus grow, most at the focus itself and
-   progressively less further out, reaching their normal size exactly at the
-   lens's edge. A cat outside it is untouched, to the pixel.
-3. The same transform moves them: space stretches, so a magnified cat is
-   also further from its neighbours. Scale and displacement come from one
-   expression, which is what makes it read as glass over a map rather than
-   as icons growing.
-4. Cats recorded at one doorway need more than stretching — a few pixels
-   times three is still a few pixels — so a crowded pin also steps outward
-   along a bearing of its own, by as much as its overlap requires and no
-   more, fading to nothing at the lens edge.
-5. Every displaced pin keeps a hairline drawn back to its real coordinate,
-   with an anchor dot on the coordinate itself, drawn over the pins so the
-   true geography is legible exactly when the displacement is largest.
-6. Moving the focus on releases what it leaves behind, continuously.
-   Lifting the finger, or moving the cursor off the map, settles everything
-   back onto its own coordinate.
+   Reading the pointer continuously means taking every pointer event before
+   the map's own html element sees them, and a map whose panning has been
+   re-implemented over a platform channel pans like a re-implementation —
+   two earlier builds tried to keep both and both failed. With the glass
+   down the layer intercepts nothing but its own pins and the map keeps its
+   native pan, fling and pinch; with it up, the pointer is the lens.
+2. A rim is drawn where the glass ends, with a hairline just inside it for
+   thickness. The basemap cannot be magnified — it is a platform view, and
+   its pixels are not ours to sample — so the lens has to declare itself,
+   and that ring is what makes it a disc lying on the map rather than icons
+   quietly growing.
+3. Cats inside the rim are drawn larger: full magnification at the focus,
+   falling to exactly their own size at the ring. The profile is a
+   spherical cap, so it arrives at the rim vertically — the boundary is a
+   place you can see and cross, not a fade.
+4. **Nothing is displaced.** A cat is drawn at its own coordinate at every
+   moment, at every strength. An earlier pass pushed crowded pins apart
+   into a rosette; it read as a badge rather than as magnification, and it
+   meant the map was showing cats where they are not.
+5. A stack is opened by the sweep instead: the cat nearest the focus is the
+   largest *and* is drawn over its neighbours, so moving the glass across a
+   doorway reads its cats one after another. Cats on identical coordinates
+   cannot be separated this way at all — the honest limit of scale-only
+   magnification.
+6. Lifting the pointer, moving the cursor off the map, or putting the glass
+   down settles everything back to its own size.
 7. Tapping a magnified cat opens the shipped preview sheet, unchanged.
 
 Evidence: [03 · at rest](screenshots/spike-280-03-lens-rest.png) — the
 seeded Galata seven at street zoom, one stack;
-[04 · the lens over them](screenshots/spike-280-04-lens-open.png) — seven
-faces, each identifiable, at the same zoom;
-[04b · the lens moved](screenshots/spike-280-04b-lens-moved.png) — the same
-group under a focus that has shifted, redistributed continuously. The frame
-sequence [lens-frame-0](screenshots/spike-280-lens-frame-0.png) →
+[04 · the glass over them](screenshots/spike-280-04-lens-open.png);
+[04b · the glass moved](screenshots/spike-280-04b-lens-moved.png) — the same
+group under a focus that has shifted. The frame sequence
+[lens-frame-0](screenshots/spike-280-lens-frame-0.png) →
 [1](screenshots/spike-280-lens-frame-1.png) →
 [2](screenshots/spike-280-lens-frame-2.png) →
 [3](screenshots/spike-280-lens-frame-3.png) →
 [4](screenshots/spike-280-lens-frame-4.png) →
-[5 · released](screenshots/spike-280-lens-frame-5.png) is a single drag
+[5 · released](screenshots/spike-280-lens-frame-5.png) is a single sweep
 across the group, pumped frame by frame.
 
 ### Why it belongs to tekir
