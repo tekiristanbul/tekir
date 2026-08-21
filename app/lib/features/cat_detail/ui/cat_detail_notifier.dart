@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../discover/ui/discover_notifier.dart';
@@ -140,19 +142,15 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
         : detail.activeAlert;
     state = state.copyWith(
       updates: [entry, ...state.updates],
-      detail: CatDetail(
-        id: detail.id,
-        name: detail.name,
-        lat: detail.lat,
-        lng: detail.lng,
-        areaLabel: detail.areaLabel,
-        primaryPhoto: detail.primaryPhoto,
-        createdAt: detail.createdAt,
-        lastUpdateAt: entry.createdAt,
-        activeAlert: activeAlert,
-        mediaCount: detail.mediaCount,
-        isOwner: detail.isOwner,
-      ),
+      // copyWith, never a fresh constructor call: this used to rebuild
+      // CatDetail field by field and silently dropped lastSeenAt/lastFedAt/
+      // lastWaterAt and ownerUserId, so posting an update reset the whole
+      // three-stat header to "henüz yok" — including the very question the
+      // user had just answered — and stripped "engelle" from the cat's own
+      // menu for the rest of the session.
+      detail: detail
+          .copyWith(lastUpdateAt: entry.createdAt, activeAlert: activeAlert)
+          .withStatusTimes(entry),
     );
   }
 
@@ -161,21 +159,74 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
   /// only statuses/comment/updated_at, so re-sorting is never needed.
   /// No-op if the entry has since scrolled out of the loaded page (a
   /// vanishingly unlikely race, given the 10-minute correction window).
+  ///
+  /// A correction can drop a structured status, and dropping one is the
+  /// only thing [CatDetail.withStatusTimes] cannot express: it moves the
+  /// three-stat header forward and never back. Correcting "mama verildi"
+  /// away would otherwise leave the header still answering "son mama" with
+  /// the time of an entry that no longer says it. Only the server can
+  /// recompute that (the previous `fed` entry may not even be loaded), so
+  /// re-read the detail behind the ui rather than guessing.
   void replaceUpdate(CatUpdateEntry entry) {
     final index = state.updates.indexWhere((u) => u.id == entry.id);
     if (index == -1) return;
     final updated = [...state.updates];
     updated[index] = entry;
     state = state.copyWith(updates: updated);
+    unawaited(refreshDetail());
   }
 
   /// Removes a successfully deleted entry from the timeline (issue #80) —
   /// the server has already soft-deleted it, so every reader's view
   /// (including the author's own) simply never shows it again.
+  ///
+  /// Re-reads the detail for the same reason [replaceUpdate] does: the
+  /// deleted entry may have been what the three-stat header was answering
+  /// with.
   void removeUpdate(String updateId) {
     state = state.copyWith(
       updates: state.updates.where((u) => u.id != updateId).toList(),
     );
+    unawaited(refreshDetail());
+  }
+
+  /// Re-reads this cat's own detail, leaving the loaded timeline alone.
+  ///
+  /// Concurrent callers share one request: a correction that also clears a
+  /// help mark reaches this from two directions at once
+  /// ([replaceUpdate] and [reconcileAfterHelpRemoval]), and that is one
+  /// question for the server, not two.
+  ///
+  /// Failure is silent by design — this always runs behind something the
+  /// user already saw succeed, and the alternative to slightly stale
+  /// header times is an error state on a screen whose content is fine.
+  Future<void> refreshDetail() async {
+    if (state.detail == null) return;
+    await _refreshDetailOnce();
+  }
+
+  Future<bool>? _detailRefresh;
+
+  /// True when the detail was re-read and folded into state, false when
+  /// the request failed and the caller may need its own fallback.
+  Future<bool> _refreshDetailOnce() {
+    return _detailRefresh ??= _fetchDetailIntoState().whenComplete(() {
+      _detailRefresh = null;
+    });
+  }
+
+  Future<bool> _fetchDetailIntoState() async {
+    try {
+      final fresh = await ref.read(catDetailApiProvider).fetchDetail(catId);
+      // A reload may have emptied the screen while this was in flight;
+      // folding a detail back into a state that no longer has one would
+      // resurrect a screen the user has already left behind.
+      if (state.detail == null) return true;
+      state = state.copyWith(detail: fresh);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Reconciles [CatDetail.activeAlert] after the caller removed their own
@@ -189,30 +240,18 @@ class CatDetailNotifier extends Notifier<CatDetailState> {
   /// full load corrects either way.
   Future<void> reconcileAfterHelpRemoval(DateTime removedMarkCreatedAt) async {
     if (state.detail == null) return;
-    try {
-      final fresh = await ref.read(catDetailApiProvider).fetchDetail(catId);
-      state = state.copyWith(detail: fresh);
-    } catch (_) {
-      final detail = state.detail;
-      final alert = detail?.activeAlert;
-      if (detail == null || alert == null) return;
-      if (!alert.createdAt.isAtSameMomentAs(removedMarkCreatedAt)) return;
-      state = state.copyWith(
-        detail: CatDetail(
-          id: detail.id,
-          name: detail.name,
-          lat: detail.lat,
-          lng: detail.lng,
-          areaLabel: detail.areaLabel,
-          primaryPhoto: detail.primaryPhoto,
-          createdAt: detail.createdAt,
-          lastUpdateAt: detail.lastUpdateAt,
-          activeAlert: null,
-          mediaCount: detail.mediaCount,
-          isOwner: detail.isOwner,
-        ),
-      );
-    }
+    if (await _refreshDetailOnce()) return;
+
+    final detail = state.detail;
+    final alert = detail?.activeAlert;
+    if (detail == null || alert == null) return;
+    if (!alert.createdAt.isAtSameMomentAs(removedMarkCreatedAt)) return;
+    // copyWith, never a fresh constructor call — the same trap
+    // prependUpdate fell into: rebuilding this model by hand dropped
+    // lastSeenAt/lastFedAt/lastWaterAt and ownerUserId, so a failed
+    // re-fetch here used to wipe the three-stat header and the cat's
+    // owner as a side effect of clearing one alert.
+    state = state.copyWith(detail: detail.copyWith(clearActiveAlert: true));
   }
 
   /// Promotes an existing media-archive entry to the cat's cover photo

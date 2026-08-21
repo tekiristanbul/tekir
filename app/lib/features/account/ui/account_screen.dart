@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/states/tekir_snack.dart';
+import '../../../core/states/read_skeleton.dart';
 import '../../../core/theme/app_theme.dart';
 import 'account_notifier.dart';
 
@@ -48,7 +50,12 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
 
   Widget _body(AccountState state) {
     if (state.isLoading && state.info == null) {
-      return const Center(child: CircularProgressIndicator());
+      return GatedReadSkeleton(
+        rowCount: 4,
+        hasLeading: false,
+        onRetry: () => ref.read(accountProvider.notifier).load(),
+        timedOutBuilder: (context, onRetry) => _ErrorRetry(onRetry: onRetry),
+      );
     }
     if (state.error && state.info == null) {
       return _ErrorRetry(
@@ -119,12 +126,14 @@ class _AuthenticatedBodyState extends ConsumerState<_AuthenticatedBody> {
       await ref.read(accountProvider.notifier).deleteAccount();
       if (!mounted) return;
       setState(() => _isDeleting = false);
-      messenger.showSnackBar(const SnackBar(content: Text('Hesabın silindi.')));
+      TekirSnack.showOn(messenger, 'Hesabın silindi.');
     } catch (_) {
       if (!mounted) return;
       setState(() => _isDeleting = false);
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Hesap silinemedi, tekrar dene.')),
+      TekirSnack.showOn(
+        messenger,
+        'Hesap silinemedi, tekrar dene.',
+        tone: TekirSnackTone.failed,
       );
     }
   }

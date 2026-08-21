@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/states/submitting_button.dart';
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/cat_detail.dart';
 import 'cat_update_composer_notifier.dart' show helpNoteMaxLength;
@@ -303,40 +305,18 @@ class _UpdateCorrectionSheetState extends ConsumerState<UpdateCorrectionSheet> {
                   ),
                 ],
                 const SizedBox(height: AppSpacing.s4),
-                SizedBox(
-                  height: kTapMin,
-                  child: ElevatedButton(
-                    onPressed: (state.canSubmit && !actionsDisabled)
-                        ? _save
-                        : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: AppColors.primaryInk,
-                      disabledBackgroundColor: AppColors.lineStrong,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                      textStyle: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    child: state.isSubmitting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppColors.primaryInk,
-                            ),
-                          )
-                        : Text(
-                            state.error != null &&
-                                    state.error !=
-                                        UpdateCorrectionError.expired &&
-                                    state.error !=
-                                        UpdateCorrectionError.notAuthor
-                                ? 'Tekrar dene'
-                                : 'Kaydet',
-                          ),
-                  ),
+                SubmittingButton(
+                  label:
+                      state.error != null &&
+                          state.error != UpdateCorrectionError.expired &&
+                          state.error != UpdateCorrectionError.notAuthor
+                      ? 'Tekrar dene'
+                      : 'Kaydet',
+                  submittingLabel: 'Kaydediliyor',
+                  submitting: state.isSubmitting,
+                  onPressed: (state.canSubmit && !actionsDisabled)
+                      ? _save
+                      : null,
                 ),
                 const SizedBox(height: AppSpacing.s2),
                 SizedBox(
@@ -539,5 +519,7 @@ Future<void> openUpdateCorrectionSheet(
     UpdateCorrectionOutcome.deleted => 'Güncelleme silindi',
     UpdateCorrectionOutcome.alreadyGone => 'Bu güncelleme zaten silinmiş',
   };
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  // alreadyGone is not a failure the user caused — the update is simply
+  // no longer there, which is the same outcome they asked for.
+  TekirSnack.show(context, message, clearsFixedBar: true);
 }

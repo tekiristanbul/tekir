@@ -10,6 +10,7 @@ import '../../../core/identity/session_identity.dart';
 import '../../../core/models/active_alert.dart';
 import '../../../core/states/fallback_location_note.dart';
 import '../../../core/states/initial_read_gate.dart';
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/distance_format.dart';
 import '../../../core/utils/relative_time.dart';
@@ -278,7 +279,7 @@ class _LocationTabBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (state.isLoading && !state.hasLoadedOnce) {
-      return const _GatedListSkeleton();
+      return _GatedListSkeleton(onRetry: () => _retry(ref));
     }
 
     if (state.error != null && state.cats.isEmpty) {
@@ -321,10 +322,10 @@ class _LocationTabBody extends ConsumerWidget {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: AppSpacing.s4),
             child: Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
+              child: InlineSpinner(
+                size: 20,
+                color: AppColors.primary,
+                trackColor: AppColors.line,
               ),
             ),
           );
@@ -402,7 +403,11 @@ class _FollowingTabBody extends ConsumerWidget {
     if (!isAuthenticated) return const _GuestFollowingBody();
 
     if (state.isLoading && !state.hasLoadedOnce) {
-      return const _GatedListSkeleton();
+      // The follows tab has its own read, so its fallback retries that one
+      // rather than the location-anchored lists' _retry.
+      return _GatedListSkeleton(
+        onRetry: () => ref.read(discoverProvider.notifier).loadFollowing(),
+      );
     }
     if (state.error != null && state.cats.isEmpty) {
       return _ErrorRetry(
@@ -553,16 +558,46 @@ class _DiscoverCatRow extends StatelessWidget {
 /// never flashes it (docs/design/app-states.md, timing contract). This
 /// widget only ever mounts while the initial read is in flight, so the
 /// gate's clock starts with the read and stops when it unmounts.
-class _GatedListSkeleton extends StatelessWidget {
-  const _GatedListSkeleton();
+class _GatedListSkeleton extends StatefulWidget {
+  const _GatedListSkeleton({required this.onRetry});
+
+  /// Re-runs the read behind this skeleton, for the 6 s fallback's own
+  /// action.
+  final VoidCallback onRetry;
+
+  @override
+  State<_GatedListSkeleton> createState() => _GatedListSkeletonState();
+}
+
+class _GatedListSkeletonState extends State<_GatedListSkeleton> {
+  /// Bumped on retry so the gate remounts and earns a fresh 400 ms of
+  /// silence, mirroring the map's own attempt counter — without it the
+  /// gate would still be sitting in its timed-out phase and the skeleton
+  /// would never come back.
+  int _attempt = 0;
+
+  void _retry() {
+    setState(() => _attempt++);
+    widget.onRetry();
+  }
 
   @override
   Widget build(BuildContext context) {
     return InitialReadGate(
+      key: ValueKey(_attempt),
       reading: true,
-      builder: (context, phase) => phase == InitialReadPhase.hidden
-          ? const SizedBox.shrink()
-          : const DiscoverListSkeleton(),
+      builder: (context, phase) {
+        // 6 s+: "the wait ends: switch to the error or offline state"
+        // (docs/design/app-states.md, timing contract). The read itself is
+        // never cancelled — this is a bounded read, and the contract ends
+        // the *wait*, not the request; a late response still lands and
+        // replaces this.
+        if (phase == InitialReadPhase.timedOut) {
+          return _ErrorRetry(onRetry: _retry);
+        }
+        if (phase == InitialReadPhase.hidden) return const SizedBox.shrink();
+        return const DiscoverListSkeleton();
+      },
     );
   }
 }

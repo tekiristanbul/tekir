@@ -30,41 +30,50 @@ class OptimisticInlineRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final failed = status == InlineSaveStatus.failed;
-    return Container(
-      constraints: const BoxConstraints(minHeight: kTapMin),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.s4,
-        vertical: AppSpacing.s3,
-      ),
-      decoration: BoxDecoration(
-        color: failed ? AppColors.helpSoft : AppColors.surfaceAlt,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      child: Row(
-        children: [
-          if (leading != null) ...[
-            leading!,
-            const SizedBox(width: AppSpacing.s3),
-          ],
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-                color: failed ? AppColors.helpStrong : AppColors.faint,
+    // A live region, because this row is the entire confirmation that a
+    // contribution registered — and the spinner inside it is wrapped in
+    // ExcludeSemantics, so without this a screen reader user tapped
+    // "Paylas" and heard nothing at all, in either the saving or the
+    // failed state.
+    return Semantics(
+      liveRegion: true,
+      label: label,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: kTapMin),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s4,
+          vertical: AppSpacing.s3,
+        ),
+        decoration: BoxDecoration(
+          color: failed ? AppColors.helpSoft : AppColors.surfaceAlt,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        child: Row(
+          children: [
+            if (leading != null) ...[
+              leading!,
+              const SizedBox(width: AppSpacing.s3),
+            ],
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: failed ? AppColors.helpStrong : AppColors.faint,
+                ),
               ),
             ),
-          ),
-          if (!failed) ...[
-            const SizedBox(width: AppSpacing.s3),
-            const InlineSpinner(
-              size: 15,
-              color: AppColors.primaryStrong,
-              trackColor: AppColors.line,
-            ),
+            if (!failed) ...[
+              const SizedBox(width: AppSpacing.s3),
+              const InlineSpinner(
+                size: 15,
+                color: AppColors.primaryStrong,
+                trackColor: AppColors.line,
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

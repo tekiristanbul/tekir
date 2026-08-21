@@ -298,6 +298,65 @@ this behavior and its test.
     `assets/scripts/generate.py`, plus `app/web/index.html` and
     `splash_gate.dart`. adopted in 12b.
 
+## decisions
+
+recorded here rather than as adrs: none of these crosses the bar in
+[`docs/adr/README.md`](../adr/README.md) — no data-model semantics, no api
+contract, no auth boundary, no service boundary, no technology the project
+would have to migrate off. they are app-wide rules this contract now owns,
+and the place to change one is here.
+
+items marked **pending product-owner approval** change user-visible output
+or turkish copy, which [`GOVERNANCE.md`](../../GOVERNANCE.md) puts in the
+product owner's hands. they are recorded as decided *by the code
+maintainer, technically* and not yet approved as product.
+
+1. **one reduced-motion gate.** the condition is
+   `MediaQuery.disableAnimations || accessibleNavigation`, resolved in
+   `app/lib/core/motion/tekir_motion.dart` and nowhere else. widgets ask
+   for a duration rather than re-deriving the condition. adopted because
+   the drift this prevents already happened once: `_PulsingDot` checked
+   only `disableAnimations` and kept animating under a screen reader.
+2. **motion tokens express consequence, not taste.** `tap` 120 ms,
+   `state` 200 ms, `surface` 320 ms, `settle` 420 ms; arrivals decelerate,
+   exits leave one step faster. reduced motion collapses a duration to
+   zero — the state change still happens, only its travel is removed.
+3. **haptics are named by meaning, not intensity**
+   (`app/lib/core/motion/tekir_haptics.dart`): `acknowledge` for a
+   selection changing, `committed` for a server-confirmed write, `raised`
+   for the help mark alone, `refused` for a failure. haptics acknowledge
+   contribution, never navigation. reduced motion never silences them —
+   the accessibility contract above removes travel, not confirmation; the
+   platform's own haptics switch is what silences them.
+4. **body text clears 4.5:1 on every ground it is painted on.** enforced
+   by `app/test/core/theme/palette_contrast_test.dart` against `bg`,
+   `surface` and `surfaceAlt`, and the `faint`-under-`muted` hierarchy is
+   locked alongside it so a contrast fix cannot flatten the palette's two
+   steps. disabled controls name their own pair rather than inheriting
+   material's (2.09:1). **pending product-owner approval** — the fix
+   darkened the shared `faint` token, which changes shipped visual output
+   on every surface that uses it.
+5. **transient messages have one voice.** `TekirSnack`, two tones only:
+   something the user asked for happened, or it did not. it owns
+   presentation and the paired haptic, never wording — callers pass their
+   own turkish copy. **pending product-owner approval** for the visual
+   treatment.
+6. **user-triggered mutations are optimistic; reads are not.** a follow
+   flips in the same frame as the tap and the request runs behind it,
+   per the timing contract above. a local decision outranks any read
+   issued before it, and only the newest attempt on a given target may
+   revert. this is a client-side reconciliation rule, not a data-model
+   one: the server stays the source of truth and a full reload always
+   wins.
+7. **derived state may only move forward, and only the server undoes it.**
+   the three-question header advances locally from a server-confirmed
+   entry (no round trip to learn a timestamp the client is holding), but
+   a correction or deletion re-reads the detail rather than guessing
+   backwards — the entry that previously answered the question may not
+   be loaded at all.
+8. **empty states carry a title, a reason, and one quiet action.**
+   **pending product-owner approval** — new turkish copy.
+
 ## implementation slices
 
 each slice is a separately testable issue. slice numbering matches the

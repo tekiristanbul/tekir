@@ -50,10 +50,15 @@ class SubmittingButton extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: background,
           foregroundColor: foreground,
+          // Two different disabled states share this slot. While
+          // submitting, the button keeps its own colours and only darkens.
+          // Genuinely disabled, it must still be readable: Material's
+          // default (onSurface at 38% over lineStrong) lands at 2.09:1,
+          // where the label explaining what is missing cannot be read.
           disabledBackgroundColor: submitting
               ? submittingBackground
-              : AppColors.lineStrong,
-          disabledForegroundColor: submitting ? foreground : null,
+              : AppColors.surfaceAlt,
+          disabledForegroundColor: submitting ? foreground : AppColors.muted,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.md),
           ),

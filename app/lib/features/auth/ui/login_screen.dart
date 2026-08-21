@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/states/submitting_button.dart';
 import '../../../core/theme/app_theme.dart';
 import 'auth_notifier.dart';
 
@@ -185,44 +186,32 @@ class _AuthErrorBanner extends StatelessWidget {
   }
 }
 
+/// Login's primary action. A thin wrapper over the shared
+/// [SubmittingButton] rather than its own [ElevatedButton]: this screen
+/// used to replace its label with a bare spinner while submitting, which
+/// both broke the contract's `button · submitting` rule (the label must
+/// change, not vanish) and kept spinning under reduced motion. The
+/// wrapper stays because each step supplies its own in-flight wording.
 class _PrimaryButton extends StatelessWidget {
   const _PrimaryButton({
     required this.label,
+    required this.submittingLabel,
     required this.isSubmitting,
     required this.onPressed,
   });
 
   final String label;
+  final String submittingLabel;
   final bool isSubmitting;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: kTapMin,
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: isSubmitting ? null : onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primary,
-          foregroundColor: AppColors.primaryInk,
-          disabledBackgroundColor: AppColors.lineStrong,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.md),
-          ),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        child: isSubmitting
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppColors.primaryInk,
-                ),
-              )
-            : Text(label),
-      ),
+    return SubmittingButton(
+      label: label,
+      submittingLabel: submittingLabel,
+      submitting: isSubmitting,
+      onPressed: onPressed,
     );
   }
 }
@@ -280,6 +269,7 @@ class _PhoneStep extends ConsumerWidget {
         const SizedBox(height: AppSpacing.s5),
         _PrimaryButton(
           label: 'Kod gönder',
+          submittingLabel: 'Kod gönderiliyor',
           isSubmitting: state.isSubmitting,
           onPressed: onSendCode,
         ),
@@ -331,6 +321,7 @@ class _CodeStep extends ConsumerWidget {
         const SizedBox(height: AppSpacing.s5),
         _PrimaryButton(
           label: 'Giriş yap',
+          submittingLabel: 'Giriş yapılıyor',
           isSubmitting: state.isSubmitting,
           onPressed: onVerify,
         ),
@@ -378,6 +369,7 @@ class _NameStep extends ConsumerWidget {
         const SizedBox(height: AppSpacing.s5),
         _PrimaryButton(
           label: 'Kaydet ve devam et',
+          submittingLabel: 'Kaydediliyor',
           isSubmitting: state.isSubmitting,
           onPressed: onSubmit,
         ),

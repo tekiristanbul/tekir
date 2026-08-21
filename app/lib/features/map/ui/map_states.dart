@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 
 /// The user-dot blue from the design reference (`--blue`,
@@ -131,19 +132,12 @@ class MapLoadingStatusPill extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 15,
-              height: 15,
-              child: _reduceMotion(context)
-                  ? const CircularProgressIndicator(
-                      strokeWidth: 3,
-                      color: Color(0xFFFDF1EC),
-                      value: 0.25,
-                    )
-                  : const CircularProgressIndicator(
-                      strokeWidth: 3,
-                      color: Color(0xFFFDF1EC),
-                    ),
+            // InlineSpinner already owns the settled-frame behaviour this
+            // used to hand-roll, and owns it in one place.
+            const InlineSpinner(
+              size: 15,
+              color: Color(0xFFFDF1EC),
+              trackColor: Color(0x33FDF1EC),
             ),
             const SizedBox(width: AppSpacing.s2 + 2),
             const Text(
@@ -305,7 +299,10 @@ class _CardButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onTap != null;
-    final ink = enabled ? foreground : foreground.withValues(alpha: 0.45);
+    // Disabled dims the surface, never the label. Fading both put "alani
+    // genislet" at 1.95:1 when the camera is already at minimum zoom --
+    // the one moment the button has something to say.
+    final ink = foreground;
     return Material(
       color: enabled ? background : background.withValues(alpha: 0.55),
       borderRadius: BorderRadius.circular(AppRadius.md + 2),

@@ -80,12 +80,20 @@ void main() {
     }
   });
 
-  test(
-    'the replaced faint color indeed fails — the regression this guards',
-    () {
-      expect(_contrast(AppColors.faint, AppColors.surfaceAlt), lessThan(3.0));
-    },
-  );
+  // Issue #109 fixed badge contrast by moving these call sites off
+  // AppColors.faint, which then sat at ~2.4-3.0:1, and locked that in by
+  // asserting faint still failed. The token itself has since been darkened
+  // to clear the body-text floor everywhere (see AppColors.faint), so the
+  // old assertion now guards the wrong thing — it would fail the fix. The
+  // badges deliberately stay on `muted`: it is the stronger of the two and
+  // this ui picked it on purpose, so the pairs above remain the real
+  // guarantee.
+  test('faint now clears the non-text floor it used to fail', () {
+    expect(
+      _contrast(AppColors.faint, AppColors.surfaceAlt),
+      greaterThanOrEqualTo(3.0),
+    );
+  });
 
   testWidgets('unearned badge icons render muted, earned primaryStrong', (
     tester,

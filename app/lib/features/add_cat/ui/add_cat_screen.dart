@@ -9,6 +9,7 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 import '../../../core/geo/istanbul_bounds.dart';
 import '../../../core/states/photo_upload_progress.dart';
 import '../../../core/states/submitting_button.dart';
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/add_cat_api.dart';
 import 'add_cat_state.dart';
@@ -121,7 +122,13 @@ class _LocationStepState extends ConsumerState<_LocationStep> {
       children: [
         Expanded(
           child: center == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const Center(
+                  child: InlineSpinner(
+                    size: 28,
+                    color: AppColors.primary,
+                    trackColor: AppColors.line,
+                  ),
+                )
               : Stack(
                   alignment: Alignment.center,
                   children: [

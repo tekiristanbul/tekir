@@ -42,13 +42,26 @@ final _detail = CatDetail(
   primaryPhoto: 'https://example.com/tekir.jpg',
   createdAt: DateTime.utc(2026, 1, 1),
   lastUpdateAt: DateTime.utc(2026, 1, 2),
+  // The three-stat header's own timestamps and the cat's owner: all
+  // optional-with-null-default, which is how prependUpdate used to drop
+  // them without a compile error. The fixture carries them so a rebuild
+  // that loses one fails a test instead of shipping.
+  lastSeenAt: DateTime.utc(2026, 1, 2),
+  lastFedAt: DateTime.utc(2026, 1, 1, 12),
+  lastWaterAt: DateTime.utc(2026, 1, 1, 9),
+  ownerUserId: 'owner-1',
 );
 
-CatUpdateEntry _update(String id, {String? comment}) => CatUpdateEntry(
+CatUpdateEntry _update(
+  String id, {
+  String? comment,
+  List<String> statuses = const ['seen'],
+  DateTime? createdAt,
+}) => CatUpdateEntry(
   id: id,
-  statuses: const ['seen'],
+  statuses: statuses,
   comment: comment,
-  createdAt: DateTime.utc(2026, 1, 2),
+  createdAt: createdAt ?? DateTime.utc(2026, 1, 2),
 );
 
 /// A fake CatDetailApi whose responses are configured up front — this
@@ -88,8 +101,13 @@ class _FakeCatDetailApi implements CatDetailApi {
   Object? deleteError;
   String? capturedDeleteCatId;
 
+  /// Counts every detail read, including the ones a correction or a
+  /// deletion triggers behind the ui.
+  int fetchDetailCalls = 0;
+
   @override
   Future<CatDetail> fetchDetail(String catId) async {
+    fetchDetailCalls++;
     if (detailError != null) throw detailError!;
     return detail!;
   }
@@ -426,6 +444,116 @@ void main() {
 
     final state = container.read(catDetailProvider(_catId));
     expect(state.updates.map((u) => u.id), ['u1']);
+  });
+
+  group('the three-stat header after a correction or a deletion', () {
+    // withStatusTimes only ever moves a timestamp forward, so nothing local
+    // can undo it. These cover the two paths that must not leave the header
+    // answering with an entry that no longer says what it said.
+
+    test(
+      'correcting a status away re-reads the header from the server',
+      () async {
+        final api = _FakeCatDetailApi(
+          detail: _detail,
+          updatesPages: [
+            UpdatesPage(
+              items: [
+                _update('u1', statuses: ['fed']),
+              ],
+              nextCursor: null,
+            ),
+          ],
+        );
+        final container = _containerWith(api);
+        addTearDown(container.dispose);
+
+        final notifier = container.read(catDetailProvider(_catId).notifier);
+        await notifier.load();
+
+        // The user posted "mama verildi", then corrected it to "görüldü".
+        notifier.prependUpdate(
+          _update('u2', statuses: ['fed'], createdAt: DateTime.utc(2026, 1, 3)),
+        );
+        expect(
+          container.read(catDetailProvider(_catId)).detail?.lastFedAt,
+          DateTime.utc(2026, 1, 3),
+        );
+
+        api.detail = _detail;
+        final before = api.fetchDetailCalls;
+        notifier.replaceUpdate(
+          _update(
+            'u2',
+            statuses: ['seen'],
+            createdAt: DateTime.utc(2026, 1, 3),
+          ),
+        );
+        await notifier.refreshDetail();
+
+        expect(api.fetchDetailCalls, greaterThan(before));
+        expect(
+          container.read(catDetailProvider(_catId)).detail?.lastFedAt,
+          _detail.lastFedAt,
+          reason: 'the locally derived advance is gone, not merely capped',
+        );
+      },
+    );
+
+    test('deleting the entry that carried a status re-reads too', () async {
+      final api = _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+      );
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      notifier.prependUpdate(
+        _update(
+          'u1',
+          statuses: ['water_provided'],
+          createdAt: DateTime.utc(2026, 1, 4),
+        ),
+      );
+      expect(
+        container.read(catDetailProvider(_catId)).detail?.lastWaterAt,
+        DateTime.utc(2026, 1, 4),
+      );
+
+      final before = api.fetchDetailCalls;
+      notifier.removeUpdate('u1');
+      await notifier.refreshDetail();
+
+      expect(api.fetchDetailCalls, greaterThan(before));
+      expect(
+        container.read(catDetailProvider(_catId)).detail?.lastWaterAt,
+        _detail.lastWaterAt,
+      );
+    });
+
+    test('a failed re-read leaves the header and the owner alone', () async {
+      final api = _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+      );
+      final container = _containerWith(api);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      api.detailError = Exception('offline');
+      await notifier.refreshDetail();
+
+      final detail = container.read(catDetailProvider(_catId)).detail;
+      expect(detail?.lastSeenAt, _detail.lastSeenAt);
+      expect(detail?.lastFedAt, _detail.lastFedAt);
+      expect(detail?.lastWaterAt, _detail.lastWaterAt);
+      expect(detail?.ownerUserId, 'owner-1');
+    });
   });
 
   group('setCoverPhoto (issue #156)', () {
@@ -810,6 +938,65 @@ void main() {
     );
 
     test(
+      'the failed-re-fetch fallback clears the alert and nothing else',
+      () async {
+        // This path rebuilt CatDetail by hand and dropped the three stat
+        // timestamps and the owner along with the alert — the same defect
+        // prependUpdate had, in the branch that only runs offline.
+        final api = _FakeCatDetailApi(
+          detail: _detail.copyWith(
+            activeAlert: ActiveAlert(
+              comment: 'kaldırılan not',
+              createdAt: DateTime.utc(2026, 1, 3),
+              expiresAt: DateTime.utc(2026, 1, 6),
+            ),
+          ),
+          updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+        );
+        final container = _containerWith(api);
+        addTearDown(container.dispose);
+
+        final notifier = container.read(catDetailProvider(_catId).notifier);
+        await notifier.load();
+
+        api.detailError = Exception('offline');
+        await notifier.reconcileAfterHelpRemoval(DateTime.utc(2026, 1, 3));
+
+        final detail = container.read(catDetailProvider(_catId)).detail!;
+        expect(detail.activeAlert, isNull);
+        expect(detail.lastSeenAt, _detail.lastSeenAt);
+        expect(detail.lastFedAt, _detail.lastFedAt);
+        expect(detail.lastWaterAt, _detail.lastWaterAt);
+        expect(detail.ownerUserId, 'owner-1');
+      },
+    );
+
+    test(
+      'a correction that also clears help asks the server once, not twice',
+      () async {
+        final api = _FakeCatDetailApi(
+          detail: _detail,
+          updatesPages: [
+            UpdatesPage(items: [_update('u1')], nextCursor: null),
+          ],
+        );
+        final container = _containerWith(api);
+        addTearDown(container.dispose);
+
+        final notifier = container.read(catDetailProvider(_catId).notifier);
+        await notifier.load();
+        final before = api.fetchDetailCalls;
+
+        // What update_correction_notifier does on a clearing correction:
+        // replace the entry, then reconcile the alert.
+        notifier.replaceUpdate(_update('u1', statuses: const ['seen']));
+        await notifier.reconcileAfterHelpRemoval(DateTime.utc(2026, 1, 3));
+
+        expect(api.fetchDetailCalls - before, 1);
+      },
+    );
+
+    test(
       'when the re-fetch fails and the alert came from a different mark, it stays',
       () async {
         final api = _FakeCatDetailApi(
@@ -842,5 +1029,95 @@ void main() {
         );
       },
     );
+  });
+
+  test('prependUpdate advances only the status its entry carries, and keeps '
+      'every field it does not touch', () async {
+    final container = _containerWith(
+      _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: [
+          UpdatesPage(items: [_update('u1')], nextCursor: null),
+        ],
+      ),
+    );
+    addTearDown(container.dispose);
+
+    final notifier = container.read(catDetailProvider(_catId).notifier);
+    await notifier.load();
+
+    final fed = _update(
+      'u2',
+      statuses: const ['fed'],
+      createdAt: DateTime.utc(2026, 1, 3),
+    );
+    notifier.prependUpdate(fed);
+
+    final detail = container.read(catDetailProvider(_catId)).detail!;
+    // The question the user just answered moves...
+    expect(detail.lastFedAt, fed.createdAt);
+    // ...and the two they did not are untouched, rather than reset to
+    // "henüz yok" as the hand-built rebuild used to leave them.
+    expect(detail.lastSeenAt, _detail.lastSeenAt);
+    expect(detail.lastWaterAt, _detail.lastWaterAt);
+    // Dropping this stripped "engelle" from the cat's own menu for the
+    // rest of the session.
+    expect(detail.ownerUserId, 'owner-1');
+    expect(detail.areaLabel, _detail.areaLabel);
+    expect(detail.primaryPhoto, _detail.primaryPhoto);
+  });
+
+  test(
+    'prependUpdate advances every status a combined entry carries',
+    () async {
+      final container = _containerWith(
+        _FakeCatDetailApi(
+          detail: _detail,
+          updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+        ),
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(catDetailProvider(_catId).notifier);
+      await notifier.load();
+
+      final combined = _update(
+        'u2',
+        statuses: const ['seen', 'water_provided'],
+        createdAt: DateTime.utc(2026, 1, 3),
+      );
+      notifier.prependUpdate(combined);
+
+      final detail = container.read(catDetailProvider(_catId)).detail!;
+      expect(detail.lastSeenAt, combined.createdAt);
+      expect(detail.lastWaterAt, combined.createdAt);
+      expect(detail.lastFedAt, _detail.lastFedAt);
+    },
+  );
+
+  test('prependUpdate never moves a stat timestamp backwards', () async {
+    final container = _containerWith(
+      _FakeCatDetailApi(
+        detail: _detail,
+        updatesPages: const [UpdatesPage(items: [], nextCursor: null)],
+      ),
+    );
+    addTearDown(container.dispose);
+
+    final notifier = container.read(catDetailProvider(_catId).notifier);
+    await notifier.load();
+
+    // An older entry arriving late answers "when was this cat last seen"
+    // with a worse answer than the one already held.
+    notifier.prependUpdate(
+      _update(
+        'u2',
+        statuses: const ['seen'],
+        createdAt: DateTime.utc(2025, 12, 31),
+      ),
+    );
+
+    final detail = container.read(catDetailProvider(_catId)).detail!;
+    expect(detail.lastSeenAt, _detail.lastSeenAt);
   });
 }

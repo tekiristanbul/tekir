@@ -9,8 +9,11 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../../../core/analytics/analytics.dart';
 import '../../../core/geo/istanbul_bounds.dart';
+import '../../../core/motion/press_response.dart';
+import '../../../core/motion/tekir_haptics.dart';
 import '../../../core/states/fallback_location_note.dart';
 import '../../../core/states/initial_read_gate.dart';
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/ui/auth_gate.dart';
 import '../data/cat_marker.dart';
@@ -48,6 +51,14 @@ const _fabClearance = 80.0;
 // tap's fixed step, for the same reason: guaranteed progress per tap.
 const _widenAreaZoomStep = 2.0;
 
+// how long the preview sheet stays on the stack after the detail route is
+// pushed over it, so the shared photo's flight has a source to leave from.
+// Comfortably longer than either platform's page transition (material's
+// ~300 ms zoom, cupertino's ~400 ms slide) — the sheet is invisible behind
+// the detail for the whole wait, so overshooting costs nothing and
+// undershooting would cut the flight.
+const _heroFlightClearance = Duration(milliseconds: 500);
+
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
 
@@ -75,6 +86,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
   // filter turns on and hides the selected marker.
   bool _sheetOpen = false;
 
+  /// Pending removal of a preview sheet the detail route was pushed over —
+  /// see [_openDetailFromSheet].
+  Timer? _heroFlightClearanceTimer;
+
   @override
   void initState() {
     super.initState();
@@ -85,6 +100,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _debounce?.cancel();
+    _heroFlightClearanceTimer?.cancel();
     _controller?.dispose();
     super.dispose();
   }
@@ -151,6 +167,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   }
 
   Future<void> _onClusterTap(Cluster cluster) async {
+    unawaited(TekirHaptics.acknowledge());
     final controller = _controller;
     if (controller == null) return;
     final currentZoom = await controller.getZoomLevel();
@@ -167,10 +184,58 @@ class _MapScreenState extends ConsumerState<MapScreen>
   // navigates directly (prototype/app.js's selectCat -> openSheet). Only
   // the sheet's "Detaya git" action opens the cat-detail route.
   void _onCatSelected(CatMarker cat) {
+    // Fired here, synchronously, rather than after the marker set is
+    // rebuilt: the pin's own selected state is a re-rendered bitmap that
+    // lands a frame or more later, so the hand is what actually
+    // acknowledges the tap.
+    unawaited(TekirHaptics.acknowledge());
     ref.read(catsMapProvider.notifier).selectCat(cat);
+    unawaited(_liftSelectedPinClearOfSheet(cat));
+  }
+
+  /// Slides the camera so the tapped pin sits above the preview sheet
+  /// rather than behind it.
+  ///
+  /// The sheet covers roughly the bottom third of the screen, and a pin
+  /// tapped low — or near the right edge, where a pin can sit half off the
+  /// map — was then hidden by the surface describing it. Nothing marked the
+  /// connection between the two.
+  ///
+  /// Deliberately a nudge, not a recentre: moving the pin to the middle of
+  /// the remaining space would throw away the user's own framing of the
+  /// neighbourhood, which is the thing they were reading when they tapped.
+  Future<void> _liftSelectedPinClearOfSheet(CatMarker cat) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final size = MediaQuery.sizeOf(context);
+    // The sheet's own height is not known until it lays out, and this runs
+    // before it opens; a third of the screen is what it occupies at the
+    // content sizes this sheet can reach.
+    final sheetHeight = size.height / 3;
+    final screenPoint = await controller.getScreenCoordinate(
+      LatLng(cat.lat, cat.lng),
+    );
+    if (!mounted) return;
+
+    final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final pinY = screenPoint.y / devicePixelRatio;
+    final pinX = screenPoint.x / devicePixelRatio;
+    // The band the sheet will cover, plus the pin's own height so a pin
+    // resting exactly on the sheet's edge still clears it.
+    final safeBottom = size.height - sheetHeight - 48;
+    final dy = pinY > safeBottom ? pinY - safeBottom : 0.0;
+    // Horizontal only when the pin is genuinely near an edge.
+    const edgeMargin = 56.0;
+    final dx = pinX > size.width - edgeMargin
+        ? pinX - (size.width - edgeMargin)
+        : (pinX < edgeMargin ? pinX - edgeMargin : 0.0);
+    if (dy == 0 && dx == 0) return;
+
+    await controller.animateCamera(CameraUpdate.scrollBy(dx, dy));
   }
 
   void _toggleHelpFilter() {
+    unawaited(TekirHaptics.acknowledge());
     setState(() => _helpFilterOn = !_helpFilterOn);
     final mapState = ref.read(catsMapProvider);
     final selected = mapState.selectedMarker;
@@ -205,10 +270,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       builder: (sheetContext) => PointerInterceptor(
         child: CatPreviewSheet(
           cat: cat,
-          onOpenDetail: () {
-            Navigator.of(sheetContext).pop();
-            context.push('/cats/${cat.id}', extra: AnalyticsSource.map);
-          },
+          onOpenDetail: () => _openDetailFromSheet(sheetContext, cat),
         ),
       ),
     );
@@ -219,6 +281,40 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // left on the map, per issue #21.
     if (!mounted) return;
     ref.read(catsMapProvider.notifier).clearSelection();
+  }
+
+  /// Opens the cat behind the preview sheet, pushing *before* dismissing.
+  ///
+  /// This used to pop the sheet and then push the detail, which rendered
+  /// the product's central move — this cat, the one you touched on the map
+  /// — as a retreat followed by an unrelated arrival, with no relationship
+  /// drawn between the sheet's photo and the detail's. Pushing first keeps
+  /// the sheet as the departing route for one transition, which is what
+  /// lets the shared photo fly across (core/motion/hero_tags.dart).
+  ///
+  /// The sheet is then removed rather than popped: by that point it is
+  /// underneath the detail, so an animated dismissal would be an animation
+  /// nobody can see, and popping would take the detail off the stack
+  /// instead. Removal waits out the flight so the photo is never orphaned
+  /// mid-air.
+  ///
+  /// Removal applies only while the sheet is still buried. A user who goes
+  /// back inside those 500 ms pops the detail and is looking at the sheet
+  /// again — removing it then would snatch a surface out from under them
+  /// with no animation, which is why [ModalRoute.isCurrent] is checked and
+  /// not just [ModalRoute.isActive]. The sheet is left alone in that case
+  /// and dismisses normally, as it would have without the flight.
+  void _openDetailFromSheet(BuildContext sheetContext, CatMarker cat) {
+    final sheetRoute = ModalRoute.of(sheetContext);
+    final navigator = Navigator.of(sheetContext);
+    context.push('/cats/${cat.id}', extra: AnalyticsSource.map);
+    if (sheetRoute == null) return;
+    _heroFlightClearanceTimer?.cancel();
+    _heroFlightClearanceTimer = Timer(_heroFlightClearance, () {
+      if (!navigator.mounted || !sheetRoute.isActive) return;
+      if (sheetRoute.isCurrent) return;
+      navigator.removeRoute(sheetRoute);
+    });
   }
 
   void _onMapCreated(GoogleMapController controller) {
@@ -299,7 +395,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
           isFallback: resolved.isFallback,
           searchHint: searchHint,
         ),
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const Center(
+          child: InlineSpinner(
+            size: 28,
+            color: AppColors.primary,
+            trackColor: AppColors.line,
+          ),
+        ),
         error: (_, _) => _buildMapChrome(
           center: istanbulFallback,
           isFallback: true,
@@ -672,59 +774,61 @@ class _HelpFilterChip extends StatelessWidget {
       toggled: isOn,
       label: 'yardım gerekiyor filtresi',
       onTap: onTap,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          onTap: onTap,
-          child: Container(
-            constraints: const BoxConstraints(minHeight: kTapMin),
-            alignment: Alignment.center,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: background,
-                borderRadius: BorderRadius.circular(AppRadius.full),
-                border: Border.all(color: AppColors.help),
-                boxShadow: isOn
-                    ? const [
-                        BoxShadow(
-                          color: Color(0x122A1F1B),
-                          offset: Offset(0, 1),
-                          blurRadius: 2,
-                        ),
-                      ]
-                    : null,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.s3,
-                  vertical: AppSpacing.s2 - 2,
+      child: PressResponse(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: kTapMin),
+              alignment: Alignment.center,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                  border: Border.all(color: AppColors.help),
+                  boxShadow: isOn
+                      ? const [
+                          BoxShadow(
+                            color: Color(0x122A1F1B),
+                            offset: Offset(0, 1),
+                            blurRadius: 2,
+                          ),
+                        ]
+                      : null,
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.warning_amber_rounded,
-                      size: 14,
-                      color: foreground,
-                    ),
-                    const SizedBox(width: AppSpacing.s1),
-                    // Flexible (not a bare Text) so the label shrinks
-                    // instead of overflowing the chip row's positioned
-                    // width budget at large text-scale factors.
-                    Flexible(
-                      child: Text(
-                        'yardım gerekiyor',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: foreground,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s3,
+                    vertical: AppSpacing.s2 - 2,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        size: 14,
+                        color: foreground,
+                      ),
+                      const SizedBox(width: AppSpacing.s1),
+                      // Flexible (not a bare Text) so the label shrinks
+                      // instead of overflowing the chip row's positioned
+                      // width budget at large text-scale factors.
+                      Flexible(
+                        child: Text(
+                          'yardım gerekiyor',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: foreground,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),

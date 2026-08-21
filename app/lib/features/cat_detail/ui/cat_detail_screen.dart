@@ -8,8 +8,15 @@ import 'package:go_router/go_router.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../core/analytics/analytics.dart';
+import '../../../core/motion/hero_tags.dart';
+import '../../../core/motion/press_response.dart';
+import '../../../core/motion/tekir_haptics.dart';
+import '../../../core/motion/tekir_motion.dart';
+import '../../../core/states/initial_read_gate.dart';
 import '../../../core/states/inline_spinner.dart';
 import '../../../core/states/optimistic_inline_row.dart';
+import '../../../core/states/shimmer_sweep.dart';
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../../auth/ui/auth_gate.dart';
@@ -101,11 +108,11 @@ class _CatDetailScreenState extends ConsumerState<CatDetailScreen> {
       );
     }
     if (state.isLoading && !state.hasLoadedOnce) {
-      return const _MessageScreen(loading: true);
+      return _DetailSkeleton(catId: widget.catId);
     }
     final detail = state.detail;
     if (detail == null) {
-      return const _MessageScreen(loading: true);
+      return _DetailSkeleton(catId: widget.catId);
     }
     return _CatDetailBody(
       detail: detail,
@@ -140,18 +147,44 @@ class _CatDetailBody extends ConsumerWidget {
     // says "kaydedilemedi". Help failures never carry a pending row; the
     // sheet shows their error inline itself.
     ref.listen(catUpdateComposerProvider(detail.id), (previous, next) {
+      // An ordinary submission never shows a snackbar — its optimistic row
+      // is the feedback — so this transition is the only place the
+      // confirmation haptic can fire. TekirHaptics.committed names "an
+      // update posted" first in its own doc and, until now, was called
+      // from nowhere but the follow button.
+      final wasSaving = previous?.pending?.status == InlineSaveStatus.saving;
+      if (wasSaving && next.pending == null) {
+        unawaited(TekirHaptics.committed());
+      }
       final failedNow =
-          previous?.pending?.status == InlineSaveStatus.saving &&
-          next.pending?.status == InlineSaveStatus.failed;
+          wasSaving && next.pending?.status == InlineSaveStatus.failed;
       final error = next.error;
       if (!failedNow || error == null) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(updateSubmitErrorMessageTr(error))),
+      TekirSnack.failure(
+        context,
+        updateSubmitErrorMessageTr(error),
+        clearsFixedBar: true,
       );
     });
     return Stack(
       children: [
         _buildScroll(context, ref, pending),
+        // Pinned, not scrolled. These used to be the ListView's first
+        // child, so scrolling took the only visible way back off screen
+        // entirely — on a smaller phone within one flick. The system back
+        // gesture still worked; nothing on screen said so.
+        Positioned(
+          top: MediaQuery.paddingOf(context).top + AppSpacing.s3,
+          left: AppSpacing.s4,
+          right: AppSpacing.s4,
+          child: Row(
+            children: [
+              const _BackCircleButton(),
+              const Spacer(),
+              FollowButton(catId: detail.id, source: openSource, glass: true),
+            ],
+          ),
+        ),
         // The binding design's fixed action bar: the screen's single
         // primary action floats over the scroll on a gradient into the
         // background, so it is reachable from any scroll position.
@@ -256,36 +289,42 @@ class _ProfileHeader extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Row(
-            children: [
-              _BackCircleButton(),
-              const Spacer(),
-              // Still the icon-only round variant: it now sits on the
-              // screen's own background rather than on a photo, but keeping
-              // it round preserves the pairing with the back control beside
-              // it and keeps the header from growing a labelled button the
-              // old design never had here.
-              FollowButton(catId: detail.id, source: openSource, glass: true),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.s4),
-          GestureDetector(
-            onTap: photo == null ? null : () => _openFullScreen(context, photo),
-            child: ClipOval(
-              child: SizedBox(
-                width: _diameter,
-                height: _diameter,
-                child: photo == null
-                    ? const _HeroPlaceholder()
-                    : CachedNetworkImage(
-                        imageUrl: photo,
-                        fit: BoxFit.cover,
-                        memCacheWidth: decodeWidthFor(context, _diameter),
-                        placeholder: (context, _) =>
-                            const _HeroPlaceholder(loading: true),
-                        errorWidget: (context, _, _) =>
-                            const _HeroPlaceholder(),
-                      ),
+          // Clearance for the pinned back/follow row above this
+          // (_CatDetailBody), which used to live here and scroll away.
+          const SizedBox(height: kTapMin + AppSpacing.s4),
+          // The other end of the map's marker-preview flight
+          // (core/motion/hero_tags.dart). The shuttle is authored rather
+          // than left to the default, because the two ends are different
+          // shapes: without it the photo would carry the sheet's rounded
+          // square the whole way and snap to a circle on arrival.
+          Hero(
+            tag: catPhotoHeroTag(detail.id),
+            flightShuttleBuilder: (_, animation, direction, _, _) =>
+                _CatPhotoFlight(
+                  animation: animation,
+                  direction: direction,
+                  photo: photo,
+                ),
+            child: GestureDetector(
+              onTap: photo == null
+                  ? null
+                  : () => _openFullScreen(context, photo),
+              child: ClipOval(
+                child: SizedBox(
+                  width: _diameter,
+                  height: _diameter,
+                  child: photo == null
+                      ? const _HeroPlaceholder()
+                      : CachedNetworkImage(
+                          imageUrl: photo,
+                          fit: BoxFit.cover,
+                          memCacheWidth: decodeWidthFor(context, _diameter),
+                          placeholder: (context, _) =>
+                              const _HeroPlaceholder(loading: true),
+                          errorWidget: (context, _, _) =>
+                              const _HeroPlaceholder(),
+                        ),
+                ),
               ),
             ),
           ),
@@ -528,13 +567,11 @@ class _DeleteCatButtonState extends ConsumerState<_DeleteCatButton> {
       // toast still lands once the previous screen is back on top.
       final messenger = ScaffoldMessenger.of(context);
       context.pop();
-      messenger.showSnackBar(const SnackBar(content: Text('Kedi silindi.')));
+      TekirSnack.showOn(messenger, 'Kedi silindi.');
     } catch (_) {
       if (!mounted) return;
       setState(() => _isDeleting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kedi silinemedi, tekrar dene.')),
-      );
+      TekirSnack.failure(context, 'Kedi silinemedi, tekrar dene.');
     }
   }
 
@@ -599,9 +636,7 @@ class _FullScreenPhotoState extends ConsumerState<_FullScreenPhoto> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _submitting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kapak fotoğrafı değiştirilemedi')),
-      );
+      TekirSnack.failure(context, 'Kapak fotoğrafı değiştirilemedi');
     }
   }
 
@@ -771,30 +806,42 @@ class _BackCircleButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.surface,
-      shape: const CircleBorder(),
-      elevation: 2,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: () {
-          // add-cat's success path (and a duplicate-candidate "bu zaten var"
-          // pick) lands here via context.go, which replaces the whole stack
-          // instead of pushing — so there is nothing to pop in that case.
-          // Fall back to the map, the app's root destination.
-          if (context.canPop()) {
-            context.pop();
-          } else {
-            context.go('/');
-          }
-        },
-        child: const SizedBox(
-          width: kTapMin,
-          height: kTapMin,
-          child: Icon(Icons.chevron_left, color: AppColors.ink),
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      // A bare chevron glyph announces as "button" and nothing else. This
+      // is also the only visible way back on the screen, so leaving it
+      // unnamed left a screen reader user with no exit they could find.
+      label: 'Geri',
+      onTap: () => _goBack(context),
+      child: Material(
+        color: AppColors.surface,
+        shape: const CircleBorder(),
+        elevation: 2,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () => _goBack(context),
+          child: const SizedBox(
+            width: kTapMin,
+            height: kTapMin,
+            child: Icon(Icons.chevron_left, color: AppColors.ink),
+          ),
         ),
       ),
     );
+  }
+
+  // add-cat's success path (and a duplicate-candidate "bu zaten var" pick)
+  // lands here via context.go, which replaces the whole stack instead of
+  // pushing — so there is nothing to pop in that case. Fall back to the
+  // map, the app's root destination.
+  void _goBack(BuildContext context) {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/');
+    }
   }
 }
 
@@ -898,6 +945,7 @@ class _ThreeStatHeader extends StatelessWidget {
             label: 'görüldü',
             time: detail.lastSeenAt,
             color: AppColors.seenFg,
+            raisedColor: AppColors.seenBg,
           ),
         ),
         const SizedBox(width: AppSpacing.s2),
@@ -907,6 +955,7 @@ class _ThreeStatHeader extends StatelessWidget {
             label: 'mama',
             time: detail.lastFedAt,
             color: AppColors.fedFg,
+            raisedColor: AppColors.fedBg,
           ),
         ),
         const SizedBox(width: AppSpacing.s2),
@@ -916,6 +965,7 @@ class _ThreeStatHeader extends StatelessWidget {
             label: 'su',
             time: detail.lastWaterAt,
             color: AppColors.waterFg,
+            raisedColor: AppColors.waterBg,
           ),
         ),
       ],
@@ -923,12 +973,50 @@ class _ThreeStatHeader extends StatelessWidget {
   }
 }
 
-class _StatTile extends StatelessWidget {
+/// Whether a change in a [_StatTile]'s timestamp is one the tile may
+/// acknowledge with its raise animation.
+///
+/// Only a timestamp moving *forward* qualifies — an answer arriving, or a
+/// newer one replacing it. A tile that raised on any change would also
+/// raise on the answer being *lost*, which is exactly what shipped while
+/// `CatDetailNotifier.prependUpdate` was dropping these fields: posting an
+/// update reset all three tiles to "henüz yok" and all three lit up in
+/// their status tint to celebrate it. That data bug is fixed, but the
+/// animation must not be capable of making the same mistake for the next
+/// one — motion in this app confirms what the user did, and losing an
+/// answer is never that.
+///
+/// Public and file-level so it can be tested directly; the widget it
+/// serves is private.
+bool isAcknowledgeableStatTimeChange(DateTime? previous, DateTime? current) {
+  if (current == null) return false;
+  if (previous == null) return true;
+  return current.isAfter(previous);
+}
+
+/// One tile of the three-question strip, and the app's clearest piece of
+/// causality: this tile is the answer to "when was this cat last fed", and
+/// the user's own update is what changed it.
+///
+/// When [time] changes the tile briefly raises to its own status tint —
+/// the [AppColors.seenBg]/[AppColors.fedBg]/[AppColors.waterBg] pair that
+/// already exists for this status — then settles back to the neutral
+/// surface. Nothing new is introduced: it borrows the color the timeline's
+/// own chip for this status already uses, for about half a second, and
+/// gives it back.
+///
+/// Only a change raises it, never the first build — arriving on a screen
+/// is not an event, and a tile that flashed on open would be decoration.
+///
+/// Under reduced motion the raise still happens (it is a state change, not
+/// travel) but crosses instantly instead of fading.
+class _StatTile extends StatefulWidget {
   const _StatTile({
     required this.icon,
     required this.label,
     required this.time,
     required this.color,
+    required this.raisedColor,
   });
 
   final IconData icon;
@@ -936,15 +1024,63 @@ class _StatTile extends StatelessWidget {
   final DateTime? time;
   final Color color;
 
+  /// This status's own soft tint, held while the tile acknowledges a
+  /// change.
+  final Color raisedColor;
+
+  @override
+  State<_StatTile> createState() => _StatTileState();
+}
+
+class _StatTileState extends State<_StatTile> {
+  /// How long the tile holds its tint before settling. Long enough to be
+  /// read after a glance moves back from the sheet that just closed, short
+  /// enough that it never becomes the tile's resting state.
+  static const _hold = Duration(milliseconds: 600);
+
+  bool _raised = false;
+  Timer? _settle;
+
+  @override
+  void didUpdateWidget(_StatTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!isAcknowledgeableStatTimeChange(oldWidget.time, widget.time)) return;
+    _settle?.cancel();
+    setState(() => _raised = true);
+    _settle = Timer(_hold, () {
+      if (mounted) setState(() => _raised = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _settle?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final motion = TekirMotion.of(context);
+    final icon = widget.icon;
+    final label = widget.label;
+    final time = widget.time;
+    final color = widget.color;
+
+    return AnimatedContainer(
+      // Rising is the acknowledgment and settling is the release, so the
+      // return is deliberately the slower of the two — the inverse of the
+      // usual enter/exit relationship, and the reason the settle token
+      // exists.
+      duration: _raised
+          ? motion(TekirMotion.state)
+          : motion(TekirMotion.settle),
+      curve: _raised ? TekirMotion.enter : TekirMotion.exit,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.s2,
         vertical: AppSpacing.s2,
       ),
       decoration: BoxDecoration(
-        color: AppColors.surfaceAlt,
+        color: _raised ? widget.raisedColor : AppColors.surfaceAlt,
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
       child: Column(
@@ -969,7 +1105,7 @@ class _StatTile extends StatelessWidget {
           ),
           const SizedBox(height: 3),
           Text(
-            time != null ? relativeTimeTr(time!) : 'henüz yok',
+            time != null ? relativeTimeTr(time) : 'henüz yok',
             style: const TextStyle(fontSize: 13, color: AppColors.ink),
             overflow: TextOverflow.ellipsis,
           ),
@@ -1030,7 +1166,11 @@ class _HistoryMediaSectionState extends ConsumerState<_HistoryMediaSection> {
         _ProfileSegmentedControl(
           selected: _tab,
           mediaCount: widget.mediaCount,
-          onChanged: (tab) => setState(() => _tab = tab),
+          onChanged: (tab) {
+            if (tab == _tab) return;
+            unawaited(TekirHaptics.acknowledge());
+            setState(() => _tab = tab);
+          },
         ),
         const SizedBox(height: AppSpacing.s3),
         if (_tab == _ProfileTab.history) _buildHistory() else _buildMedia(),
@@ -1050,7 +1190,7 @@ class _HistoryMediaSectionState extends ConsumerState<_HistoryMediaSection> {
           const SizedBox(height: AppSpacing.s3),
         ],
         if (widget.updates.isEmpty && widget.pending == null)
-          const _EmptyHistory()
+          _EmptyHistory(catId: widget.catId)
         else if (widget.updates.isNotEmpty) ...[
           for (var i = 0; i < widget.updates.length; i++)
             _TimelineItem(
@@ -1083,10 +1223,13 @@ class _HistoryMediaSectionState extends ConsumerState<_HistoryMediaSection> {
           ),
         ),
       ),
-      error: (_, _) => const _EmptyMedia(message: 'Medya yüklenemedi'),
+      error: (_, _) => _EmptyMedia(
+        catId: widget.catId,
+        onRetry: () => ref.invalidate(catMediaProvider(widget.catId)),
+      ),
       data: (items) {
         if (items.isEmpty) {
-          return const _EmptyMedia(message: 'Henüz medya yok');
+          return _EmptyMedia(catId: widget.catId);
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1180,59 +1323,77 @@ class _ProfileSegment extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: isOn ? AppColors.surface : Colors.transparent,
-      borderRadius: BorderRadius.circular(AppRadius.md),
-      elevation: isOn ? 1 : 0,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        onTap: onTap,
-        // A minimum, not a fixed, height — mirrors _UpdateBar's own
-        // constraint — so the label can wrap taller at large system text
-        // scale instead of clipping or overflowing the segment.
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: kTapMin),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.s2,
-              vertical: AppSpacing.s2,
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Flexible(
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w800,
-                      color: isOn ? AppColors.ink : AppColors.faint,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
+    // `geçmiş` and `medya` announced identically whichever was open: the
+    // active one is carried by a white fill and one step of elevation,
+    // neither of which reaches a screen reader.
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      selected: isOn,
+      label: count == null ? label : '$label, $count',
+      onTap: onTap,
+      child: PressResponse(
+        child: Material(
+          color: isOn ? AppColors.surface : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          elevation: isOn ? 1 : 0,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            onTap: onTap,
+            // A minimum, not a fixed, height — mirrors _UpdateBar's own
+            // constraint — so the label can wrap taller at large system text
+            // scale instead of clipping or overflowing the segment.
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: kTapMin),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s2,
+                  vertical: AppSpacing.s2,
                 ),
-                if (count != null) ...[
-                  const SizedBox(width: 7),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 1,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isOn ? AppColors.primary : AppColors.line,
-                      borderRadius: BorderRadius.circular(AppRadius.full),
-                    ),
-                    child: Text(
-                      '$count',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: isOn ? AppColors.primaryInk : AppColors.faint,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w800,
+                          color: isOn ? AppColors.ink : AppColors.faint,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                  ),
-                ],
-              ],
+                    // Zero is not worth a badge: a filled pill reading
+                    // "0" reads as an unread count. The avatar's own media
+                    // badge already hides at zero; this one did not.
+                    if (count != null && count! > 0) ...[
+                      const SizedBox(width: 7),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isOn ? AppColors.primary : AppColors.line,
+                          borderRadius: BorderRadius.circular(AppRadius.full),
+                        ),
+                        child: Text(
+                          '$count',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: isOn
+                                ? AppColors.primaryInk
+                                : AppColors.faint,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -1440,27 +1601,99 @@ class _ReportMediaBadge extends ConsumerWidget {
   }
 }
 
-class _EmptyMedia extends StatelessWidget {
-  const _EmptyMedia({required this.message});
+/// The media tab with nothing in it, and the same tab when its own read
+/// fails — two situations that must not look alike, which is why the
+/// failure keeps its retry and the emptiness gets an invitation.
+///
+/// The invitation's action stays quiet rather than brick: this is a
+/// secondary tab, and the screen's one primary action already lives in
+/// the fixed bar below (contract: one primary, an optional secondary that
+/// stays visually quiet).
+class _EmptyMedia extends ConsumerWidget {
+  const _EmptyMedia({required this.catId, this.onRetry});
 
-  final String message;
+  final String catId;
+
+  /// Set when this is a failed read rather than an empty archive.
+  final VoidCallback? onRetry;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final failed = onRetry != null;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.s6),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.s4,
+        AppSpacing.s5,
+        AppSpacing.s4,
+        AppSpacing.s6,
+      ),
+      child: Column(
         children: [
-          const Icon(
-            Icons.photo_library_outlined,
-            color: AppColors.faint,
-            size: 22,
+          DecoratedBox(
+            decoration: const BoxDecoration(
+              color: AppColors.surfaceAlt,
+              shape: BoxShape.circle,
+            ),
+            child: SizedBox(
+              width: 88,
+              height: 88,
+              child: Icon(
+                failed
+                    ? Icons.cloud_off_outlined
+                    : Icons.photo_library_outlined,
+                size: 34,
+                color: AppColors.faint,
+              ),
+            ),
           ),
-          const SizedBox(width: AppSpacing.s3),
-          Expanded(
+          const SizedBox(height: AppSpacing.s5),
+          Text(
+            failed ? 'medya yüklenemedi' : 'henüz fotoğraf yok',
+            textAlign: TextAlign.center,
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontSize: 21, height: 1.3),
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
             child: Text(
-              message,
-              style: const TextStyle(color: AppColors.muted),
+              failed
+                  ? 'bağlantını kontrol edip tekrar dene.'
+                  : 'güncelleme paylaşırken fotoğraf veya video '
+                        'ekleyebilirsin.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.faint,
+                height: 1.6,
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Material(
+            color: AppColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              onTap:
+                  onRetry ?? () => openCatUpdateComposer(context, ref, catId),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: kTapMin),
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s5,
+                  vertical: AppSpacing.s3,
+                ),
+                child: Text(
+                  failed ? 'tekrar dene' : 'güncelleme ekle',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.muted,
+                  ),
+                ),
+              ),
             ),
           ),
         ],
@@ -1510,63 +1743,86 @@ class _UpdateBar extends ConsumerWidget {
               minWidth: double.infinity,
               minHeight: kTapMin,
             ),
-            child: ElevatedButton(
-              onPressed: busy ? null : () => _gatedOpenComposer(context, ref),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.primaryInk,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.lg),
+            // Around the button alone, not the bar. Wrapping the bar meant
+            // the gradient — a transparent strip the user can press
+            // straight through to the timeline underneath — scaled the
+            // whole surface, and a submitting button that must not appear
+            // to respond still gave under the finger.
+            child: PressResponse(
+              enabled: !busy,
+              child: ElevatedButton(
+                onPressed: busy
+                    ? null
+                    : () => openCatUpdateComposer(context, ref, catId),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.primaryInk,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                  ),
+                  textStyle: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15.5,
+                  ),
                 ),
-                textStyle: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 15.5,
-                ),
+                child: const Text('+ update'),
               ),
-              child: const Text('+ update'),
             ),
           ),
         ),
       ),
     );
   }
+}
 
-  // Gate-at-intent (issue #65): the composition sheet may not open before
-  // authentication succeeds. AuthGate itself is the only thing that
-  // decides whether to show its prompt — already-authenticated callers
-  // fall straight through with no extra ui.
+/// Opens the update composer for [catId], gated at the point of intent.
+///
+/// File-level rather than private to [_UpdateBar] because the screen now
+/// has two doors onto the same action: the fixed bar, and the empty
+/// history state's own invitation. They must be the same door — same auth
+/// gate, same draft reset, same confirmation — or the empty state would be
+/// a second, subtly different way to post an update.
+///
+/// Gate-at-intent (issue #65): the composition sheet may not open before
+/// authentication succeeds. AuthGate itself is the only thing that decides
+/// whether to show its prompt — already-authenticated callers fall
+/// straight through with no extra ui.
+Future<void> openCatUpdateComposer(
+  BuildContext context,
+  WidgetRef ref,
+  String catId,
+) {
+  return AuthGate.require(
+    context,
+    ref,
+    contextText: 'Güncelleme paylaşmak için giriş yap',
+    intent: AnalyticsAuthIntent.ordinaryUpdate,
+    onAuthenticated: () => unawaited(_openComposer(context, ref, catId)),
+  );
+}
 
-  Future<void> _gatedOpenComposer(BuildContext context, WidgetRef ref) {
-    return AuthGate.require(
-      context,
-      ref,
-      contextText: 'Güncelleme paylaşmak için giriş yap',
-      intent: AnalyticsAuthIntent.ordinaryUpdate,
-      onAuthenticated: () => unawaited(_openComposer(context, ref)),
-    );
-  }
-
-  Future<void> _openComposer(BuildContext context, WidgetRef ref) async {
-    // Reset synchronously, before the sheet ever mounts (issue #202) — a
-    // dismissed-without-submitting draft, including any picked media, must
-    // never be visible even for a single frame of a fresh open, whether
-    // that's this same cat again or (via each cat's own composer instance)
-    // a different one. See CatUpdateComposerNotifier.reset's own doc for
-    // why a failed attempt's draft is the one exception kept whole.
-    ref.read(catUpdateComposerProvider(catId).notifier).reset();
-    final result = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => CatUpdateSheet(catId: catId),
-    );
-    // Only a synchronous help submission pops true — an ordinary one pops
-    // immediately and its optimistic row carries the feedback instead.
-    if (result == true && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Güncelleme paylaşıldı')));
-    }
+Future<void> _openComposer(
+  BuildContext context,
+  WidgetRef ref,
+  String catId,
+) async {
+  // Reset synchronously, before the sheet ever mounts (issue #202) — a
+  // dismissed-without-submitting draft, including any picked media, must
+  // never be visible even for a single frame of a fresh open, whether
+  // that's this same cat again or (via each cat's own composer instance)
+  // a different one. See CatUpdateComposerNotifier.reset's own doc for
+  // why a failed attempt's draft is the one exception kept whole.
+  ref.read(catUpdateComposerProvider(catId).notifier).reset();
+  final result = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => CatUpdateSheet(catId: catId),
+  );
+  // Only a synchronous help submission pops true — an ordinary one pops
+  // immediately and its optimistic row carries the feedback instead.
+  if (result == true && context.mounted) {
+    TekirSnack.show(context, 'Güncelleme paylaşıldı', clearsFixedBar: true);
   }
 }
 
@@ -1680,7 +1936,6 @@ class _TimelineAvatar extends StatelessWidget {
         ? _palette[trimmed.codeUnitAt(0) % _palette.length]
         : AppColors.faint;
     return Container(
-      margin: const EdgeInsets.only(top: 2),
       width: 34,
       height: 34,
       alignment: Alignment.center,
@@ -1729,7 +1984,11 @@ class _TimelineItem extends StatelessWidget {
                   Expanded(
                     child: Container(
                       width: 1.5,
-                      margin: const EdgeInsets.only(top: 6),
+                      // Symmetric, so the connector sits centred in the
+                      // gap between two avatars. It had 6 px above and the
+                      // row's own 12 px below, which read as a rail
+                      // leaning toward the next entry.
+                      margin: const EdgeInsets.symmetric(vertical: 6),
                       color: AppColors.line,
                     ),
                   ),
@@ -1739,7 +1998,7 @@ class _TimelineItem extends StatelessWidget {
           const SizedBox(width: AppSpacing.s3),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.s3),
+              padding: const EdgeInsets.only(bottom: AppSpacing.s5),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1806,7 +2065,11 @@ class _TimelineItem extends StatelessWidget {
                     ],
                   ),
                   if (update.comment != null) ...[
-                    const SizedBox(height: 4),
+                    // Bound to the entry above it, not floating between
+                    // two: this was 4 px from its own chip and 12 px from
+                    // the next avatar, so which entry a free-text note
+                    // belonged to was genuinely ambiguous.
+                    const SizedBox(height: AppSpacing.s2),
                     // A help-carrying entry's comment is its help note —
                     // set apart on the soft help tint (the design's
                     // `.note.help` treatment), while an ordinary comment
@@ -2327,21 +2590,97 @@ class _ReportButton extends ConsumerWidget {
 /// entries and not one.
 enum _ContentAction { report, block }
 
-class _EmptyHistory extends StatelessWidget {
-  const _EmptyHistory();
+/// The state a just-created cat lands in — the highest-intent moment on
+/// this screen, and the one it used to answer with a grey row reading
+/// "Henüz güncelleme yok" beside a glyph that means *history disabled*.
+///
+/// The contract is explicit (docs/design/app-states.md, global rules): an
+/// empty state is an invitation, not a failure; the title says what
+/// happened, the sub-line says why it matters, and there is exactly one
+/// primary action. Shape and proportions follow discover's own
+/// `_EmptyFollows`, which already ships this contract, rather than a new
+/// treatment.
+///
+/// Its action is the same door the fixed `+ update` bar opens — the same
+/// auth gate, the same draft reset — never a second path onto the same
+/// mutation.
+class _EmptyHistory extends ConsumerWidget {
+  const _EmptyHistory({required this.catId});
+
+  final String catId;
 
   @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: AppSpacing.s6),
-      child: Row(
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.s4,
+        AppSpacing.s5,
+        AppSpacing.s4,
+        AppSpacing.s6,
+      ),
+      child: Column(
         children: [
-          Icon(Icons.history_toggle_off, color: AppColors.faint, size: 22),
-          SizedBox(width: AppSpacing.s3),
-          Expanded(
-            child: Text(
-              'Henüz güncelleme yok',
-              style: TextStyle(color: AppColors.muted),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.surfaceAlt,
+              shape: BoxShape.circle,
+            ),
+            child: SizedBox(
+              width: 88,
+              height: 88,
+              child: Icon(Icons.edit_note, size: 34, color: AppColors.faint),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Text(
+            'henüz güncelleme yok',
+            textAlign: TextAlign.center,
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontSize: 21, height: 1.3),
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
+            child: const Text(
+              'ilk güncellemeyi sen ekle; bu kediye bakan herkes '
+              'durumunu bilsin.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: AppColors.faint,
+                height: 1.6,
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          // Quiet, not brick. The contract allows one primary per state and
+          // the fixed "+ update" bar below is already it — a second brick
+          // button stacked directly above it, opening the same composer,
+          // read as the same button printed twice. The invitation lives in
+          // the copy; this is the shortcut to it.
+          Material(
+            color: AppColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              onTap: () => openCatUpdateComposer(context, ref, catId),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: kTapMin),
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s5,
+                  vertical: AppSpacing.s3,
+                ),
+                child: const Text(
+                  'güncelleme ekle',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.muted,
+                  ),
+                ),
+              ),
             ),
           ),
         ],
@@ -2372,10 +2711,10 @@ class _LoadMoreButton extends StatelessWidget {
           ),
         ),
         child: isLoading
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+            ? const InlineSpinner(
+                size: 18,
+                color: AppColors.primary,
+                trackColor: AppColors.line,
               )
             : const Text(
                 'Daha fazla göster',
@@ -2386,59 +2725,57 @@ class _LoadMoreButton extends StatelessWidget {
   }
 }
 
-/// Loading / not-found / generic-error screen — no photo hero yet, so the
-/// back action gets its own small top-left circle instead of the hero's
-/// on-photo one.
+/// Not-found / generic-error screen — no photo hero yet, so the back
+/// action gets its own small top-left circle instead of the hero's
+/// on-photo one. The initial read is not routed here: waiting is never a
+/// bare spinner screen (docs/design/app-states.md), it is
+/// [_DetailSkeleton].
 class _MessageScreen extends StatelessWidget {
   const _MessageScreen({
     this.icon,
     this.message,
     this.actionLabel,
     this.onAction,
-    this.loading = false,
   });
 
   final IconData? icon;
   final String? message;
   final String? actionLabel;
   final VoidCallback? onAction;
-  final bool loading;
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
         Center(
-          child: loading
-              ? const CircularProgressIndicator(color: AppColors.primary)
-              : Padding(
-                  padding: const EdgeInsets.all(AppSpacing.s6),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(icon, size: 40, color: AppColors.faint),
-                      const SizedBox(height: AppSpacing.s3),
-                      Text(
-                        message ?? '',
-                        style: const TextStyle(color: AppColors.muted),
-                      ),
-                      if (actionLabel != null && onAction != null) ...[
-                        const SizedBox(height: AppSpacing.s3),
-                        OutlinedButton(
-                          onPressed: onAction,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.ink,
-                            side: const BorderSide(color: AppColors.lineStrong),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(AppRadius.md),
-                            ),
-                          ),
-                          child: Text(actionLabel!),
-                        ),
-                      ],
-                    ],
-                  ),
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.s6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 40, color: AppColors.faint),
+                const SizedBox(height: AppSpacing.s3),
+                Text(
+                  message ?? '',
+                  style: const TextStyle(color: AppColors.muted),
                 ),
+                if (actionLabel != null && onAction != null) ...[
+                  const SizedBox(height: AppSpacing.s3),
+                  OutlinedButton(
+                    onPressed: onAction,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.ink,
+                      side: const BorderSide(color: AppColors.lineStrong),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
+                    ),
+                    child: Text(actionLabel!),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
         Positioned(
           top: MediaQuery.of(context).padding.top + AppSpacing.s3,
@@ -2446,6 +2783,370 @@ class _MessageScreen extends StatelessWidget {
           child: const _BackCircleButton(),
         ),
       ],
+    );
+  }
+}
+
+/// The cat-detail initial read (docs/design/app-states.md, state 14).
+///
+/// Replaces the bare centred spinner this screen used to show, which broke
+/// two rules of the state contract at once: waiting is never a spinner
+/// screen, and nothing loading-related may appear before 400 ms. Here the
+/// screen's own future layout stands in for itself, and [InitialReadGate]
+/// owns when it may appear.
+///
+/// The header is deliberately outside the gate. It carries the photo the
+/// map's preview sheet is flying across (core/motion/hero_tags.dart), and a
+/// shared element needs its destination present in the first frame — a
+/// header withheld for 400 ms would give the flight nothing to land on.
+/// Showing it immediately costs nothing either way: it is the one piece of
+/// this screen already known before the request resolves.
+///
+/// The photo comes from the map's already-fetched marker for this cat, not
+/// from a new request or an invented placeholder. Opened from anywhere else
+/// — discover, a deep link — there is no marker and the avatar renders as
+/// the branded placeholder, exactly as it would for a cat with no photo.
+class _DetailSkeleton extends ConsumerStatefulWidget {
+  const _DetailSkeleton({required this.catId});
+
+  final String catId;
+
+  @override
+  ConsumerState<_DetailSkeleton> createState() => _DetailSkeletonState();
+}
+
+class _DetailSkeletonState extends ConsumerState<_DetailSkeleton> {
+  static const double _diameter = 132;
+
+  /// Bumped on retry so the gate remounts and earns a fresh 400 ms of
+  /// silence, mirroring the map's own attempt counter — without it the
+  /// gate would still be sitting in its timed-out phase and the skeleton
+  /// would never return.
+  int _attempt = 0;
+
+  void _retry() {
+    setState(() => _attempt++);
+    ref.read(catDetailProvider(widget.catId).notifier).load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final catId = widget.catId;
+    final photo = ref.watch(
+      catsMapProvider.select((state) {
+        for (final marker in state.markers) {
+          if (marker.id == catId) return marker.primaryPhoto;
+        }
+        return null;
+      }),
+    );
+    return Stack(
+      children: [
+        _buildScroll(context, catId, (photo?.isEmpty ?? true) ? null : photo),
+        // Pinned exactly as the loaded screen pins it (_CatDetailBody).
+        // The skeleton used to scroll its own back button, so the one
+        // control both states share behaved differently depending on
+        // whether the read had landed yet.
+        Positioned(
+          top: MediaQuery.paddingOf(context).top + AppSpacing.s3,
+          left: AppSpacing.s4,
+          child: const _BackCircleButton(),
+        ),
+      ],
+    );
+  }
+
+  /// [photo] is null when this cat has no cover photo the map already
+  /// knows about — the avatar then renders as the branded placeholder,
+  /// exactly as it would for a cat with none at all.
+  Widget _buildScroll(BuildContext context, String catId, String? photo) {
+    return ListView(
+      padding: EdgeInsets.zero,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.s4,
+            MediaQuery.of(context).padding.top + AppSpacing.s3,
+            AppSpacing.s4,
+            0,
+          ),
+          child: Column(
+            children: [
+              // Clearance for the pinned back button above this.
+              const SizedBox(height: kTapMin + AppSpacing.s4),
+              Hero(
+                tag: catPhotoHeroTag(catId),
+                flightShuttleBuilder: (_, animation, direction, _, _) =>
+                    _CatPhotoFlight(
+                      animation: animation,
+                      direction: direction,
+                      photo: photo,
+                    ),
+                child: ClipOval(
+                  child: SizedBox(
+                    width: _diameter,
+                    height: _diameter,
+                    child: photo != null
+                        ? CachedNetworkImage(
+                            imageUrl: photo,
+                            fit: BoxFit.cover,
+                            memCacheWidth: decodeWidthFor(context, _diameter),
+                            placeholder: (context, _) =>
+                                const _HeroPlaceholder(loading: true),
+                            errorWidget: (context, _, _) =>
+                                const _HeroPlaceholder(),
+                          )
+                        : const _HeroPlaceholder(loading: true),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        InitialReadGate(
+          key: ValueKey(_attempt),
+          reading: true,
+          builder: (context, phase) {
+            // 6 s+: "the wait ends: switch to the error or offline state"
+            // (docs/design/app-states.md, timing contract). Bounded reads
+            // only — the request is never cancelled, the wait is what
+            // ends, so a late response still lands and replaces this. The
+            // header above stays put, exactly as the map keeps its ground
+            // visible behind its own fallback banner.
+            if (phase == InitialReadPhase.timedOut) {
+              return _ReadTimeoutNotice(onRetry: _retry);
+            }
+            if (phase == InitialReadPhase.hidden) {
+              return const SizedBox.shrink();
+            }
+            return const _DetailSkeletonBody();
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// The skeleton's shape below the header: the name line, the three-question
+/// strip, and the first timeline rows — the screen's real layout drawn as
+/// blocks, so the content that arrives replaces something the same size
+/// rather than pushing a spinner out of the way.
+/// The initial read's 6 s fallback (docs/design/app-states.md, timing
+/// contract): the wait ends and the surface switches to its error state.
+///
+/// Reuses the copy and the single action the screen's own load failure
+/// already uses, because to the reader these are the same situation — the
+/// cat did not arrive. Nothing here cancels the request: the contract ends
+/// the wait, not the read, so a response arriving at 8 s still replaces
+/// this with the real screen.
+class _ReadTimeoutNotice extends StatelessWidget {
+  const _ReadTimeoutNotice({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.s5,
+        AppSpacing.s8,
+        AppSpacing.s5,
+        AppSpacing.s6,
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.error_outline, size: 40, color: AppColors.faint),
+          const SizedBox(height: AppSpacing.s3),
+          const Text(
+            'Kedi yüklenemedi',
+            style: TextStyle(color: AppColors.muted),
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          OutlinedButton(
+            onPressed: onRetry,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.ink,
+              side: const BorderSide(color: AppColors.lineStrong),
+              minimumSize: const Size(0, kTapMin),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+            ),
+            child: const Text('Tekrar dene'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailSkeletonBody extends StatelessWidget {
+  const _DetailSkeletonBody();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.s5,
+        AppSpacing.s5,
+        AppSpacing.s5,
+        AppSpacing.s6,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SkeletonBlock(width: 168, height: 24),
+          const SizedBox(height: AppSpacing.s2),
+          const _SkeletonBlock(width: 104, height: 13),
+          const SizedBox(height: AppSpacing.s5),
+          const Row(
+            children: [
+              Expanded(child: _SkeletonBlock(height: 52)),
+              SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: _SkeletonBlock(
+                  height: 52,
+                  delay: Duration(milliseconds: 120),
+                ),
+              ),
+              SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: _SkeletonBlock(
+                  height: 52,
+                  delay: Duration(milliseconds: 240),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          const _SkeletonBlock(height: kTapMin, radius: AppRadius.lg),
+          const SizedBox(height: AppSpacing.s5),
+          // Three timeline rows, staggered so the list does not flash in
+          // lockstep (ShimmerSweep's own convention).
+          for (var i = 0; i < 3; i++) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SkeletonBlock(
+                  width: 34,
+                  height: 34,
+                  radius: AppRadius.full,
+                  delay: Duration(milliseconds: 160 * i),
+                ),
+                const SizedBox(width: AppSpacing.s3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _SkeletonBlock(
+                        width: 96,
+                        height: 12,
+                        delay: Duration(milliseconds: 160 * i),
+                      ),
+                      const SizedBox(height: AppSpacing.s2),
+                      _SkeletonBlock(
+                        height: 14,
+                        delay: Duration(milliseconds: 160 * i),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.s5),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One skeleton shape: the app's own [AppColors.surfaceAlt] under the
+/// shared [ShimmerSweep], never a generic grey box.
+class _SkeletonBlock extends StatelessWidget {
+  const _SkeletonBlock({
+    this.width,
+    required this.height,
+    this.radius = AppRadius.sm,
+    this.delay = Duration.zero,
+  });
+
+  final double? width;
+  final double height;
+  final double radius;
+  final Duration delay;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderRadius = BorderRadius.circular(radius);
+    return ShimmerSweep(
+      delay: delay,
+      borderRadius: borderRadius,
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: AppColors.surfaceAlt,
+          borderRadius: borderRadius,
+        ),
+      ),
+    );
+  }
+}
+
+/// What actually flies between the map's preview sheet and this screen.
+///
+/// The default shuttle carries the source widget unchanged, which would
+/// mean the sheet's rounded square growing to 132 pt and only then becoming
+/// a circle. This draws the photo itself and interpolates the corner radius
+/// from the sheet's [AppRadius.lg] to a full circle across the flight, so
+/// the shape change is part of the travel rather than a cut at the end.
+///
+/// Reversed on pop, so returning to the map runs the same change backwards
+/// instead of a second, differently-shaped animation.
+class _CatPhotoFlight extends StatelessWidget {
+  const _CatPhotoFlight({
+    required this.animation,
+    required this.direction,
+    required this.photo,
+  });
+
+  final Animation<double> animation;
+  final HeroFlightDirection direction;
+  final String? photo;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The flight's own rect drives the target radius: "a circle" is
+        // half of whatever side the photo currently occupies, so this stays
+        // correct if either end is ever resized.
+        final side = math.min(constraints.maxWidth, constraints.maxHeight);
+        final circle = side / 2;
+        return AnimatedBuilder(
+          animation: animation,
+          builder: (context, child) {
+            final progress = direction == HeroFlightDirection.push
+                ? animation.value
+                : 1 - animation.value;
+            final t = TekirMotion.enter.transform(progress.clamp(0.0, 1.0));
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(
+                AppRadius.lg + (circle - AppRadius.lg) * t,
+              ),
+              child: child,
+            );
+          },
+          child: photo == null
+              ? const _HeroPlaceholder()
+              : CachedNetworkImage(
+                  imageUrl: photo!,
+                  fit: BoxFit.cover,
+                  errorWidget: (context, _, _) => const _HeroPlaceholder(),
+                ),
+        );
+      },
     );
   }
 }

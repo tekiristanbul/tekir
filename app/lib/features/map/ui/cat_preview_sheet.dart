@@ -1,6 +1,8 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/motion/hero_tags.dart';
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../data/cat_marker.dart';
@@ -54,7 +56,23 @@ class CatPreviewSheet extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _PreviewPhoto(url: cat.primaryPhoto),
+              // The photo is the shared element the cat-detail header picks
+              // up (core/motion/hero_tags.dart): tapping through does not
+              // dismiss this sheet and open an unrelated screen, it carries
+              // this cat's photo across and rounds it into the detail
+              // avatar.
+              Hero(
+                tag: catPhotoHeroTag(cat.id),
+                // Arc rather than straight-line travel: the photo moves up
+                // and across at the same time, and a curved path reads as
+                // one continuous motion where a diagonal reads as a slide.
+                // The square-to-circle part of the change is the
+                // destination's own flightShuttleBuilder
+                // (cat_detail_screen.dart).
+                createRectTween: (begin, end) =>
+                    MaterialRectCenterArcTween(begin: begin, end: end),
+                child: _PreviewPhoto(url: cat.primaryPhoto),
+              ),
               const SizedBox(width: AppSpacing.s4),
               Expanded(
                 child: Column(
@@ -212,10 +230,10 @@ class _PreviewPhoto extends StatelessWidget {
           width: 92,
           height: 92,
           child: Center(
-            child: SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
+            child: InlineSpinner(
+              size: 20,
+              color: AppColors.primary,
+              trackColor: AppColors.line,
             ),
           ),
         ),

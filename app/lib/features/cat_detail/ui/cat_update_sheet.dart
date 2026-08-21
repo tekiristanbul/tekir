@@ -5,7 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/motion/press_response.dart';
+import '../../../core/motion/tekir_haptics.dart';
+import '../../../core/motion/tekir_motion.dart';
 import '../../../core/states/photo_upload_progress.dart';
+import '../../../core/states/submitting_button.dart';
 import '../../../core/theme/app_theme.dart';
 import 'cat_update_composer_notifier.dart';
 
@@ -237,20 +241,38 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
                       return _StatusOption(
                         label: _statusLabelsTr[status]!,
                         selected: state.selectedStatuses.contains(status),
-                        onTap: () => ref
-                            .read(
-                              catUpdateComposerProvider(widget.catId).notifier,
-                            )
-                            .toggleStatus(status),
+                        onTap: () {
+                          unawaited(TekirHaptics.acknowledge());
+                          ref
+                              .read(
+                                catUpdateComposerProvider(
+                                  widget.catId,
+                                ).notifier,
+                              )
+                              .toggleStatus(status);
+                        },
                       );
                     }),
                     _HelpOption(
                       selected: state.needsHelp,
-                      onTap: () => ref
-                          .read(
-                            catUpdateComposerProvider(widget.catId).notifier,
-                          )
-                          .toggleNeedsHelp(),
+                      // The loudest haptic in the app, and only in the
+                      // selecting direction: raising a help mark is the one
+                      // action that pages other people, and it must not
+                      // feel like a görüldü in the hand any more than it
+                      // looks like one on screen. Clearing it is an
+                      // ordinary deselection.
+                      onTap: () {
+                        unawaited(
+                          state.needsHelp
+                              ? TekirHaptics.acknowledge()
+                              : TekirHaptics.raised(),
+                        );
+                        ref
+                            .read(
+                              catUpdateComposerProvider(widget.catId).notifier,
+                            )
+                            .toggleNeedsHelp();
+                      },
                     ),
                   ],
                 ),
@@ -346,42 +368,30 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
                   ),
                 ],
                 const SizedBox(height: AppSpacing.s4),
-                SizedBox(
-                  height: kTapMin,
-                  child: ElevatedButton(
-                    onPressed: state.canSubmit ? _submit : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: state.needsHelp
-                          ? AppColors.helpStrong
-                          : AppColors.primary,
-                      foregroundColor: state.needsHelp
-                          ? AppColors.helpInk
-                          : AppColors.primaryInk,
-                      disabledBackgroundColor: AppColors.lineStrong,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                      textStyle: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    child: state.isSubmitting
-                        ? SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: state.needsHelp
-                                  ? AppColors.helpInk
-                                  : AppColors.primaryInk,
-                            ),
-                          )
-                        : Text(
-                            state.error != null
-                                ? 'Tekrar dene'
-                                : state.needsHelp
-                                ? 'yardım çağrısıyla paylaş'
-                                : 'Paylaş',
-                          ),
-                  ),
+                SubmittingButton(
+                  label: state.error != null
+                      ? 'Tekrar dene'
+                      : state.needsHelp
+                      ? 'yardım çağrısıyla paylaş'
+                      : 'Paylaş',
+                  submittingLabel: state.needsHelp
+                      ? 'yardım çağrısı gönderiliyor'
+                      : 'Paylaşılıyor',
+                  submitting: state.isSubmitting,
+                  onPressed: state.canSubmit ? _submit : null,
+                  background: state.needsHelp
+                      ? AppColors.helpStrong
+                      : AppColors.primary,
+                  // The contract's "darkens one tone" has no darker tone to
+                  // reach for in the help family — helpStrong is already
+                  // the deepest. The label change and the spinner carry the
+                  // in-flight state on this variant.
+                  submittingBackground: state.needsHelp
+                      ? AppColors.helpStrong
+                      : AppColors.primaryStrong,
+                  foreground: state.needsHelp
+                      ? AppColors.helpInk
+                      : AppColors.primaryInk,
                 ),
               ],
             ),
@@ -425,37 +435,54 @@ class _StatusOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected ? AppColors.primarySoft : AppColors.surfaceAlt,
-      borderRadius: BorderRadius.circular(AppRadius.full),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppRadius.full),
-        onTap: onTap,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: kTapMin),
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
-          alignment: Alignment.center,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (selected) ...[
-                const Icon(
-                  Icons.check,
-                  size: 16,
-                  color: AppColors.primaryStrong,
-                ),
-                const SizedBox(width: AppSpacing.s1),
-              ],
-              Flexible(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: selected ? AppColors.primaryStrong : AppColors.muted,
+    // A pill's selected state is otherwise a fill colour and a check
+    // glyph, neither of which a screen reader reports. `toggled` is what
+    // makes "Mama verildi, selected" announce as a state rather than as a
+    // plain button — the same treatment the map's own help filter chip
+    // already uses.
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      toggled: selected,
+      label: label,
+      onTap: onTap,
+      child: PressResponse(
+        child: Material(
+          color: selected ? AppColors.primarySoft : AppColors.surfaceAlt,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: kTapMin),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (selected) ...[
+                    const Icon(
+                      Icons.check,
+                      size: 16,
+                      color: AppColors.primaryStrong,
+                    ),
+                    const SizedBox(width: AppSpacing.s1),
+                  ],
+                  Flexible(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: selected
+                            ? AppColors.primaryStrong
+                            : AppColors.muted,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -467,6 +494,20 @@ class _StatusOption extends StatelessWidget {
 /// cat-profile.html) — the help color family, never the primary accent,
 /// in both states so it always reads apart from the work-done statuses
 /// beside it: soft help tint unselected, deep help red selected.
+///
+/// This is the only control in tekir that reaches other people's phones
+/// (docs/product/alerts.md: marking help notifies the cat's followers),
+/// and beyond a 10-minute author correction window it cannot be cleared
+/// at all — expiry at 72 hours is the only other way out. So its selected
+/// state may not rest on fill colour alone, the way it used to: colour is
+/// invisible to a colour-blind user, to a screen reader, and in
+/// greyscale, and "did I just arm this?" is not a question this control
+/// is allowed to leave open.
+///
+/// Three independent signals now carry it, matching how the work-done
+/// pills beside it already behave rather than inventing a treatment:
+/// the [Icons.check] glyph `_StatusOption` uses, the warning glyph
+/// gaining weight (outline when idle, filled when armed), and the fill.
 class _HelpOption extends StatelessWidget {
   const _HelpOption({required this.selected, required this.onTap});
 
@@ -475,35 +516,55 @@ class _HelpOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected ? AppColors.helpStrong : AppColors.helpSoft,
-      borderRadius: BorderRadius.circular(AppRadius.full),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppRadius.full),
-        onTap: onTap,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: kTapMin),
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
-          alignment: Alignment.center,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.warning_amber_rounded,
-                size: 16,
-                color: selected ? AppColors.helpInk : AppColors.helpStrong,
-              ),
-              const SizedBox(width: AppSpacing.s1),
-              Flexible(
-                child: Text(
-                  'yardım',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: selected ? AppColors.helpInk : AppColors.helpStrong,
+    final foreground = selected ? AppColors.helpInk : AppColors.helpStrong;
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      toggled: selected,
+      // Spelled out rather than the pill's own terse `yardım`: a screen
+      // reader user gets no warning glyph and no help palette, so the
+      // label is the only place the stakes can live.
+      label: 'yardıma ihtiyacı var',
+      onTap: onTap,
+      child: PressResponse(
+        child: Material(
+          color: selected ? AppColors.helpStrong : AppColors.helpSoft,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: kTapMin),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (selected) ...[
+                    Icon(Icons.check, size: 16, color: foreground),
+                    const SizedBox(width: AppSpacing.s1),
+                  ],
+                  Icon(
+                    selected
+                        ? Icons.warning_rounded
+                        : Icons.warning_amber_rounded,
+                    size: 16,
+                    color: foreground,
                   ),
-                ),
+                  const SizedBox(width: AppSpacing.s1),
+                  Flexible(
+                    child: Text(
+                      'yardım',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: foreground,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -719,13 +780,19 @@ class _PulsingDotState extends State<_PulsingDot>
   bool _reduceMotion = false;
 
   // Reduced motion: a static dot, no repeating animation at all. Reading
-  // MediaQuery here (not in build) both subscribes to changes and keeps
-  // build side-effect free — this reruns whenever disableAnimations
-  // flips, so the controller's lifecycle follows the platform setting.
+  // the gate here (not in build) both subscribes to changes and keeps
+  // build side-effect free — this reruns whenever the platform setting
+  // flips, so the controller's lifecycle follows it.
+  //
+  // Through TekirMotion rather than MediaQuery directly: this widget used
+  // to check `disableAnimations` alone and kept pulsing under a screen
+  // reader, which the state contract names as one condition alongside
+  // `accessibleNavigation`. That drift is exactly what the shared gate
+  // exists to prevent.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _reduceMotion = MediaQuery.of(context).disableAnimations;
+    _reduceMotion = TekirMotion.of(context).reduced;
     if (_reduceMotion) {
       _controller.stop();
     } else if (!_controller.isAnimating) {

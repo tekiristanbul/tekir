@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/states/submitting_button.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/validation/cat_name.dart';
 import '../data/cat_detail_api.dart';
@@ -122,28 +123,11 @@ class _EditCatNameSheetState extends ConsumerState<EditCatNameSheet> {
                   onSubmitted: (_) => _submit(),
                 ),
                 const SizedBox(height: AppSpacing.s4),
-                SizedBox(
-                  height: kTapMin,
-                  child: ElevatedButton(
-                    onPressed: _isSubmitting ? null : _submit,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: AppColors.primaryInk,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                    ),
-                    child: _isSubmitting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppColors.primaryInk,
-                            ),
-                          )
-                        : const Text('Kaydet'),
-                  ),
+                SubmittingButton(
+                  label: 'Kaydet',
+                  submittingLabel: 'Kaydediliyor',
+                  submitting: _isSubmitting,
+                  onPressed: _submit,
                 ),
               ],
             ),

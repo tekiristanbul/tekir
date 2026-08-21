@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/analytics/analytics.dart';
+import '../../../core/states/submitting_button.dart';
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/ui/auth_gate.dart';
 import 'report_notifier.dart';
@@ -135,32 +137,13 @@ class ReportSheet extends ConsumerWidget {
                   ),
                 ],
                 const SizedBox(height: AppSpacing.s4),
-                SizedBox(
-                  height: kTapMin,
-                  child: ElevatedButton(
-                    onPressed: state.canSubmit
-                        ? () => _submit(context, ref)
-                        : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: AppColors.primaryInk,
-                      disabledBackgroundColor: AppColors.lineStrong,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                      textStyle: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    child: state.isSubmitting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppColors.primaryInk,
-                            ),
-                          )
-                        : const Text('Gönder'),
-                  ),
+                SubmittingButton(
+                  label: 'Gönder',
+                  submittingLabel: 'Gönderiliyor',
+                  submitting: state.isSubmitting,
+                  onPressed: state.canSubmit
+                      ? () => _submit(context, ref)
+                      : null,
                 ),
               ],
             ),
@@ -335,8 +318,6 @@ Future<void> _openReportSheetAuthenticated(
     builder: (_) => ReportSheet(targetType: targetType, targetId: targetId),
   );
   if (submitted == true && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Bildirimin alındı, teşekkürler.')),
-    );
+    TekirSnack.show(context, 'Bildirimin alındı, teşekkürler.');
   }
 }
