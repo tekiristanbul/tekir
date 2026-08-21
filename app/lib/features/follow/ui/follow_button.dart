@@ -45,23 +45,38 @@ class FollowButton extends ConsumerWidget {
       followsProvider.select((s) => s.value?.contains(catId) ?? false),
     );
 
+    // Followed-ness is otherwise carried by a filled-vs-outline heart and
+    // a colour swap, neither of which a screen reader reports -- so it had
+    // no way to answer "am I following this cat?". `toggled` makes it a
+    // state, and the label says which cat-level action it is: this button
+    // sits beside an unlabelled back chevron on the same row.
+    final semanticsLabel = isFollowed ? 'Takip ediliyor' : 'Takip et';
+
     if (glass) {
-      return PressResponse(
-        child: Material(
-          color: Colors.white.withValues(alpha: 0.92),
-          shape: const CircleBorder(),
-          elevation: 2,
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onTap: () => _handleTap(context, ref),
-            child: SizedBox(
-              width: kTapMin,
-              height: kTapMin,
-              child: Center(
-                child: _FollowHeart(
-                  isFollowed: isFollowed,
-                  size: 18,
-                  color: isFollowed ? AppColors.primary : AppColors.ink,
+      return Semantics(
+        container: true,
+        excludeSemantics: true,
+        button: true,
+        toggled: isFollowed,
+        label: semanticsLabel,
+        onTap: () => _handleTap(context, ref),
+        child: PressResponse(
+          child: Material(
+            color: Colors.white.withValues(alpha: 0.92),
+            shape: const CircleBorder(),
+            elevation: 2,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () => _handleTap(context, ref),
+              child: SizedBox(
+                width: kTapMin,
+                height: kTapMin,
+                child: Center(
+                  child: _FollowHeart(
+                    isFollowed: isFollowed,
+                    size: 18,
+                    color: isFollowed ? AppColors.primary : AppColors.ink,
+                  ),
                 ),
               ),
             ),
@@ -70,29 +85,35 @@ class FollowButton extends ConsumerWidget {
       );
     }
 
-    return PressResponse(
-      child: SizedBox(
-        height: kTapMin,
-        child: OutlinedButton.icon(
-          onPressed: () => _handleTap(context, ref),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: isFollowed
-                ? AppColors.primaryStrong
-                : AppColors.ink,
-            side: BorderSide(
-              color: isFollowed ? AppColors.primary : AppColors.lineStrong,
+    // The labelled variant already announces its text, so it needs the
+    // state, not a name.
+    return Semantics(
+      container: true,
+      toggled: isFollowed,
+      child: PressResponse(
+        child: SizedBox(
+          height: kTapMin,
+          child: OutlinedButton.icon(
+            onPressed: () => _handleTap(context, ref),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: isFollowed
+                  ? AppColors.primaryStrong
+                  : AppColors.ink,
+              side: BorderSide(
+                color: isFollowed ? AppColors.primary : AppColors.lineStrong,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+              textStyle: const TextStyle(fontWeight: FontWeight.w600),
             ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppRadius.md),
+            icon: _FollowHeart(
+              isFollowed: isFollowed,
+              size: 18,
+              color: isFollowed ? AppColors.primaryStrong : AppColors.ink,
             ),
-            textStyle: const TextStyle(fontWeight: FontWeight.w600),
+            label: Text(isFollowed ? 'Takip ediliyor' : 'Takip et'),
           ),
-          icon: _FollowHeart(
-            isFollowed: isFollowed,
-            size: 18,
-            color: isFollowed ? AppColors.primaryStrong : AppColors.ink,
-          ),
-          label: Text(isFollowed ? 'Takip ediliyor' : 'Takip et'),
         ),
       ),
     );

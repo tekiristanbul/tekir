@@ -377,7 +377,15 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
                       foregroundColor: state.needsHelp
                           ? AppColors.helpInk
                           : AppColors.primaryInk,
-                      disabledBackgroundColor: AppColors.lineStrong,
+                      // The composer opens in this state, and its label
+                      // is what teaches the constraint ("pick a status
+                      // first"). Material's default disabled pair --
+                      // onSurface at 38% over lineStrong -- renders it at
+                      // 2.09:1, which is not a readable instruction. A
+                      // paler surface with full-strength muted reads as
+                      // inactive at 5.25:1 instead of illegible.
+                      disabledBackgroundColor: AppColors.surfaceAlt,
+                      disabledForegroundColor: AppColors.muted,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(AppRadius.md),
                       ),

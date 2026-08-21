@@ -13,7 +13,18 @@ class AppColors {
 
   static const ink = Color(0xFF2A1F1B);
   static const muted = Color(0xFF6E5A4C);
-  static const faint = Color(0xFFA5927E);
+  // Darkened from the prototype's #A5927E, which measured 2.67:1 on [bg]
+  // and 2.42:1 on [surfaceAlt] — well under the 4.5:1 body-text floor, on
+  // a token that carries load-bearing text: every timeline timestamp, the
+  // cat's area label, the inactive segment label, and the line confirming
+  // a contribution was saved. Outdoors in Istanbul daylight, on the phone
+  // people actually feed cats with, none of that was readable.
+  //
+  // Same hue and saturation, lower lightness only, so the palette's warmth
+  // is unchanged: 4.98:1 on [bg], 4.52:1 on [surfaceAlt], 5.59:1 on
+  // [surface]. Still lighter than [muted] (5.25:1 on surfaceAlt), so the
+  // two-step subordination this palette relies on survives.
+  static const faint = Color(0xFF766552);
 
   static const primary = Color(0xFFA44732);
   static const primaryStrong = Color(0xFF773225);

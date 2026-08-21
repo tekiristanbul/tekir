@@ -793,30 +793,42 @@ class _BackCircleButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.surface,
-      shape: const CircleBorder(),
-      elevation: 2,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: () {
-          // add-cat's success path (and a duplicate-candidate "bu zaten var"
-          // pick) lands here via context.go, which replaces the whole stack
-          // instead of pushing — so there is nothing to pop in that case.
-          // Fall back to the map, the app's root destination.
-          if (context.canPop()) {
-            context.pop();
-          } else {
-            context.go('/');
-          }
-        },
-        child: const SizedBox(
-          width: kTapMin,
-          height: kTapMin,
-          child: Icon(Icons.chevron_left, color: AppColors.ink),
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      // A bare chevron glyph announces as "button" and nothing else. This
+      // is also the only visible way back on the screen, so leaving it
+      // unnamed left a screen reader user with no exit they could find.
+      label: 'Geri',
+      onTap: () => _goBack(context),
+      child: Material(
+        color: AppColors.surface,
+        shape: const CircleBorder(),
+        elevation: 2,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () => _goBack(context),
+          child: const SizedBox(
+            width: kTapMin,
+            height: kTapMin,
+            child: Icon(Icons.chevron_left, color: AppColors.ink),
+          ),
         ),
       ),
     );
+  }
+
+  // add-cat's success path (and a duplicate-candidate "bu zaten var" pick)
+  // lands here via context.go, which replaces the whole stack instead of
+  // pushing — so there is nothing to pop in that case. Fall back to the
+  // map, the app's root destination.
+  void _goBack(BuildContext context) {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/');
+    }
   }
 }
 
@@ -1295,60 +1307,73 @@ class _ProfileSegment extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PressResponse(
-      child: Material(
-        color: isOn ? AppColors.surface : Colors.transparent,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        elevation: isOn ? 1 : 0,
-        child: InkWell(
+    // `geçmiş` and `medya` announced identically whichever was open: the
+    // active one is carried by a white fill and one step of elevation,
+    // neither of which reaches a screen reader.
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      selected: isOn,
+      label: count == null ? label : '$label, $count',
+      onTap: onTap,
+      child: PressResponse(
+        child: Material(
+          color: isOn ? AppColors.surface : Colors.transparent,
           borderRadius: BorderRadius.circular(AppRadius.md),
-          onTap: onTap,
-          // A minimum, not a fixed, height — mirrors _UpdateBar's own
-          // constraint — so the label can wrap taller at large system text
-          // scale instead of clipping or overflowing the segment.
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: kTapMin),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.s2,
-                vertical: AppSpacing.s2,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    child: Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w800,
-                        color: isOn ? AppColors.ink : AppColors.faint,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (count != null) ...[
-                    const SizedBox(width: 7),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 7,
-                        vertical: 1,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isOn ? AppColors.primary : AppColors.line,
-                        borderRadius: BorderRadius.circular(AppRadius.full),
-                      ),
+          elevation: isOn ? 1 : 0,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            onTap: onTap,
+            // A minimum, not a fixed, height — mirrors _UpdateBar's own
+            // constraint — so the label can wrap taller at large system text
+            // scale instead of clipping or overflowing the segment.
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: kTapMin),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s2,
+                  vertical: AppSpacing.s2,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Flexible(
                       child: Text(
-                        '$count',
+                        label,
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 13.5,
                           fontWeight: FontWeight.w800,
-                          color: isOn ? AppColors.primaryInk : AppColors.faint,
+                          color: isOn ? AppColors.ink : AppColors.faint,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (count != null) ...[
+                      const SizedBox(width: 7),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isOn ? AppColors.primary : AppColors.line,
+                          borderRadius: BorderRadius.circular(AppRadius.full),
+                        ),
+                        child: Text(
+                          '$count',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: isOn
+                                ? AppColors.primaryInk
+                                : AppColors.faint,
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),

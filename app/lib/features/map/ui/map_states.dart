@@ -305,7 +305,10 @@ class _CardButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onTap != null;
-    final ink = enabled ? foreground : foreground.withValues(alpha: 0.45);
+    // Disabled dims the surface, never the label. Fading both put "alani
+    // genislet" at 1.95:1 when the camera is already at minimum zoom --
+    // the one moment the button has something to say.
+    final ink = foreground;
     return Material(
       color: enabled ? background : background.withValues(alpha: 0.55),
       borderRadius: BorderRadius.circular(AppRadius.md + 2),
