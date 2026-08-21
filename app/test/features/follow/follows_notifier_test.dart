@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -49,9 +51,15 @@ class _FakeFollowsApi implements FollowsApi {
   int followCalls = 0;
   int unfollowCalls = 0;
 
+  /// When set, `follow` waits on this instead of returning immediately —
+  /// the in-flight window an optimistic toggle is supposed to fill.
+  Completer<void>? followGate;
+
   @override
   Future<void> follow(String catId) async {
     followCalls++;
+    final gate = followGate;
+    if (gate != null) await gate.future;
     if (followError != null) throw followError!;
   }
 
@@ -186,4 +194,70 @@ void main() {
     await container.read(sessionProvider.notifier).save(_session);
     expect(await container.read(followsProvider.future), {'cat-1'});
   });
+
+  test('toggle flips local state before the request resolves', () async {
+    final api = _FakeFollowsApi()..followGate = Completer<void>();
+    final container = _containerWith(
+      session: _FakeSessionIdentityService(initial: _session),
+      followsApi: api,
+    );
+    addTearDown(container.dispose);
+    await container.read(sessionProvider.future);
+    await container.read(followsProvider.future);
+
+    final pending = container.read(followsProvider.notifier).toggle('cat-1');
+
+    // The request has been issued and has not answered, and the cat already
+    // reads as followed: this is the same-frame feedback the state contract
+    // requires of every user-triggered mutation.
+    expect(api.followCalls, 1);
+    expect(container.read(followsProvider).value, {'cat-1'});
+
+    api.followGate!.complete();
+    await pending;
+    expect(container.read(followsProvider).value, {'cat-1'});
+  });
+
+  test('a read issued before a confirmed toggle never undoes it', () async {
+    // The resumed-intent shape: a fetch is in flight, the user follows,
+    // and the fetch answers from a moment before that follow existed.
+    final api = _FakeFollowsApi();
+    final container = _containerWith(
+      session: _FakeSessionIdentityService(initial: _session),
+      followsApi: api,
+    );
+    addTearDown(container.dispose);
+    await container.read(sessionProvider.future);
+    await container.read(followsProvider.future);
+
+    await container.read(followsProvider.notifier).toggle('cat-1');
+    // Re-running build is what a session change does; the api still does
+    // not know about the follow.
+    container.invalidate(followsProvider);
+
+    expect(await container.read(followsProvider.future), {'cat-1'});
+  });
+
+  test(
+    'a failed toggle drops the local decision as well as the state',
+    () async {
+      final api = _FakeFollowsApi()..followError = Exception('boom');
+      final container = _containerWith(
+        session: _FakeSessionIdentityService(initial: _session),
+        followsApi: api,
+      );
+      addTearDown(container.dispose);
+      await container.read(sessionProvider.future);
+      await container.read(followsProvider.future);
+
+      await expectLater(
+        container.read(followsProvider.notifier).toggle('cat-1'),
+        throwsA(isA<Exception>()),
+      );
+
+      expect(container.read(followsProvider).value, isEmpty);
+      container.invalidate(followsProvider);
+      expect(await container.read(followsProvider.future), isEmpty);
+    },
+  );
 }
