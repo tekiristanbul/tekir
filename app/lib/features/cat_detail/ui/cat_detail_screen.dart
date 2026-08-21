@@ -169,6 +169,22 @@ class _CatDetailBody extends ConsumerWidget {
     return Stack(
       children: [
         _buildScroll(context, ref, pending),
+        // Pinned, not scrolled. These used to be the ListView's first
+        // child, so scrolling took the only visible way back off screen
+        // entirely — on a smaller phone within one flick. The system back
+        // gesture still worked; nothing on screen said so.
+        Positioned(
+          top: MediaQuery.paddingOf(context).top + AppSpacing.s3,
+          left: AppSpacing.s4,
+          right: AppSpacing.s4,
+          child: Row(
+            children: [
+              const _BackCircleButton(),
+              const Spacer(),
+              FollowButton(catId: detail.id, source: openSource, glass: true),
+            ],
+          ),
+        ),
         // The binding design's fixed action bar: the screen's single
         // primary action floats over the scroll on a gradient into the
         // background, so it is reachable from any scroll position.
@@ -273,19 +289,9 @@ class _ProfileHeader extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Row(
-            children: [
-              _BackCircleButton(),
-              const Spacer(),
-              // Still the icon-only round variant: it now sits on the
-              // screen's own background rather than on a photo, but keeping
-              // it round preserves the pairing with the back control beside
-              // it and keeps the header from growing a labelled button the
-              // old design never had here.
-              FollowButton(catId: detail.id, source: openSource, glass: true),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.s4),
+          // Clearance for the pinned back/follow row above this
+          // (_CatDetailBody), which used to live here and scroll away.
+          const SizedBox(height: kTapMin + AppSpacing.s4),
           // The other end of the map's marker-preview flight
           // (core/motion/hero_tags.dart). The shuttle is authored rather
           // than left to the default, because the two ends are different
@@ -1359,7 +1365,10 @@ class _ProfileSegment extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (count != null) ...[
+                    // Zero is not worth a badge: a filled pill reading
+                    // "0" reads as an unread count. The avatar's own media
+                    // badge already hides at zero; this one did not.
+                    if (count != null && count! > 0) ...[
                       const SizedBox(width: 7),
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -1921,7 +1930,6 @@ class _TimelineAvatar extends StatelessWidget {
         ? _palette[trimmed.codeUnitAt(0) % _palette.length]
         : AppColors.faint;
     return Container(
-      margin: const EdgeInsets.only(top: 2),
       width: 34,
       height: 34,
       alignment: Alignment.center,
@@ -1970,7 +1978,11 @@ class _TimelineItem extends StatelessWidget {
                   Expanded(
                     child: Container(
                       width: 1.5,
-                      margin: const EdgeInsets.only(top: 6),
+                      // Symmetric, so the connector sits centred in the
+                      // gap between two avatars. It had 6 px above and the
+                      // row's own 12 px below, which read as a rail
+                      // leaning toward the next entry.
+                      margin: const EdgeInsets.symmetric(vertical: 6),
                       color: AppColors.line,
                     ),
                   ),
@@ -1980,7 +1992,7 @@ class _TimelineItem extends StatelessWidget {
           const SizedBox(width: AppSpacing.s3),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.s3),
+              padding: const EdgeInsets.only(bottom: AppSpacing.s5),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -2047,7 +2059,11 @@ class _TimelineItem extends StatelessWidget {
                     ],
                   ),
                   if (update.comment != null) ...[
-                    const SizedBox(height: 4),
+                    // Bound to the entry above it, not floating between
+                    // two: this was 4 px from its own chip and 12 px from
+                    // the next avatar, so which entry a free-text note
+                    // belonged to was genuinely ambiguous.
+                    const SizedBox(height: AppSpacing.s2),
                     // A help-carrying entry's comment is its help note —
                     // set apart on the soft help tint (the design's
                     // `.note.help` treatment), while an ordinary comment

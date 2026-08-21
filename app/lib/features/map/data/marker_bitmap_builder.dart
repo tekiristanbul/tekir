@@ -12,8 +12,13 @@ import '../../../core/theme/app_theme.dart';
 /// flutter_map), so a cat's photo has to be fetched, cropped into a circle,
 /// and encoded into a [BitmapDescriptor] here. Results are cached per cat,
 /// since the marker set is rebuilt on every fetched cat-list change, not
-/// just once per cat. Cluster bubbles themselves are rendered natively by
-/// the sdk (google_maps_flutter's ClusterManager) and aren't built here.
+/// just once per cat.
+///
+/// Cluster bubbles are NOT built here, and cannot be: google_maps_flutter's
+/// [ClusterManager] exposes only `clusterManagerId` and `onClusterTap`, so
+/// the bubble is drawn by the native sdk in its own blue. Matching them to
+/// this palette would mean dropping native clustering for a hand-rolled
+/// one — a real change to how the map scales, not a paint job.
 class MarkerBitmapBuilder {
   MarkerBitmapBuilder({Dio? photoClient}) : _photoClient = photoClient ?? Dio();
 

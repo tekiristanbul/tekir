@@ -162,6 +162,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   }
 
   Future<void> _onClusterTap(Cluster cluster) async {
+    unawaited(TekirHaptics.acknowledge());
     final controller = _controller;
     if (controller == null) return;
     final currentZoom = await controller.getZoomLevel();
@@ -180,10 +181,52 @@ class _MapScreenState extends ConsumerState<MapScreen>
   void _onCatSelected(CatMarker cat) {
     // Fired here, synchronously, rather than after the marker set is
     // rebuilt: the pin's own selected state is a re-rendered bitmap that
-    // lands a frame or more later and is largely hidden behind the sheet
-    // anyway, so the hand is what actually acknowledges the tap.
+    // lands a frame or more later, so the hand is what actually
+    // acknowledges the tap.
     unawaited(TekirHaptics.acknowledge());
     ref.read(catsMapProvider.notifier).selectCat(cat);
+    unawaited(_liftSelectedPinClearOfSheet(cat));
+  }
+
+  /// Slides the camera so the tapped pin sits above the preview sheet
+  /// rather than behind it.
+  ///
+  /// The sheet covers roughly the bottom third of the screen, and a pin
+  /// tapped low — or near the right edge, where a pin can sit half off the
+  /// map — was then hidden by the surface describing it. Nothing marked the
+  /// connection between the two.
+  ///
+  /// Deliberately a nudge, not a recentre: moving the pin to the middle of
+  /// the remaining space would throw away the user's own framing of the
+  /// neighbourhood, which is the thing they were reading when they tapped.
+  Future<void> _liftSelectedPinClearOfSheet(CatMarker cat) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final size = MediaQuery.sizeOf(context);
+    // The sheet's own height is not known until it lays out, and this runs
+    // before it opens; a third of the screen is what it occupies at the
+    // content sizes this sheet can reach.
+    final sheetHeight = size.height / 3;
+    final screenPoint = await controller.getScreenCoordinate(
+      LatLng(cat.lat, cat.lng),
+    );
+    if (!mounted) return;
+
+    final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final pinY = screenPoint.y / devicePixelRatio;
+    final pinX = screenPoint.x / devicePixelRatio;
+    // The band the sheet will cover, plus the pin's own height so a pin
+    // resting exactly on the sheet's edge still clears it.
+    final safeBottom = size.height - sheetHeight - 48;
+    final dy = pinY > safeBottom ? pinY - safeBottom : 0.0;
+    // Horizontal only when the pin is genuinely near an edge.
+    const edgeMargin = 56.0;
+    final dx = pinX > size.width - edgeMargin
+        ? pinX - (size.width - edgeMargin)
+        : (pinX < edgeMargin ? pinX - edgeMargin : 0.0);
+    if (dy == 0 && dx == 0) return;
+
+    await controller.animateCamera(CameraUpdate.scrollBy(dx, dy));
   }
 
   void _toggleHelpFilter() {
