@@ -76,10 +76,12 @@ class CatDetail {
   /// would have inherited the same failure. Mutate this model through
   /// `copyWith`, never by re-invoking the constructor with a subset.
   ///
-  /// A null argument means "leave unchanged", never "set to null": nothing
-  /// in this app needs to clear one of these fields locally, and a
-  /// sentinel-based API would buy that at the cost of every call site's
-  /// readability.
+  /// A null argument means "leave unchanged", never "set to null". The one
+  /// field this app does need to clear locally — [activeAlert], when the
+  /// author removes their own help mark and the re-fetch that would have
+  /// replaced it failed — has its own [clearActiveAlert] flag, following
+  /// `CatDetailState.copyWith`'s own `clearError`/`clearNextCursor`
+  /// convention rather than making every other call site read a sentinel.
   CatDetail copyWith({
     String? name,
     double? lat,
@@ -91,6 +93,7 @@ class CatDetail {
     DateTime? lastFedAt,
     DateTime? lastWaterAt,
     ActiveAlert? activeAlert,
+    bool clearActiveAlert = false,
     int? mediaCount,
     bool? isOwner,
     String? ownerUserId,
@@ -107,7 +110,7 @@ class CatDetail {
       lastSeenAt: lastSeenAt ?? this.lastSeenAt,
       lastFedAt: lastFedAt ?? this.lastFedAt,
       lastWaterAt: lastWaterAt ?? this.lastWaterAt,
-      activeAlert: activeAlert ?? this.activeAlert,
+      activeAlert: clearActiveAlert ? null : (activeAlert ?? this.activeAlert),
       mediaCount: mediaCount ?? this.mediaCount,
       isOwner: isOwner ?? this.isOwner,
       ownerUserId: ownerUserId ?? this.ownerUserId,
@@ -126,6 +129,14 @@ class CatDetail {
   /// Only ever moves a timestamp forward. A correction or an out-of-order
   /// arrival can carry an older `created_at`, and the header answers "when
   /// was this cat last fed" — never "which entry landed most recently".
+  ///
+  /// Forward-only also means this cannot undo itself: correcting an entry
+  /// to drop `fed`, or deleting it outright, must not leave the header
+  /// still claiming the cat was fed. Recomputing that locally is not
+  /// possible — the previous `fed` entry may be pages down the timeline or
+  /// not loaded at all — so `CatDetailNotifier` re-reads the detail from
+  /// the server on both paths instead. This method is only ever the fast
+  /// path for an entry arriving.
   ///
   /// The keys mirror `catUpdateStatusOptions`; an entry carrying anything
   /// else (a future or legacy status) moves nothing rather than guessing
