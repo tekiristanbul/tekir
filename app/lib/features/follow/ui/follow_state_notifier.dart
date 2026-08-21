@@ -30,10 +30,23 @@ class FollowsNotifier extends AsyncNotifier<Set<String>> {
   /// unmerged would silently undo what the user just did — visible in the
   /// resumed-intent path, where signing in starts a fetch and the follow
   /// it resumes lands after that fetch was issued but before it returns.
-  /// A confirmed mutation is newer than any read that predates it, so it
-  /// wins the merge. Entries are dropped only when the mutation fails, or
-  /// when the account changes and the whole map stops applying.
-  final _confirmedLocally = <String, bool>{};
+  /// A local decision is newer than any read that predates it, so it wins
+  /// the merge. Entries are dropped only when the mutation fails, or when
+  /// the account changes and the whole map stops applying.
+  final _decidedLocally = <String, bool>{};
+
+  /// The newest [toggle] still in flight for each cat id.
+  ///
+  /// Two taps on the same heart produce two requests whose completion
+  /// order is not the tap order, and only the newest tap is the user's
+  /// actual intent. Without this ticket an older request failing would
+  /// revert to *its* idea of "before" — undoing the newer tap, and
+  /// deleting the newer tap's entry from [_decidedLocally] on the way out,
+  /// so the ui ended up disagreeing with the server for the rest of the
+  /// session. A superseded attempt now cleans up nothing and reverts
+  /// nothing; it still throws, because it genuinely failed.
+  final _latestAttempt = <String, int>{};
+  int _attempts = 0;
 
   @override
   Future<Set<String>> build() async {
@@ -41,7 +54,8 @@ class FollowsNotifier extends AsyncNotifier<Set<String>> {
     if (session == null) {
       // A guest has no follows cache, and the next account must not inherit
       // the previous one's local decisions.
-      _confirmedLocally.clear();
+      _decidedLocally.clear();
+      _latestAttempt.clear();
       return const {};
     }
     try {
@@ -56,9 +70,9 @@ class FollowsNotifier extends AsyncNotifier<Set<String>> {
   }
 
   Set<String> _merge(Set<String> remote) {
-    if (_confirmedLocally.isEmpty) return remote;
+    if (_decidedLocally.isEmpty) return remote;
     final merged = {...remote};
-    _confirmedLocally.forEach((catId, followed) {
+    _decidedLocally.forEach((catId, followed) {
       if (followed) {
         merged.add(catId);
       } else {
@@ -81,10 +95,16 @@ class FollowsNotifier extends AsyncNotifier<Set<String>> {
   /// so a concurrent toggle on a different cat is never undone as a side
   /// effect, then rethrows the mapped [FollowsApi] exception so the caller
   /// (e.g. a follow button) can surface [followActionErrorMessageTr].
+  ///
+  /// A failure that has already been superseded by a newer tap on the same
+  /// cat reverts nothing at all — see [_latestAttempt]. It still throws:
+  /// that request did fail, and the caller decides what to say about it.
   Future<void> toggle(String catId) async {
     final current = state.value ?? const <String>{};
     final wasFollowing = current.contains(catId);
-    _confirmedLocally[catId] = !wasFollowing;
+    final attempt = ++_attempts;
+    _latestAttempt[catId] = attempt;
+    _decidedLocally[catId] = !wasFollowing;
     state = AsyncData(
       wasFollowing ? ({...current}..remove(catId)) : {...current, catId},
     );
@@ -97,13 +117,17 @@ class FollowsNotifier extends AsyncNotifier<Set<String>> {
         await api.follow(catId);
       }
     } catch (_) {
-      _confirmedLocally.remove(catId);
-      final latest = state.value ?? const <String>{};
-      state = AsyncData(
-        wasFollowing ? {...latest, catId} : ({...latest}..remove(catId)),
-      );
+      if (_latestAttempt[catId] == attempt) {
+        _latestAttempt.remove(catId);
+        _decidedLocally.remove(catId);
+        final latest = state.value ?? const <String>{};
+        state = AsyncData(
+          wasFollowing ? {...latest, catId} : ({...latest}..remove(catId)),
+        );
+      }
       rethrow;
     }
+    if (_latestAttempt[catId] == attempt) _latestAttempt.remove(catId);
   }
 }
 
