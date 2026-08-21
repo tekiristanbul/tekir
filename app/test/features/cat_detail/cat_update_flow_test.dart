@@ -1101,6 +1101,54 @@ void main() {
     );
 
     testWidgets(
+      'the help mark carries its armed state without relying on colour',
+      (tester) async {
+        await _pump(tester, api: _FakeCatDetailApi());
+        await _openComposer(tester);
+
+        // Idle: the warning glyph is the outline weight, and there is no
+        // check beside it — the pill reads as an offer, not a decision.
+        expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.warning_rounded), findsNothing);
+        final idleHelp = find.ancestor(
+          of: find.text('yardım'),
+          matching: find.byType(Semantics),
+        );
+        expect(
+          tester
+              .widgetList<Semantics>(idleHelp)
+              .any((s) => s.properties.toggled == false),
+          isTrue,
+          reason:
+              'a screen reader is told this is a toggle, and that it is off',
+        );
+
+        await tester.tap(find.text('yardım'));
+        await tester.pump();
+
+        // Armed: three independent signals, none of them colour — the
+        // glyph gains weight, a check joins it, and the toggle state is
+        // announced. This is the one control that reaches other people's
+        // phones, and beyond a 10-minute correction window it cannot be
+        // cleared at all (docs/product/alerts.md), so "am I armed?" must
+        // survive greyscale and a screen reader.
+        expect(find.byIcon(Icons.warning_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+        expect(find.byIcon(Icons.check), findsOneWidget);
+        final armedHelp = find.ancestor(
+          of: find.text('yardım'),
+          matching: find.byType(Semantics),
+        );
+        expect(
+          tester
+              .widgetList<Semantics>(armedHelp)
+              .any((s) => s.properties.toggled == true),
+          isTrue,
+        );
+      },
+    );
+
+    testWidgets(
       'a help-only submit sends the flag without statuses and lands as one timeline event with the active banner',
       (tester) async {
         final api = _FakeCatDetailApi()

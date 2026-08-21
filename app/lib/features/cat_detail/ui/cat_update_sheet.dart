@@ -445,40 +445,53 @@ class _StatusOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PressResponse(
-      child: Material(
-        color: selected ? AppColors.primarySoft : AppColors.surfaceAlt,
-        borderRadius: BorderRadius.circular(AppRadius.full),
-        child: InkWell(
+    // A pill's selected state is otherwise a fill colour and a check
+    // glyph, neither of which a screen reader reports. `toggled` is what
+    // makes "Mama verildi, selected" announce as a state rather than as a
+    // plain button — the same treatment the map's own help filter chip
+    // already uses.
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      toggled: selected,
+      label: label,
+      onTap: onTap,
+      child: PressResponse(
+        child: Material(
+          color: selected ? AppColors.primarySoft : AppColors.surfaceAlt,
           borderRadius: BorderRadius.circular(AppRadius.full),
-          onTap: onTap,
-          child: Container(
-            constraints: const BoxConstraints(minHeight: kTapMin),
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
-            alignment: Alignment.center,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (selected) ...[
-                  const Icon(
-                    Icons.check,
-                    size: 16,
-                    color: AppColors.primaryStrong,
-                  ),
-                  const SizedBox(width: AppSpacing.s1),
-                ],
-                Flexible(
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: selected
-                          ? AppColors.primaryStrong
-                          : AppColors.muted,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: kTapMin),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (selected) ...[
+                    const Icon(
+                      Icons.check,
+                      size: 16,
+                      color: AppColors.primaryStrong,
+                    ),
+                    const SizedBox(width: AppSpacing.s1),
+                  ],
+                  Flexible(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: selected
+                            ? AppColors.primaryStrong
+                            : AppColors.muted,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -491,6 +504,20 @@ class _StatusOption extends StatelessWidget {
 /// cat-profile.html) — the help color family, never the primary accent,
 /// in both states so it always reads apart from the work-done statuses
 /// beside it: soft help tint unselected, deep help red selected.
+///
+/// This is the only control in tekir that reaches other people's phones
+/// (docs/product/alerts.md: marking help notifies the cat's followers),
+/// and beyond a 10-minute author correction window it cannot be cleared
+/// at all — expiry at 72 hours is the only other way out. So its selected
+/// state may not rest on fill colour alone, the way it used to: colour is
+/// invisible to a colour-blind user, to a screen reader, and in
+/// greyscale, and "did I just arm this?" is not a question this control
+/// is allowed to leave open.
+///
+/// Three independent signals now carry it, matching how the work-done
+/// pills beside it already behave rather than inventing a treatment:
+/// the [Icons.check] glyph `_StatusOption` uses, the warning glyph
+/// gaining weight (outline when idle, filled when armed), and the fill.
 class _HelpOption extends StatelessWidget {
   const _HelpOption({required this.selected, required this.onTap});
 
@@ -499,38 +526,54 @@ class _HelpOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PressResponse(
-      child: Material(
-        color: selected ? AppColors.helpStrong : AppColors.helpSoft,
-        borderRadius: BorderRadius.circular(AppRadius.full),
-        child: InkWell(
+    final foreground = selected ? AppColors.helpInk : AppColors.helpStrong;
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      toggled: selected,
+      // Spelled out rather than the pill's own terse `yardım`: a screen
+      // reader user gets no warning glyph and no help palette, so the
+      // label is the only place the stakes can live.
+      label: 'yardıma ihtiyacı var',
+      onTap: onTap,
+      child: PressResponse(
+        child: Material(
+          color: selected ? AppColors.helpStrong : AppColors.helpSoft,
           borderRadius: BorderRadius.circular(AppRadius.full),
-          onTap: onTap,
-          child: Container(
-            constraints: const BoxConstraints(minHeight: kTapMin),
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
-            alignment: Alignment.center,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.warning_amber_rounded,
-                  size: 16,
-                  color: selected ? AppColors.helpInk : AppColors.helpStrong,
-                ),
-                const SizedBox(width: AppSpacing.s1),
-                Flexible(
-                  child: Text(
-                    'yardım',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: selected
-                          ? AppColors.helpInk
-                          : AppColors.helpStrong,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: kTapMin),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (selected) ...[
+                    Icon(Icons.check, size: 16, color: foreground),
+                    const SizedBox(width: AppSpacing.s1),
+                  ],
+                  Icon(
+                    selected
+                        ? Icons.warning_rounded
+                        : Icons.warning_amber_rounded,
+                    size: 16,
+                    color: foreground,
+                  ),
+                  const SizedBox(width: AppSpacing.s1),
+                  Flexible(
+                    child: Text(
+                      'yardım',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: foreground,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
