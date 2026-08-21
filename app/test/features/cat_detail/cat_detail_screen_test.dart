@@ -394,16 +394,25 @@ void main() {
     },
   );
 
-  testWidgets('empty history: shows the turkish empty state, not an error', (
-    tester,
-  ) async {
-    await _pump(
-      tester,
-      CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
-    );
+  testWidgets(
+    'empty history: an invitation with one primary action, not an error',
+    (tester) async {
+      await _pump(
+        tester,
+        CatDetailState(detail: _detail, updates: const [], hasLoadedOnce: true),
+      );
 
-    expect(find.text('Henüz güncelleme yok'), findsOneWidget);
-  });
+      // Contract (docs/design/app-states.md, global rules): the title says
+      // what happened, the sub-line says why it matters, and there is
+      // exactly one primary action. This is the state a just-created cat
+      // lands in.
+      expect(find.text('henüz güncelleme yok'), findsOneWidget);
+      expect(find.textContaining('ilk güncellemeyi sen ekle'), findsOneWidget);
+      expect(find.text('güncelleme ekle'), findsOneWidget);
+      // Never the help palette: emptiness is not a failure.
+      expect(find.textContaining('hata'), findsNothing);
+    },
+  );
 
   testWidgets(
     'missing photo: falls back to a branded placeholder in the same circular '
@@ -1415,7 +1424,12 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.text('Henüz medya yok'), findsOneWidget);
+      // An empty archive is an invitation too, with a quiet action rather
+      // than a brick one: this is a secondary tab, and the screen's one
+      // primary already lives in the fixed bar below.
+      expect(find.text('henüz fotoğraf yok'), findsOneWidget);
+      expect(find.textContaining('fotoğraf veya video'), findsOneWidget);
+      expect(find.text('güncelleme ekle'), findsOneWidget);
     });
 
     // ── cover photo change (issue #156) ─────

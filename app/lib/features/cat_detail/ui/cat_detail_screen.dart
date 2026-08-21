@@ -1177,7 +1177,7 @@ class _HistoryMediaSectionState extends ConsumerState<_HistoryMediaSection> {
           const SizedBox(height: AppSpacing.s3),
         ],
         if (widget.updates.isEmpty && widget.pending == null)
-          const _EmptyHistory()
+          _EmptyHistory(catId: widget.catId)
         else if (widget.updates.isNotEmpty) ...[
           for (var i = 0; i < widget.updates.length; i++)
             _TimelineItem(
@@ -1210,10 +1210,13 @@ class _HistoryMediaSectionState extends ConsumerState<_HistoryMediaSection> {
           ),
         ),
       ),
-      error: (_, _) => const _EmptyMedia(message: 'Medya yüklenemedi'),
+      error: (_, _) => _EmptyMedia(
+        catId: widget.catId,
+        onRetry: () => ref.invalidate(catMediaProvider(widget.catId)),
+      ),
       data: (items) {
         if (items.isEmpty) {
-          return const _EmptyMedia(message: 'Henüz medya yok');
+          return _EmptyMedia(catId: widget.catId);
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1582,27 +1585,99 @@ class _ReportMediaBadge extends ConsumerWidget {
   }
 }
 
-class _EmptyMedia extends StatelessWidget {
-  const _EmptyMedia({required this.message});
+/// The media tab with nothing in it, and the same tab when its own read
+/// fails — two situations that must not look alike, which is why the
+/// failure keeps its retry and the emptiness gets an invitation.
+///
+/// The invitation's action stays quiet rather than brick: this is a
+/// secondary tab, and the screen's one primary action already lives in
+/// the fixed bar below (contract: one primary, an optional secondary that
+/// stays visually quiet).
+class _EmptyMedia extends ConsumerWidget {
+  const _EmptyMedia({required this.catId, this.onRetry});
 
-  final String message;
+  final String catId;
+
+  /// Set when this is a failed read rather than an empty archive.
+  final VoidCallback? onRetry;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final failed = onRetry != null;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.s6),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.s4,
+        AppSpacing.s5,
+        AppSpacing.s4,
+        AppSpacing.s6,
+      ),
+      child: Column(
         children: [
-          const Icon(
-            Icons.photo_library_outlined,
-            color: AppColors.faint,
-            size: 22,
+          DecoratedBox(
+            decoration: const BoxDecoration(
+              color: AppColors.surfaceAlt,
+              shape: BoxShape.circle,
+            ),
+            child: SizedBox(
+              width: 88,
+              height: 88,
+              child: Icon(
+                failed
+                    ? Icons.cloud_off_outlined
+                    : Icons.photo_library_outlined,
+                size: 34,
+                color: AppColors.faint,
+              ),
+            ),
           ),
-          const SizedBox(width: AppSpacing.s3),
-          Expanded(
+          const SizedBox(height: AppSpacing.s5),
+          Text(
+            failed ? 'medya yüklenemedi' : 'henüz fotoğraf yok',
+            textAlign: TextAlign.center,
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontSize: 21, height: 1.3),
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
             child: Text(
-              message,
-              style: const TextStyle(color: AppColors.muted),
+              failed
+                  ? 'bağlantını kontrol edip tekrar dene.'
+                  : 'güncelleme paylaşırken fotoğraf veya video '
+                        'ekleyebilirsin.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.faint,
+                height: 1.6,
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Material(
+            color: AppColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              onTap:
+                  onRetry ?? () => openCatUpdateComposer(context, ref, catId),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: kTapMin),
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s5,
+                  vertical: AppSpacing.s3,
+                ),
+                child: Text(
+                  failed ? 'tekrar dene' : 'güncelleme ekle',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.muted,
+                  ),
+                ),
+              ),
             ),
           ),
         ],
@@ -1654,7 +1729,9 @@ class _UpdateBar extends ConsumerWidget {
                 minHeight: kTapMin,
               ),
               child: ElevatedButton(
-                onPressed: busy ? null : () => _gatedOpenComposer(context, ref),
+                onPressed: busy
+                    ? null
+                    : () => openCatUpdateComposer(context, ref, catId),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: AppColors.primaryInk,
@@ -1674,43 +1751,58 @@ class _UpdateBar extends ConsumerWidget {
       ),
     );
   }
+}
 
-  // Gate-at-intent (issue #65): the composition sheet may not open before
-  // authentication succeeds. AuthGate itself is the only thing that
-  // decides whether to show its prompt — already-authenticated callers
-  // fall straight through with no extra ui.
+/// Opens the update composer for [catId], gated at the point of intent.
+///
+/// File-level rather than private to [_UpdateBar] because the screen now
+/// has two doors onto the same action: the fixed bar, and the empty
+/// history state's own invitation. They must be the same door — same auth
+/// gate, same draft reset, same confirmation — or the empty state would be
+/// a second, subtly different way to post an update.
+///
+/// Gate-at-intent (issue #65): the composition sheet may not open before
+/// authentication succeeds. AuthGate itself is the only thing that decides
+/// whether to show its prompt — already-authenticated callers fall
+/// straight through with no extra ui.
+Future<void> openCatUpdateComposer(
+  BuildContext context,
+  WidgetRef ref,
+  String catId,
+) {
+  return AuthGate.require(
+    context,
+    ref,
+    contextText: 'Güncelleme paylaşmak için giriş yap',
+    intent: AnalyticsAuthIntent.ordinaryUpdate,
+    onAuthenticated: () => unawaited(_openComposer(context, ref, catId)),
+  );
+}
 
-  Future<void> _gatedOpenComposer(BuildContext context, WidgetRef ref) {
-    return AuthGate.require(
+Future<void> _openComposer(
+  BuildContext context,
+  WidgetRef ref,
+  String catId,
+) async {
+  // Reset synchronously, before the sheet ever mounts (issue #202) — a
+  // dismissed-without-submitting draft, including any picked media, must
+  // never be visible even for a single frame of a fresh open, whether
+  // that's this same cat again or (via each cat's own composer instance)
+  // a different one. See CatUpdateComposerNotifier.reset's own doc for
+  // why a failed attempt's draft is the one exception kept whole.
+  ref.read(catUpdateComposerProvider(catId).notifier).reset();
+  final result = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => CatUpdateSheet(catId: catId),
+  );
+  // Only a synchronous help submission pops true — an ordinary one pops
+  // immediately and its optimistic row carries the feedback instead.
+  if (result == true && context.mounted) {
+    ScaffoldMessenger.of(
       context,
-      ref,
-      contextText: 'Güncelleme paylaşmak için giriş yap',
-      intent: AnalyticsAuthIntent.ordinaryUpdate,
-      onAuthenticated: () => unawaited(_openComposer(context, ref)),
-    );
-  }
-
-  Future<void> _openComposer(BuildContext context, WidgetRef ref) async {
-    // Reset synchronously, before the sheet ever mounts (issue #202) — a
-    // dismissed-without-submitting draft, including any picked media, must
-    // never be visible even for a single frame of a fresh open, whether
-    // that's this same cat again or (via each cat's own composer instance)
-    // a different one. See CatUpdateComposerNotifier.reset's own doc for
-    // why a failed attempt's draft is the one exception kept whole.
-    ref.read(catUpdateComposerProvider(catId).notifier).reset();
-    final result = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => CatUpdateSheet(catId: catId),
-    );
-    // Only a synchronous help submission pops true — an ordinary one pops
-    // immediately and its optimistic row carries the feedback instead.
-    if (result == true && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Güncelleme paylaşıldı')));
-    }
+    ).showSnackBar(const SnackBar(content: Text('Güncelleme paylaşıldı')));
   }
 }
 
@@ -2471,21 +2563,93 @@ class _ReportButton extends ConsumerWidget {
 /// entries and not one.
 enum _ContentAction { report, block }
 
-class _EmptyHistory extends StatelessWidget {
-  const _EmptyHistory();
+/// The state a just-created cat lands in — the highest-intent moment on
+/// this screen, and the one it used to answer with a grey row reading
+/// "Henüz güncelleme yok" beside a glyph that means *history disabled*.
+///
+/// The contract is explicit (docs/design/app-states.md, global rules): an
+/// empty state is an invitation, not a failure; the title says what
+/// happened, the sub-line says why it matters, and there is exactly one
+/// primary action. Shape and proportions follow discover's own
+/// `_EmptyFollows`, which already ships this contract, rather than a new
+/// treatment.
+///
+/// Its action is the same door the fixed `+ update` bar opens — the same
+/// auth gate, the same draft reset — never a second path onto the same
+/// mutation.
+class _EmptyHistory extends ConsumerWidget {
+  const _EmptyHistory({required this.catId});
+
+  final String catId;
 
   @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: AppSpacing.s6),
-      child: Row(
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.s4,
+        AppSpacing.s5,
+        AppSpacing.s4,
+        AppSpacing.s6,
+      ),
+      child: Column(
         children: [
-          Icon(Icons.history_toggle_off, color: AppColors.faint, size: 22),
-          SizedBox(width: AppSpacing.s3),
-          Expanded(
-            child: Text(
-              'Henüz güncelleme yok',
-              style: TextStyle(color: AppColors.muted),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.surfaceAlt,
+              shape: BoxShape.circle,
+            ),
+            child: SizedBox(
+              width: 88,
+              height: 88,
+              child: Icon(Icons.edit_note, size: 34, color: AppColors.faint),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Text(
+            'henüz güncelleme yok',
+            textAlign: TextAlign.center,
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontSize: 21, height: 1.3),
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
+            child: const Text(
+              'ilk güncellemeyi sen ekle; bu kediye bakan herkes '
+              'durumunu bilsin.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: AppColors.faint,
+                height: 1.6,
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          // The contract's brick primary on a sand ground.
+          Material(
+            color: AppColors.primary,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              onTap: () => openCatUpdateComposer(context, ref, catId),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: kTapMin),
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s5,
+                  vertical: AppSpacing.s3,
+                ),
+                child: const Text(
+                  'güncelleme ekle',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.primaryInk,
+                  ),
+                ),
+              ),
             ),
           ),
         ],
