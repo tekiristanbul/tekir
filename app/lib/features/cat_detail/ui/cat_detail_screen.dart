@@ -1718,32 +1718,38 @@ class _UpdateBar extends ConsumerWidget {
     final busy = ref.watch(
       catUpdateComposerProvider(catId).select((s) => s.isSubmitting),
     );
-    return PressResponse(
-      child: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [AppColors.bg, AppColors.bg, Color(0x00F7F1E8)],
-            stops: [0.0, 0.62, 1.0],
-          ),
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [AppColors.bg, AppColors.bg, Color(0x00F7F1E8)],
+          stops: [0.0, 0.62, 1.0],
         ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.s4,
-              AppSpacing.s3,
-              AppSpacing.s4,
-              AppSpacing.s5,
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s4,
+            AppSpacing.s3,
+            AppSpacing.s4,
+            AppSpacing.s5,
+          ),
+          child: ConstrainedBox(
+            // A minimum, not a fixed height: the label may wrap taller at
+            // large system text scale without overflowing the button.
+            constraints: const BoxConstraints(
+              minWidth: double.infinity,
+              minHeight: kTapMin,
             ),
-            child: ConstrainedBox(
-              // A minimum, not a fixed height: the label may wrap taller at
-              // large system text scale without overflowing the button.
-              constraints: const BoxConstraints(
-                minWidth: double.infinity,
-                minHeight: kTapMin,
-              ),
+            // Around the button alone, not the bar. Wrapping the bar meant
+            // the gradient — a transparent strip the user can press
+            // straight through to the timeline underneath — scaled the
+            // whole surface, and a submitting button that must not appear
+            // to respond still gave under the finger.
+            child: PressResponse(
+              enabled: !busy,
               child: ElevatedButton(
                 onPressed: busy
                     ? null
@@ -2834,8 +2840,26 @@ class _DetailSkeletonState extends ConsumerState<_DetailSkeleton> {
         return null;
       }),
     );
-    final hasPhoto = photo != null && photo.isNotEmpty;
+    return Stack(
+      children: [
+        _buildScroll(context, catId, (photo?.isEmpty ?? true) ? null : photo),
+        // Pinned exactly as the loaded screen pins it (_CatDetailBody).
+        // The skeleton used to scroll its own back button, so the one
+        // control both states share behaved differently depending on
+        // whether the read had landed yet.
+        Positioned(
+          top: MediaQuery.paddingOf(context).top + AppSpacing.s3,
+          left: AppSpacing.s4,
+          child: const _BackCircleButton(),
+        ),
+      ],
+    );
+  }
 
+  /// [photo] is null when this cat has no cover photo the map already
+  /// knows about — the avatar then renders as the branded placeholder,
+  /// exactly as it would for a cat with none at all.
+  Widget _buildScroll(BuildContext context, String catId, String? photo) {
     return ListView(
       padding: EdgeInsets.zero,
       children: [
@@ -2848,21 +2872,21 @@ class _DetailSkeletonState extends ConsumerState<_DetailSkeleton> {
           ),
           child: Column(
             children: [
-              const Row(children: [_BackCircleButton()]),
-              const SizedBox(height: AppSpacing.s4),
+              // Clearance for the pinned back button above this.
+              const SizedBox(height: kTapMin + AppSpacing.s4),
               Hero(
                 tag: catPhotoHeroTag(catId),
                 flightShuttleBuilder: (_, animation, direction, _, _) =>
                     _CatPhotoFlight(
                       animation: animation,
                       direction: direction,
-                      photo: hasPhoto ? photo : null,
+                      photo: photo,
                     ),
                 child: ClipOval(
                   child: SizedBox(
                     width: _diameter,
                     height: _diameter,
-                    child: hasPhoto
+                    child: photo != null
                         ? CachedNetworkImage(
                             imageUrl: photo,
                             fit: BoxFit.cover,

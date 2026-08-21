@@ -86,11 +86,19 @@ class FollowButton extends ConsumerWidget {
       );
     }
 
-    // The labelled variant already announces its text, so it needs the
-    // state, not a name.
+    // One node, the same shape as the glass variant above. A bare
+    // `Semantics(container: true, toggled: ...)` wrapped around the button
+    // put the toggle state on a parent while the button stayed its own
+    // focusable child, so the state was announced on a node the user never
+    // lands on. The label repeats the button's own text because excluding
+    // the child's semantics also excludes that text.
     return Semantics(
       container: true,
+      excludeSemantics: true,
+      button: true,
       toggled: isFollowed,
+      label: semanticsLabel,
+      onTap: () => _handleTap(context, ref),
       child: PressResponse(
         child: SizedBox(
           height: kTapMin,
@@ -135,11 +143,13 @@ class FollowButton extends ConsumerWidget {
   Future<void> _toggle(BuildContext context, WidgetRef ref) async {
     final wasFollowing =
         ref.read(followsProvider).value?.contains(catId) ?? false;
-    // Fired with the optimistic flip, not after the round trip: the state
-    // the user sees has already changed, so the hand confirms the same
-    // thing the screen does, in the same frame. A failure below reverts
-    // both — the visible state and, with `refused`, the felt one.
-    unawaited(TekirHaptics.committed());
+    // Two beats, because there are two moments: the tap registers now, and
+    // the write is confirmed later. `acknowledge` fires with the optimistic
+    // flip so the hand answers in the same frame as the screen; `committed`
+    // waits for the server, which is what it means (TekirHaptics.committed:
+    // "the moment the optimistic guess turns out to have been right"). A
+    // failure gets `refused` from TekirSnack instead of a second beat.
+    unawaited(TekirHaptics.acknowledge());
     try {
       await ref.read(followsProvider.notifier).toggle(catId);
     } catch (e) {
@@ -149,6 +159,7 @@ class FollowButton extends ConsumerWidget {
       TekirSnack.failure(context, followActionErrorMessageTr(e));
       return;
     }
+    unawaited(TekirHaptics.committed());
     // logged only after the server confirmed the change (issue #84) — a
     // failed toggle above never emits.
     ref
