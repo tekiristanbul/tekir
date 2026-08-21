@@ -9,6 +9,8 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../../../core/analytics/analytics.dart';
 import '../../../core/geo/istanbul_bounds.dart';
+import '../../../core/motion/press_response.dart';
+import '../../../core/motion/tekir_haptics.dart';
 import '../../../core/states/fallback_location_note.dart';
 import '../../../core/states/initial_read_gate.dart';
 import '../../../core/theme/app_theme.dart';
@@ -47,6 +49,14 @@ const _fabClearance = 80.0;
 // how far "alanı genişlet" zooms out per tap — the inverse of the cluster
 // tap's fixed step, for the same reason: guaranteed progress per tap.
 const _widenAreaZoomStep = 2.0;
+
+// how long the preview sheet stays on the stack after the detail route is
+// pushed over it, so the shared photo's flight has a source to leave from.
+// Comfortably longer than either platform's page transition (material's
+// ~300 ms zoom, cupertino's ~400 ms slide) — the sheet is invisible behind
+// the detail for the whole wait, so overshooting costs nothing and
+// undershooting would cut the flight.
+const _heroFlightClearance = Duration(milliseconds: 500);
 
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
@@ -167,10 +177,16 @@ class _MapScreenState extends ConsumerState<MapScreen>
   // navigates directly (prototype/app.js's selectCat -> openSheet). Only
   // the sheet's "Detaya git" action opens the cat-detail route.
   void _onCatSelected(CatMarker cat) {
+    // Fired here, synchronously, rather than after the marker set is
+    // rebuilt: the pin's own selected state is a re-rendered bitmap that
+    // lands a frame or more later and is largely hidden behind the sheet
+    // anyway, so the hand is what actually acknowledges the tap.
+    unawaited(TekirHaptics.acknowledge());
     ref.read(catsMapProvider.notifier).selectCat(cat);
   }
 
   void _toggleHelpFilter() {
+    unawaited(TekirHaptics.acknowledge());
     setState(() => _helpFilterOn = !_helpFilterOn);
     final mapState = ref.read(catsMapProvider);
     final selected = mapState.selectedMarker;
@@ -205,10 +221,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       builder: (sheetContext) => PointerInterceptor(
         child: CatPreviewSheet(
           cat: cat,
-          onOpenDetail: () {
-            Navigator.of(sheetContext).pop();
-            context.push('/cats/${cat.id}', extra: AnalyticsSource.map);
-          },
+          onOpenDetail: () => _openDetailFromSheet(sheetContext, cat),
         ),
       ),
     );
@@ -219,6 +232,33 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // left on the map, per issue #21.
     if (!mounted) return;
     ref.read(catsMapProvider.notifier).clearSelection();
+  }
+
+  /// Opens the cat behind the preview sheet, pushing *before* dismissing.
+  ///
+  /// This used to pop the sheet and then push the detail, which rendered
+  /// the product's central move — this cat, the one you touched on the map
+  /// — as a retreat followed by an unrelated arrival, with no relationship
+  /// drawn between the sheet's photo and the detail's. Pushing first keeps
+  /// the sheet as the departing route for one transition, which is what
+  /// lets the shared photo fly across (core/motion/hero_tags.dart).
+  ///
+  /// The sheet is then removed rather than popped: by that point it is
+  /// underneath the detail, so an animated dismissal would be an animation
+  /// nobody can see, and popping would take the detail off the stack
+  /// instead. Removal waits out the flight so the photo is never orphaned
+  /// mid-air; if the user gets back before then, the route is already gone
+  /// and [ModalRoute.isActive] guards the call.
+  void _openDetailFromSheet(BuildContext sheetContext, CatMarker cat) {
+    final sheetRoute = ModalRoute.of(sheetContext);
+    final navigator = Navigator.of(sheetContext);
+    context.push('/cats/${cat.id}', extra: AnalyticsSource.map);
+    if (sheetRoute == null) return;
+    Timer(_heroFlightClearance, () {
+      if (navigator.mounted && sheetRoute.isActive) {
+        navigator.removeRoute(sheetRoute);
+      }
+    });
   }
 
   void _onMapCreated(GoogleMapController controller) {
@@ -672,59 +712,61 @@ class _HelpFilterChip extends StatelessWidget {
       toggled: isOn,
       label: 'yardım gerekiyor filtresi',
       onTap: onTap,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          onTap: onTap,
-          child: Container(
-            constraints: const BoxConstraints(minHeight: kTapMin),
-            alignment: Alignment.center,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: background,
-                borderRadius: BorderRadius.circular(AppRadius.full),
-                border: Border.all(color: AppColors.help),
-                boxShadow: isOn
-                    ? const [
-                        BoxShadow(
-                          color: Color(0x122A1F1B),
-                          offset: Offset(0, 1),
-                          blurRadius: 2,
-                        ),
-                      ]
-                    : null,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.s3,
-                  vertical: AppSpacing.s2 - 2,
+      child: PressResponse(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: kTapMin),
+              alignment: Alignment.center,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                  border: Border.all(color: AppColors.help),
+                  boxShadow: isOn
+                      ? const [
+                          BoxShadow(
+                            color: Color(0x122A1F1B),
+                            offset: Offset(0, 1),
+                            blurRadius: 2,
+                          ),
+                        ]
+                      : null,
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.warning_amber_rounded,
-                      size: 14,
-                      color: foreground,
-                    ),
-                    const SizedBox(width: AppSpacing.s1),
-                    // Flexible (not a bare Text) so the label shrinks
-                    // instead of overflowing the chip row's positioned
-                    // width budget at large text-scale factors.
-                    Flexible(
-                      child: Text(
-                        'yardım gerekiyor',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: foreground,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s3,
+                    vertical: AppSpacing.s2 - 2,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        size: 14,
+                        color: foreground,
+                      ),
+                      const SizedBox(width: AppSpacing.s1),
+                      // Flexible (not a bare Text) so the label shrinks
+                      // instead of overflowing the chip row's positioned
+                      // width budget at large text-scale factors.
+                      Flexible(
+                        child: Text(
+                          'yardım gerekiyor',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: foreground,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
