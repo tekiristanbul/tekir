@@ -14,7 +14,7 @@
 ///
 /// Turn it on for a session with:
 ///
-///     flutter run --dart-define=MAP_SPIKE=fan      # concept 1
+///     flutter run --dart-define=MAP_SPIKE=lens     # concept 1
 ///     flutter run --dart-define=MAP_SPIKE=reach    # concept 2
 ///     flutter run --dart-define=MAP_SPIKE=carry    # concept 3
 ///
@@ -32,9 +32,10 @@ enum MapSpikeConcept {
   /// Shipped behaviour: native cluster bubbles, cluster tap zooms in.
   off('kapalı'),
 
-  /// Concept 1 — proximity fisheye. Focus separates the cats around it
-  /// along their own bearings instead of hiding them behind a count.
-  fan('odak'),
+  /// Concept 1 — the focus lens. A fisheye that follows the pointer
+  /// across the map, magnifying the cats under it and letting them go the
+  /// moment the focus leaves.
+  lens('mercek'),
 
   /// Concept 2 — reach tiers. A pin's resolution follows zoom and the
   /// user's own distance from it.
@@ -62,7 +63,7 @@ const mapSpikeEnabled = _define != '';
 /// The concept the build starts on. Unrecognised values arm nothing rather
 /// than guessing, so a typo in the define is visible immediately.
 MapSpikeConcept get initialSpikeConcept => switch (_define) {
-  'fan' => MapSpikeConcept.fan,
+  'lens' => MapSpikeConcept.lens,
   'reach' => MapSpikeConcept.reach,
   'carry' => MapSpikeConcept.carry,
   _ => MapSpikeConcept.off,

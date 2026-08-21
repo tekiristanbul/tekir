@@ -20,7 +20,7 @@ imports.
 
 ```
 cd app
-flutter run --dart-define=MAP_SPIKE=fan     # concept 1
+flutter run --dart-define=MAP_SPIKE=lens    # concept 1
 flutter run --dart-define=MAP_SPIKE=reach   # concept 2
 flutter run --dart-define=MAP_SPIKE=carry   # concept 3
 ```
@@ -54,100 +54,123 @@ a different number, then a pile.
 
 ---
 
-## Concept 1 · proximity fisheye (`fan`, labelled `odak`)
+## Concept 1 · the focus lens (`lens`, labelled `mercek`)
 
 ### From first touch to completion
 
-1. The user taps a cluster bubble, or long-presses anywhere on the map. The
-   hand is acknowledged immediately with `TekirHaptics.acknowledge` — before
-   anything is drawn, because the drawing takes a frame.
-2. Over 320 ms the cats in that group move outward from the focus. Each one
-   keeps its own bearing: the cat genuinely north-east of the doorway stays
-   north-east of it. Only the distance is stretched, most at the focus and
-   decaying with the square of distance, so a cat that was already readable
-   barely moves at all.
-3. A one-pixel leader stays drawn from each moved pin back to its real
-   position, with a small anchor on the position itself. This is the part
-   that makes the concept honest rather than a map showing cats where they
-   are not.
-4. Each separated pin is a real Flutter widget, tappable and labelled.
-   Tapping one opens the shipped preview sheet, unchanged.
-5. The focus ends on a tap anywhere else, on a selection, or on any camera
-   movement — the seats were measured against one camera, so a moved camera
-   makes them wrong, not merely stale. The collapse runs in 200 ms, one step
-   faster than the separation, per the motion system.
+There is no opening and no closing. The focus is wherever the pointer is,
+every frame, and the map is locally magnified around it the way a glass
+lens magnifies paper.
 
-Evidence: [03 · focus open](screenshots/spike-280-03-fan-open.png),
-[04 · selecting one](screenshots/spike-280-04-fan-selected.png), and the
-frame sequence [fan-frame-0](screenshots/spike-280-fan-frame-0.png) →
-[1](screenshots/spike-280-fan-frame-1.png) →
-[2](screenshots/spike-280-fan-frame-2.png) →
-[3](screenshots/spike-280-fan-frame-3.png).
+1. On a phone the focus is the finger, for as long as it is down; on a
+   desktop or on web it is the cursor, with no button held — the closest a
+   mouse gets to a finger resting on glass.
+2. Cats within about 140 px of the focus grow, most at the focus itself and
+   progressively less further out, reaching their normal size exactly at the
+   lens's edge. A cat outside it is untouched, to the pixel.
+3. The same transform moves them: space stretches, so a magnified cat is
+   also further from its neighbours. Scale and displacement come from one
+   expression, which is what makes it read as glass over a map rather than
+   as icons growing.
+4. Cats recorded at one doorway need more than stretching — a few pixels
+   times three is still a few pixels — so a crowded pin also steps outward
+   along a bearing of its own, by as much as its overlap requires and no
+   more, fading to nothing at the lens edge.
+5. Every displaced pin keeps a hairline drawn back to its real coordinate,
+   with an anchor dot on the coordinate itself, drawn over the pins so the
+   true geography is legible exactly when the displacement is largest.
+6. Moving the focus on releases what it leaves behind, continuously.
+   Lifting the finger, or moving the cursor off the map, settles everything
+   back onto its own coordinate.
+7. Tapping a magnified cat opens the shipped preview sheet, unchanged.
+
+Evidence: [03 · at rest](screenshots/spike-280-03-lens-rest.png) — the
+seeded Galata seven at street zoom, one stack;
+[04 · the lens over them](screenshots/spike-280-04-lens-open.png) — seven
+faces, each identifiable, at the same zoom;
+[04b · the lens moved](screenshots/spike-280-04b-lens-moved.png) — the same
+group under a focus that has shifted, redistributed continuously. The frame
+sequence [lens-frame-0](screenshots/spike-280-lens-frame-0.png) →
+[1](screenshots/spike-280-lens-frame-1.png) →
+[2](screenshots/spike-280-lens-frame-2.png) →
+[3](screenshots/spike-280-lens-frame-3.png) →
+[4](screenshots/spike-280-lens-frame-4.png) →
+[5 · released](screenshots/spike-280-lens-frame-5.png) is a single drag
+across the group, pumped frame by frame.
 
 ### Why it belongs to tekir
 
 The overlap is not a rendering problem to be smoothed over; it is what the
-data means. Cats share doorways. A product whose question is "who is on this
-corner, and when was each of them last seen" cannot answer with a count, and
-cannot make the user destroy their own framing of the neighbourhood to find
-out. The arrangement is the map's own geometry magnified, held only while
-the user asks for it, and written back nowhere.
+data means. Cats share doorways, because that is where people meet them. A
+product whose question is "who is on this corner, and when was each of them
+last seen" cannot answer with a count, and cannot make the reader destroy
+their own framing of the neighbourhood to find out. The lens answers it
+where the reader is looking, costs one movement, and leaves nothing behind.
 
 ### Flutter + Google Maps feasibility
 
-Works, and deliberately does not touch clustering. `ClusterManager`'s
-`onClusterTap` hands over `cluster.markerIds`, so the native clusterer stays
-the grouping engine and only the answer to a tap changes.
+A `google_maps_flutter` marker cannot carry this. It is a bitmap the
+platform draws, addressed by coordinate: changing its size means encoding a
+new png and pushing a new marker set over the platform channel, and changing
+its position means moving the cat. Neither can happen per frame. So while
+this concept is active the cats are drawn by Flutter over the map, and the
+basemap stays exactly the map it was.
 
-SDK limits found:
+Two consequences and two limits found:
 
-- **The cluster bubble cannot be hidden or restyled.** It is drawn by the
-  native sdk in Google's blue, and it sits in the middle of the open
-  arrangement as the only non-palette element on screen (visible in
-  [03](screenshots/spike-280-03-fan-open.png)). Changing it means replacing
-  clustering, which this spike is explicitly not doing.
-- **`getScreenCoordinate` is one async platform call per marker.** Seven is
-  free. A forty-cat cluster is forty round trips before the layer can open,
-  and nothing in the sdk offers a batch projection.
-- **Markers have no semantics.** A Google Maps pin is a bitmap inside a
-  platform view; TalkBack and VoiceOver cannot see it. The separated pins
-  are Flutter widgets, so this concept is the first time these cats are
-  reachable by a screen reader at all — which is a finding about the shipped
-  map, not only about this concept.
-- On web the layer needs `PointerInterceptor`, so the map is not pannable
-  while a focus is open. On the phones this is free.
-- Projection units differ by platform: device pixels on iOS/Android, css
-  pixels on web. Handled; getting it wrong would put every seat a third of
-  the way to the corner on a 3× phone.
+- **Projection is done in Dart.** `getScreenCoordinate` is one asynchronous
+  platform call per coordinate, which a lens following a finger cannot use.
+  Web Mercator is closed-form and the camera hands over everything it
+  needs, so `spike/map_projection.dart` computes it directly — verified
+  against Google's own metres-per-pixel in
+  `map_projection_test.dart`. It is only valid for a flat, north-up
+  camera, so this concept turns the rotate and tilt gestures off.
+- **The overlay has to take every pointer event**, including hover, which on
+  web means taking them before the map's own html element does. Panning and
+  zooming are therefore handed back to the map by the layer: a mouse drag
+  scrolls the camera, the wheel zooms it. On touch there is no hover to
+  read, so a finger is the lens and cannot also pan — a real gap, and the
+  first thing to resolve if this is productionised.
+- **Clustering is bypassed, not used.** With the cats drawn in Flutter, the
+  clusterer has nothing to group — which is also why this interaction puts
+  no count anywhere on screen. It is left registered and untouched, and
+  returns the moment the concept is off. But a viewport holding hundreds of
+  cats would draw hundreds of Flutter pins with nothing thinning them.
+- **Each pin holds a decoded photo** at one size, deliberately, so the lens
+  does not cost a decode per pin per frame. That trades memory for frame
+  time, and the trade has only been measured on web.
 
 ### Ratings
 
-- **Complexity: medium.** The geometry is 120 lines of pure maths with its
-  own tests; the layer is a `Stack` and a `CustomPaint`; the map screen
-  gains one branch in the cluster-tap handler.
-- **Gimmick risk: low.** The motion is the answer to a question the user
-  asked, it ends when they stop asking, and removing it would remove the
-  information rather than the decoration.
+- **Complexity: medium.** The geometry is one file of pure maths with its
+  own tests, the projection another, and the layer is a `Stack` and two
+  `CustomPaint`s. What is *not* medium is what replacing the marker layer
+  drags in: gesture forwarding, clustering, and photo memory.
+- **Gimmick risk: low.** The magnification is the reading mechanism; remove
+  it and the information goes with it. It never runs on its own, and it
+  stops the instant the reader stops asking.
 
 ### Reduced motion
 
-No travel. The seats are taken in the same frame and the leaders are drawn
-immediately. The separation is information, not decoration, so it stays —
-consistent with [app-states.md](app-states.md)'s rule that reduced motion
-removes movement, not meaning.
+The lens stays; only the ramp goes. Engaging and releasing the focus become
+immediate scale and displacement changes in the same frame, rather than a
+200 ms arrival and a 120 ms return. The movement that follows the pointer
+was never an animation — it tracks the finger with no smoothing at all,
+because a lens that lags the finger stops being a lens. Covered by tests in
+`focus_lens_layer_test.dart`.
 
 ### What a real device has to answer
 
-- Latency on a cluster of forty-plus cats, where the projection round trips
-  dominate.
-- Seats are not clamped to the viewport in this prototype. A focus taken
-  near the top edge can seat a pin off-screen.
-- Tap accuracy of 56 pt pins with a thumb, at the edges of the arrangement.
-- Whether a long press on the map conflicts with anything the Android or iOS
-  Maps sdk already does with that gesture.
-- Screen-reader order across the separated pins, and — the open question —
-  how a screen-reader user opens a focus at all, given the cluster bubble
-  underneath has no semantics to tap.
+- Frame time with a screenful of cats: the layer re-projects and re-lays out
+  every pin on every pointer frame.
+- Touch panning, which this prototype gives up while the lens is the active
+  concept.
+- Whether a 40 pt resting pin is legible outdoors, and whether the magnified
+  rosette covers too much of the street it is describing.
+- Screen-reader behaviour: the pins are real widgets with labels, which the
+  shipped map's markers are not, but a lens driven by a pointer has no
+  meaning to a screen-reader user and needs its own answer.
+- Memory with a few hundred decoded photos held at pin size.
 
 ---
 
@@ -306,24 +329,28 @@ behaviour. Travel is removed; the destination is not. Covered by a test.
 
 ## Comparison
 
-| | 1 · fisheye | 2 · reach tiers | 3 · carry |
+| | 1 · focus lens | 2 · reach tiers | 3 · carry |
 |---|---|---|---|
-| usability | solves the real defect: cats on one corner become choosable in place | changes nothing the user does | every marker tap reads as one movement instead of two screens |
-| map readability | improved while open; pins are displaced, mitigated by leaders | improved where it renders at all, which is rarely | unchanged |
+| usability | solves the real defect: seven cats on one corner become identifiable and tappable without zooming | changes nothing the user does | every marker tap reads as one movement instead of two screens |
+| map readability | the magnified rosette covers the street it describes; outside the lens the map is untouched to the pixel | improved where it renders at all, which is rarely | unchanged |
 | tekir identity | strong — the doorway problem is tekir's own | moderate — "reach" is the right idea, wrongly expressed as size | strong — the cat as one continuous record |
-| motion clarity | causal, user-initiated, ends on release | none; a re-render | causal; the object moves because it is the same object |
-| accessibility | net gain: the only path that makes clustered cats reachable at all. Open gap: no accessible way to *open* a focus | neutral | at risk: replaces a platform sheet with a hand-built one |
-| complexity | medium | medium, then large | medium, then long tail |
+| motion clarity | causal and continuous: nothing moves that the pointer is not moving | none; a re-render | causal; the object moves because it is the same object |
+| accessibility | pins become real labelled widgets, which markers are not — but a pointer-driven lens has no screen-reader equivalent | neutral | at risk: replaces a platform sheet with a hand-built one |
+| complexity | medium, plus everything replacing the marker layer drags in | medium, then large | medium, then long tail |
 | gimmick risk | low | medium | low |
 
 ## Recommendation
 
-**Concept 1, the proximity fisheye.** It is the only one of the three that
-answers a question the product actually fails to answer today, it is purely
-additive — no new route, no navigation change, no platform surface replaced
-— and its accessibility effect is positive rather than risky. It also leaves
-clustering exactly where it is, which keeps the map's scaling behaviour
-untouched.
+**Concept 1, the focus lens.** It is the only one of the three that answers
+a question the product actually fails to answer today: seven cats recorded
+at one doorway become seven identifiable cats, in place, without spending
+the neighbourhood on two zoom steps. It introduces no route, no navigation
+change and no count, and the motion is entirely under the reader's hand.
+
+It is also the most invasive of the three, and that has to be said plainly:
+it replaces the marker layer while it is on. That is not a detail to be
+tidied later — it is what makes the continuous transform possible at all,
+and it is where the remaining work is.
 
 **Concept 2 is rejected.** Its distinguishing rule cannot render while
 native clustering owns the zoom levels it targets, and cannot be computed at
@@ -343,19 +370,22 @@ fixed on its own terms, not as a motion concept.
 Concept 1 is recommended but is not yet safe to integrate. The remaining
 blockers, in order:
 
-1. **Seats are not clamped to the viewport.** A focus opened near an edge
-   can place a pin off-screen, so a cat becomes less reachable than it was
-   before the focus opened.
-2. **No accessible entry point.** The cluster bubble that opens a focus is a
-   native bitmap with no semantics, so a screen-reader user cannot reach the
-   interaction that exists for them. This needs a product answer, not a
-   patch.
-3. **Unbounded projection cost.** One async platform call per cat before the
-   layer can open; a large cluster needs either a cap or a different
-   projection strategy.
-4. **The native cluster bubble sits inside the arrangement in Google's
-   blue**, and cannot be restyled without replacing clustering. Whether that
-   is acceptable is a product call.
+1. **Touch cannot pan while the lens is on.** The overlay takes every
+   pointer event so it can see hover; a mouse drag is forwarded to the
+   camera, but a finger is the lens and has nothing left to pan with. The
+   phones are the product, so this is the first blocker, not a footnote.
+2. **Nothing thins a dense viewport.** Bypassing the clusterer is what
+   removes the count from the interaction, and also what removes the only
+   thing keeping a few hundred cats from becoming a few hundred Flutter
+   pins, each holding a decoded photo.
+3. **No screen-reader equivalent.** The pins gain real labels, which the
+   shipped markers never had, but the interaction that reveals them is a
+   pointer position. A reader who cannot point needs a different way to the
+   same information, and that is a product decision.
+4. **Rotate and tilt are disabled** while the concept is on, because the
+   Dart-side projection is only valid for a flat, north-up camera. Whether
+   that is acceptable, or whether the projection has to grow a bearing
+   term, is a product call.
 
 Until those are answered, #280 stays open. All three experiments stay behind
 the flag, off by default; the two rejected ones are kept disabled rather than

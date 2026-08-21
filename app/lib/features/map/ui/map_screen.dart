@@ -29,8 +29,8 @@ import '../data/marker_bitmap_builder.dart';
 // and the imports tree-shake out. Deleting the spike is deleting
 // `features/map/spike/` and the guarded blocks that name it.
 import '../spike/carry_route.dart';
-import '../spike/fisheye.dart';
-import '../spike/proximity_fan_layer.dart';
+import '../spike/focus_lens_layer.dart';
+import '../spike/map_projection.dart';
 import '../spike/reach_pins.dart';
 import '../spike/reach_tier.dart';
 import '../spike/spike.dart';
@@ -73,12 +73,6 @@ const _widenAreaZoomStep = 2.0;
 // undershooting would cut the flight.
 const _heroFlightClearance = Duration(milliseconds: 500);
 
-// issue #280 spike, concept 1: how far from a long press a cat still counts
-// as "around here", in logical pixels. About a thumb's width of map either
-// side of the touch, so the focus reads as a place rather than as a
-// selection rectangle.
-const _fanFocusRadius = 96.0;
-
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
 
@@ -113,10 +107,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
   // ---- issue #280 spike state. Never written while `mapSpikeEnabled` is
   // false, and every reader is guarded by it. ----
 
-  /// Concept 1: the open focus, if any — where it was taken and the seats
-  /// it produced.
-  Offset? _fanFocus;
-  List<FisheyeSeat> _fanSeats = const [];
+  /// Concept 1: the camera the lens projects against. Seeded from the
+  /// initial camera position, because no camera-move event fires for a map
+  /// nobody has touched yet, and updated on every frame of every movement
+  /// after that.
+  CameraPosition? _camera;
 
   /// Concept 2: the camera's current zoom, which decides pin resolution.
   /// Tracked separately from [_atMinZoom] because the tier boundaries sit
@@ -167,6 +162,16 @@ class _MapScreenState extends ConsumerState<MapScreen>
     final generation = ++_markerBuildGeneration;
     final bitmaps = ref.read(markerBitmapBuilderProvider);
     final spike = _spike;
+    if (spike == MapSpikeConcept.lens) {
+      // Concept 1 draws the cats itself, so the native layer is emptied
+      // rather than fought with. The clusterer is left registered and
+      // simply has nothing to group — which is also why this interaction
+      // never puts a count on screen. Switching the concept off rebuilds
+      // the real marker set and the clustering with it.
+      if (!mounted) return;
+      setState(() => _markers = {});
+      return;
+    }
     // Concept 3 replaces one native marker with a Flutter pin a hero can
     // fly; that cat must leave the marker set for as long as its stand-in
     // exists, or the same cat is on screen twice.
@@ -250,16 +255,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
     unawaited(TekirHaptics.acknowledge());
     final controller = _controller;
     if (controller == null) return;
-    // Concept 1 answers a cluster tap in place instead of zooming: the
-    // cats it stands for separate around the tap and stay readable at the
-    // zoom the user chose.
-    if (mapSpikeEnabled && _spike == MapSpikeConcept.fan) {
-      await _openProximityFan(
-        focus: cluster.position,
-        ids: cluster.markerIds.map((id) => id.value).toSet(),
-      );
-      return;
-    }
     final currentZoom = await controller.getZoomLevel();
     final targetZoom = math.min(
       currentZoom + _clusterTapZoomStep,
@@ -289,70 +284,14 @@ class _MapScreenState extends ConsumerState<MapScreen>
     return Offset(point.x / ratio, point.y / ratio);
   }
 
-  /// Concept 1. Separates the cats in [ids] around [focus] and hands the
-  /// arrangement to [ProximityFanLayer].
-  ///
-  /// Everything here is screen-space and momentary: no camera move, no
-  /// marker rebuild, no write. A focus with fewer than two cats is not a
-  /// focus, and is dropped rather than drawn.
-  Future<void> _openProximityFan({
-    required LatLng focus,
-    required Set<String> ids,
-  }) async {
-    final cats = ref
-        .read(catsMapProvider)
-        .markers
-        .where((cat) => ids.contains(cat.id))
-        .where((cat) => !_helpFilterOn || cat.needsHelp)
-        .toList();
-    if (cats.length < 2) return;
-
-    final focusPoint = await _screenOffsetOf(focus);
-    if (focusPoint == null) return;
-    final points = <({String id, Offset point})>[];
-    for (final cat in cats) {
-      final point = await _screenOffsetOf(LatLng(cat.lat, cat.lng));
-      if (point == null) return;
-      points.add((id: cat.id, point: point));
-    }
-    if (!mounted) return;
-
-    setState(() {
-      _fanFocus = focusPoint;
-      _fanSeats = fisheyeSeats(focus: focusPoint, cats: points);
-    });
+  /// Concept 1 hands panning and zooming back to the map, because its
+  /// overlay has to intercept every pointer event to see hover at all.
+  void _panBy(Offset delta) {
+    _controller?.moveCamera(CameraUpdate.scrollBy(-delta.dx, -delta.dy));
   }
 
-  /// Concept 1's focus ending: on a tap outside, on a selection, and on any
-  /// camera movement. The seats were computed against one camera, so a
-  /// moved camera makes them wrong rather than stale — the layer goes
-  /// immediately instead of drifting.
-  void _closeProximityFan() {
-    if (_fanFocus == null) return;
-    setState(() {
-      _fanFocus = null;
-      _fanSeats = const [];
-    });
-  }
-
-  /// Concept 1's second entry point: focus anywhere, not only where the
-  /// sdk decided to draw a cluster. A long press is the available gesture —
-  /// `GoogleMap` reports press and long press but never a release, so the
-  /// focus is a state the user ends, not a grip they hold.
-  Future<void> _onMapLongPress(LatLng position) async {
-    if (!mapSpikeEnabled || _spike != MapSpikeConcept.fan) return;
-    final origin = await _screenOffsetOf(position);
-    if (origin == null) return;
-    final near = <String>{};
-    for (final cat in ref.read(catsMapProvider).markers) {
-      final point = await _screenOffsetOf(LatLng(cat.lat, cat.lng));
-      if (point != null && (point - origin).distance <= _fanFocusRadius) {
-        near.add(cat.id);
-      }
-    }
-    if (near.length < 2) return;
-    unawaited(TekirHaptics.acknowledge());
-    await _openProximityFan(focus: position, ids: near);
+  void _zoomBy(double levels) {
+    _controller?.moveCamera(CameraUpdate.zoomBy(levels));
   }
 
   /// Concept 3. Turns the tapped cat's native marker into a Flutter pin at
@@ -396,12 +335,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
   // navigates directly (prototype/app.js's selectCat -> openSheet). Only
   // the sheet's "Detaya git" action opens the cat-detail route.
   void _onCatSelected(CatMarker cat) {
-    if (mapSpikeEnabled) {
-      _closeProximityFan();
-      if (_spike == MapSpikeConcept.carry) {
-        unawaited(_openCarry(cat));
-        return;
-      }
+    if (mapSpikeEnabled && _spike == MapSpikeConcept.carry) {
+      unawaited(_openCarry(cat));
+      return;
     }
     // Fired here, synchronously, rather than after the marker set is
     // rebuilt: the pin's own selected state is a re-rendered bitmap that
@@ -581,9 +517,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
     if (atMin != _atMinZoom) setState(() => _atMinZoom = atMin);
     if (mapSpikeEnabled) {
       _zoom = position.zoom;
-      // Concept 1's seats belong to the camera they were measured
-      // against; a moved camera invalidates them outright.
-      _closeProximityFan();
+      // Concept 1 projects in Dart from this camera, so the lens's pins
+      // have to be re-projected on every frame of the movement, not once
+      // it settles.
+      if (_spike == MapSpikeConcept.lens) setState(() => _camera = position);
     }
   }
 
@@ -638,7 +575,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
       // resolution the previous concept chose.
       ref.listen(mapSpikeProvider, (previous, next) {
         if (previous == next) return;
-        _closeProximityFan();
         setState(() {
           _carriedCat = null;
           _carriedCenter = null;
@@ -802,6 +738,16 @@ class _MapScreenState extends ConsumerState<MapScreen>
 
   Widget _buildMap({required LatLng center, required bool isFallback}) {
     final mapState = ref.watch(catsMapProvider);
+    // Concept 1 replaces the marker layer rather than decorating it; see
+    // spike/focus_lens_layer.dart for why a native marker cannot carry a
+    // per-frame transform.
+    final lensActive = mapSpikeEnabled && _spike == MapSpikeConcept.lens;
+    final camera =
+        _camera ??
+        CameraPosition(
+          target: center,
+          zoom: isFallback ? istanbulFallbackZoom : _initialZoom,
+        );
     final isInitialRead = mapState.isLoading && !mapState.hasLoadedOnce;
     final isEmptyRadius =
         mapState.hasLoadedOnce &&
@@ -840,19 +786,35 @@ class _MapScreenState extends ConsumerState<MapScreen>
           onMapCreated: _onMapCreated,
           onCameraIdle: _onCameraIdle,
           onCameraMove: _onCameraMove,
-          // Concept 1's "focus anywhere" entry point. Null otherwise, so
-          // the shipped map keeps having no long-press behaviour at all.
-          onLongPress: mapSpikeEnabled ? _onMapLongPress : null,
+          // Concept 1 projects in Dart, which is only correct for a flat,
+          // north-up camera; a bearing or a tilt would need the sdk's own
+          // perspective transform, which it does not expose.
+          rotateGesturesEnabled: !lensActive,
+          tiltGesturesEnabled: !lensActive,
         ),
-        if (mapSpikeEnabled && _fanFocus != null)
+        if (lensActive)
           Positioned.fill(
+            // The lens has to see every pointer event, including hover,
+            // which on web means taking them before the map's own html
+            // element does.
             child: PointerInterceptor(
-              child: ProximityFanLayer(
-                focus: _fanFocus!,
-                seats: _fanSeats,
-                cats: {for (final cat in mapState.markers) cat.id: cat},
-                onSelect: _onCatSelected,
-                onDismiss: _closeProximityFan,
+              child: LayoutBuilder(
+                builder: (context, box) => FocusLensLayer(
+                  cats: _helpFilterOn
+                      ? [
+                          for (final cat in mapState.markers)
+                            if (cat.needsHelp) cat,
+                        ]
+                      : mapState.markers,
+                  projection: MapProjection(
+                    center: camera.target,
+                    zoom: camera.zoom,
+                    size: box.biggest,
+                  ),
+                  onSelect: _onCatSelected,
+                  onPan: _panBy,
+                  onZoom: _zoomBy,
+                ),
               ),
             ),
           ),

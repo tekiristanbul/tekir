@@ -16,7 +16,7 @@ void main() {
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
-    container.read(mapSpikeProvider.notifier).select(MapSpikeConcept.fan);
+    container.read(mapSpikeProvider.notifier).select(MapSpikeConcept.lens);
 
     // The map reads this provider unconditionally; without this guard a
     // stray write would arm an experiment in a production build.

@@ -7,8 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/map/data/cat_marker.dart';
 import 'package:app/features/map/spike/carry_route.dart';
-import 'package:app/features/map/spike/fisheye.dart';
-import 'package:app/features/map/spike/proximity_fan_layer.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
+import 'package:app/features/map/spike/focus_lens_layer.dart';
+import 'package:app/features/map/spike/map_projection.dart';
 
 /// Frame evidence for issue #280, written into
 /// `docs/design/screenshots/`.
@@ -109,21 +110,22 @@ void main() {
     ),
   ];
 
-  // Where the seeded Galata group lands on a 390-wide phone at street
-  // zoom: seven pins inside about fourteen logical pixels.
   const focus = Offset(195, 380);
-  final points = <({String id, Offset point})>[
-    for (var i = 0; i < cats.length; i++)
-      (id: cats[i].id, point: focus + Offset((i - 3) * 2.4, (3 - i) * 2.1)),
-  ];
 
-  testWidgets('concept 1 · the focus separating a Galata group', (
-    tester,
-  ) async {
+  testWidgets('concept 1 · the lens crossing the Galata group', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.runAsync(loadCaptureFonts);
+
+    // The real seeded coordinates, projected the way the running app
+    // projects them, at the zoom the map opens on. Nothing about the
+    // crowding in these frames is arranged for the capture.
+    const projection = MapProjection(
+      center: LatLng(41.02561, 28.97440),
+      zoom: 17,
+      size: Size(390, 844),
+    );
 
     await tester.pumpWidget(
       MaterialApp(
@@ -131,39 +133,63 @@ void main() {
         theme: AppTheme.light,
         home: Scaffold(
           // A blank ground, not a map: these frames are evidence of the
-          // arrangement and its timing, and the real map is shown in the
-          // browser captures instead.
+          // lens itself, and the browser captures show it over the real
+          // basemap.
           backgroundColor: AppColors.bg,
-          body: Stack(
-            children: [
-              ProximityFanLayer(
-                focus: focus,
-                seats: fisheyeSeats(focus: focus, cats: points),
-                cats: {for (final cat in cats) cat.id: cat},
-                onSelect: (_) {},
-                onDismiss: () {},
-              ),
-            ],
+          body: FocusLensLayer(
+            cats: cats,
+            projection: projection,
+            onSelect: (_) {},
+            onPan: (_) {},
+            onZoom: (_) {},
           ),
         ),
       ),
     );
 
-    for (final (index, step) in const [
-      Duration.zero,
-      Duration(milliseconds: 80),
-      Duration(milliseconds: 80),
-      Duration(milliseconds: 160),
-    ].indexed) {
-      await tester.pump(step);
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile(
+        '../../../../../docs/design/screenshots/spike-280-lens-frame-0.png',
+      ),
+    );
+
+    // The focus is dragged straight across the group, and the frames are
+    // taken along the way — which is the only way to show that the effect
+    // follows the pointer rather than toggling.
+    final path = <Offset>[
+      const Offset(150, 450),
+      const Offset(178, 434),
+      const Offset(196, 422),
+      const Offset(228, 404),
+    ];
+    final gesture = await tester.startGesture(path.first);
+    // The first frame starts the ramp; the second is the first one with
+    // time on it. Without both, every frame below would be caught while
+    // the lens was still arriving.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    for (final (index, point) in path.indexed) {
+      await gesture.moveTo(point);
+      await tester.pump(const Duration(milliseconds: 16));
       await expectLater(
-        find.byType(ProximityFanLayer),
+        find.byType(MaterialApp),
         matchesGoldenFile(
-          '../../../../../docs/design/screenshots/spike-280-fan-frame-$index.png',
+          '../../../../../docs/design/screenshots/'
+          'spike-280-lens-frame-${index + 1}.png',
         ),
       );
     }
+
+    // Released: everything settles back onto its own coordinate.
+    await gesture.up();
     await tester.pumpAndSettle();
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile(
+        '../../../../../docs/design/screenshots/spike-280-lens-frame-5.png',
+      ),
+    );
   }, skip: !_capturing);
 
   testWidgets('concept 3 · the pin becoming the preview', (tester) async {
