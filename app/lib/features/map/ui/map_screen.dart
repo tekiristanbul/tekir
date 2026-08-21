@@ -86,6 +86,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
   // filter turns on and hides the selected marker.
   bool _sheetOpen = false;
 
+  /// Pending removal of a preview sheet the detail route was pushed over —
+  /// see [_openDetailFromSheet].
+  Timer? _heroFlightClearanceTimer;
+
   @override
   void initState() {
     super.initState();
@@ -96,6 +100,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _debounce?.cancel();
+    _heroFlightClearanceTimer?.cancel();
     _controller?.dispose();
     super.dispose();
   }
@@ -291,17 +296,24 @@ class _MapScreenState extends ConsumerState<MapScreen>
   /// underneath the detail, so an animated dismissal would be an animation
   /// nobody can see, and popping would take the detail off the stack
   /// instead. Removal waits out the flight so the photo is never orphaned
-  /// mid-air; if the user gets back before then, the route is already gone
-  /// and [ModalRoute.isActive] guards the call.
+  /// mid-air.
+  ///
+  /// Removal applies only while the sheet is still buried. A user who goes
+  /// back inside those 500 ms pops the detail and is looking at the sheet
+  /// again — removing it then would snatch a surface out from under them
+  /// with no animation, which is why [ModalRoute.isCurrent] is checked and
+  /// not just [ModalRoute.isActive]. The sheet is left alone in that case
+  /// and dismisses normally, as it would have without the flight.
   void _openDetailFromSheet(BuildContext sheetContext, CatMarker cat) {
     final sheetRoute = ModalRoute.of(sheetContext);
     final navigator = Navigator.of(sheetContext);
     context.push('/cats/${cat.id}', extra: AnalyticsSource.map);
     if (sheetRoute == null) return;
-    Timer(_heroFlightClearance, () {
-      if (navigator.mounted && sheetRoute.isActive) {
-        navigator.removeRoute(sheetRoute);
-      }
+    _heroFlightClearanceTimer?.cancel();
+    _heroFlightClearanceTimer = Timer(_heroFlightClearance, () {
+      if (!navigator.mounted || !sheetRoute.isActive) return;
+      if (sheetRoute.isCurrent) return;
+      navigator.removeRoute(sheetRoute);
     });
   }
 
