@@ -7,6 +7,8 @@ import 'package:go_router/go_router.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 import 'package:app/core/identity/session_identity.dart';
+import 'package:app/core/states/initial_read_gate.dart';
+import 'package:app/core/states/shimmer_sweep.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/core/utils/relative_time.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
@@ -289,13 +291,46 @@ class _ScriptedVideoPlayerPlatform extends VideoPlayerPlatform {
 void main() {
   VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
 
-  testWidgets('shows a spinner while loading and not yet loaded once', (
-    tester,
-  ) async {
-    await _pump(tester, const CatDetailState(isLoading: true));
+  // The timing contract (docs/design/app-states.md) for an initial read:
+  // nothing loading-related before 400 ms, the screen's own layout as a
+  // skeleton after it, and at 6 s the wait ends in the error state. The
+  // read itself is never cancelled — bounded reads end the *wait*.
+  group('initial read follows the timing contract', () {
+    testWidgets('shows no skeleton body before 400 ms', (tester) async {
+      await _pump(tester, const CatDetailState(isLoading: true));
 
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.text('tekir'), findsNothing);
+      expect(find.byType(ShimmerSweep), findsNothing);
+      expect(find.text('tekir'), findsNothing);
+    });
+
+    testWidgets('renders the screen\'s own layout as a skeleton after 400 ms', (
+      tester,
+    ) async {
+      await _pump(tester, const CatDetailState(isLoading: true));
+      await tester.pump(kInitialReadDelay);
+
+      expect(find.byType(ShimmerSweep), findsWidgets);
+      // Never a bare spinner screen: the standing shapes are the layout.
+      expect(find.text('Kedi yüklenemedi'), findsNothing);
+    });
+
+    testWidgets('ends the wait in the error state at 6 s', (tester) async {
+      await _pump(tester, const CatDetailState(isLoading: true));
+      await tester.pump(kInitialReadTimeout);
+
+      expect(find.text('Kedi yüklenemedi'), findsOneWidget);
+      expect(find.text('Tekrar dene'), findsOneWidget);
+      expect(find.byType(ShimmerSweep), findsNothing);
+      // The header stays put, the way the map keeps its ground visible
+      // behind its own fallback.
+      expect(find.byIcon(Icons.chevron_left), findsOneWidget);
+    });
+
+    // Not asserted here: that a late response still replaces the
+    // timed-out state. Nothing in this screen or its notifier cancels a
+    // read — there is no cancellation code to regress — and the fixed
+    // notifier this harness injects cannot swap its state mid-test, so a
+    // test for it would exercise the harness rather than the contract.
   });
 
   testWidgets('shows the not-found state, in turkish, with a back action', (

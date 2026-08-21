@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/blocks_api.dart';
 import 'blocks_notifier.dart';
@@ -27,7 +28,13 @@ class BlockedAccountsScreen extends ConsumerWidget {
           itemBuilder: (context, index) => _BlockedRow(account: value[index]),
         ),
         AsyncError() => const _Error(),
-        _ => const Center(child: CircularProgressIndicator()),
+        _ => const Center(
+          child: InlineSpinner(
+            size: 28,
+            color: AppColors.primary,
+            trackColor: AppColors.line,
+          ),
+        ),
       },
     );
   }

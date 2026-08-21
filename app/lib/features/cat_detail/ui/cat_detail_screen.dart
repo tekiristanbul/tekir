@@ -2516,10 +2516,10 @@ class _LoadMoreButton extends StatelessWidget {
           ),
         ),
         child: isLoading
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+            ? const InlineSpinner(
+                size: 18,
+                color: AppColors.primary,
+                trackColor: AppColors.line,
               )
             : const Text(
                 'Daha fazla göster',
@@ -2611,15 +2611,32 @@ class _MessageScreen extends StatelessWidget {
 /// from a new request or an invented placeholder. Opened from anywhere else
 /// — discover, a deep link — there is no marker and the avatar renders as
 /// the branded placeholder, exactly as it would for a cat with no photo.
-class _DetailSkeleton extends ConsumerWidget {
+class _DetailSkeleton extends ConsumerStatefulWidget {
   const _DetailSkeleton({required this.catId});
 
   final String catId;
 
+  @override
+  ConsumerState<_DetailSkeleton> createState() => _DetailSkeletonState();
+}
+
+class _DetailSkeletonState extends ConsumerState<_DetailSkeleton> {
   static const double _diameter = 132;
 
+  /// Bumped on retry so the gate remounts and earns a fresh 400 ms of
+  /// silence, mirroring the map's own attempt counter — without it the
+  /// gate would still be sitting in its timed-out phase and the skeleton
+  /// would never return.
+  int _attempt = 0;
+
+  void _retry() {
+    setState(() => _attempt++);
+    ref.read(catDetailProvider(widget.catId).notifier).load();
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    final catId = widget.catId;
     final photo = ref.watch(
       catsMapProvider.select((state) {
         for (final marker in state.markers) {
@@ -2674,8 +2691,18 @@ class _DetailSkeleton extends ConsumerWidget {
           ),
         ),
         InitialReadGate(
+          key: ValueKey(_attempt),
           reading: true,
           builder: (context, phase) {
+            // 6 s+: "the wait ends: switch to the error or offline state"
+            // (docs/design/app-states.md, timing contract). Bounded reads
+            // only — the request is never cancelled, the wait is what
+            // ends, so a late response still lands and replaces this. The
+            // header above stays put, exactly as the map keeps its ground
+            // visible behind its own fallback banner.
+            if (phase == InitialReadPhase.timedOut) {
+              return _ReadTimeoutNotice(onRetry: _retry);
+            }
             if (phase == InitialReadPhase.hidden) {
               return const SizedBox.shrink();
             }
@@ -2691,6 +2718,55 @@ class _DetailSkeleton extends ConsumerWidget {
 /// strip, and the first timeline rows — the screen's real layout drawn as
 /// blocks, so the content that arrives replaces something the same size
 /// rather than pushing a spinner out of the way.
+/// The initial read's 6 s fallback (docs/design/app-states.md, timing
+/// contract): the wait ends and the surface switches to its error state.
+///
+/// Reuses the copy and the single action the screen's own load failure
+/// already uses, because to the reader these are the same situation — the
+/// cat did not arrive. Nothing here cancels the request: the contract ends
+/// the wait, not the read, so a response arriving at 8 s still replaces
+/// this with the real screen.
+class _ReadTimeoutNotice extends StatelessWidget {
+  const _ReadTimeoutNotice({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.s5,
+        AppSpacing.s8,
+        AppSpacing.s5,
+        AppSpacing.s6,
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.error_outline, size: 40, color: AppColors.faint),
+          const SizedBox(height: AppSpacing.s3),
+          const Text(
+            'Kedi yüklenemedi',
+            style: TextStyle(color: AppColors.muted),
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          OutlinedButton(
+            onPressed: onRetry,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.ink,
+              side: const BorderSide(color: AppColors.lineStrong),
+              minimumSize: const Size(0, kTapMin),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+            ),
+            child: const Text('Tekrar dene'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _DetailSkeletonBody extends StatelessWidget {
   const _DetailSkeletonBody();
 

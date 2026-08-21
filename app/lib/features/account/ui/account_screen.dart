@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 import 'account_notifier.dart';
 
@@ -48,7 +49,13 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
 
   Widget _body(AccountState state) {
     if (state.isLoading && state.info == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: InlineSpinner(
+          size: 28,
+          color: AppColors.primary,
+          trackColor: AppColors.line,
+        ),
+      );
     }
     if (state.error && state.info == null) {
       return _ErrorRetry(

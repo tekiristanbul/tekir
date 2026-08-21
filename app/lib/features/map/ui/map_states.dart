@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 
 /// The user-dot blue from the design reference (`--blue`,
@@ -131,19 +132,12 @@ class MapLoadingStatusPill extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 15,
-              height: 15,
-              child: _reduceMotion(context)
-                  ? const CircularProgressIndicator(
-                      strokeWidth: 3,
-                      color: Color(0xFFFDF1EC),
-                      value: 0.25,
-                    )
-                  : const CircularProgressIndicator(
-                      strokeWidth: 3,
-                      color: Color(0xFFFDF1EC),
-                    ),
+            // InlineSpinner already owns the settled-frame behaviour this
+            // used to hand-roll, and owns it in one place.
+            const InlineSpinner(
+              size: 15,
+              color: Color(0xFFFDF1EC),
+              trackColor: Color(0x33FDF1EC),
             ),
             const SizedBox(width: AppSpacing.s2 + 2),
             const Text(

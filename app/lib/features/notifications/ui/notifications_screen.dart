@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/analytics/analytics.dart';
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../data/notification.dart';
@@ -46,7 +47,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
 
   Widget _body(NotificationsState state) {
     if (state.isLoading && !state.hasLoadedOnce) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: InlineSpinner(
+          size: 28,
+          color: AppColors.primary,
+          trackColor: AppColors.line,
+        ),
+      );
     }
     if (state.error != null && state.items.isEmpty) {
       return _ErrorRetry(
@@ -201,10 +208,10 @@ class _LoadMoreButton extends StatelessWidget {
           ),
         ),
         child: isLoading
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+            ? const InlineSpinner(
+                size: 18,
+                color: AppColors.primary,
+                trackColor: AppColors.line,
               )
             : const Text(
                 'Daha fazla göster',

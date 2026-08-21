@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/motion/hero_tags.dart';
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../data/cat_marker.dart';
@@ -229,10 +230,10 @@ class _PreviewPhoto extends StatelessWidget {
           width: 92,
           height: 92,
           child: Center(
-            child: SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
+            child: InlineSpinner(
+              size: 20,
+              color: AppColors.primary,
+              trackColor: AppColors.line,
             ),
           ),
         ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/badge.dart';
 import 'badge_icons.dart';
@@ -44,7 +45,13 @@ class _BadgesScreenState extends ConsumerState<BadgesScreen> {
 
   Widget _body(BadgesState state) {
     if (state.isLoading && !state.hasLoadedOnce) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: InlineSpinner(
+          size: 28,
+          color: AppColors.primary,
+          trackColor: AppColors.line,
+        ),
+      );
     }
     if (state.error != null && state.items.isEmpty) {
       return _ErrorRetry(

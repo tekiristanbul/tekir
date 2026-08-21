@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/states/submitting_button.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/validation/display_name.dart';
 import '../../auth/data/auth_api.dart';
@@ -130,28 +131,11 @@ class _EditDisplayNameSheetState extends ConsumerState<EditDisplayNameSheet> {
                   onSubmitted: (_) => _submit(),
                 ),
                 const SizedBox(height: AppSpacing.s4),
-                SizedBox(
-                  height: kTapMin,
-                  child: ElevatedButton(
-                    onPressed: _isSubmitting ? null : _submit,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: AppColors.primaryInk,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                    ),
-                    child: _isSubmitting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppColors.primaryInk,
-                            ),
-                          )
-                        : const Text('Kaydet'),
-                  ),
+                SubmittingButton(
+                  label: 'Kaydet',
+                  submittingLabel: 'Kaydediliyor',
+                  submitting: _isSubmitting,
+                  onPressed: _submit,
                 ),
               ],
             ),

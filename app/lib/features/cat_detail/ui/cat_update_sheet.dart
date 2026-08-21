@@ -7,7 +7,9 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../../core/motion/press_response.dart';
 import '../../../core/motion/tekir_haptics.dart';
+import '../../../core/motion/tekir_motion.dart';
 import '../../../core/states/photo_upload_progress.dart';
+import '../../../core/states/submitting_button.dart';
 import '../../../core/theme/app_theme.dart';
 import 'cat_update_composer_notifier.dart';
 
@@ -366,50 +368,30 @@ class _CatUpdateSheetState extends ConsumerState<CatUpdateSheet> {
                   ),
                 ],
                 const SizedBox(height: AppSpacing.s4),
-                SizedBox(
-                  height: kTapMin,
-                  child: ElevatedButton(
-                    onPressed: state.canSubmit ? _submit : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: state.needsHelp
-                          ? AppColors.helpStrong
-                          : AppColors.primary,
-                      foregroundColor: state.needsHelp
-                          ? AppColors.helpInk
-                          : AppColors.primaryInk,
-                      // The composer opens in this state, and its label
-                      // is what teaches the constraint ("pick a status
-                      // first"). Material's default disabled pair --
-                      // onSurface at 38% over lineStrong -- renders it at
-                      // 2.09:1, which is not a readable instruction. A
-                      // paler surface with full-strength muted reads as
-                      // inactive at 5.25:1 instead of illegible.
-                      disabledBackgroundColor: AppColors.surfaceAlt,
-                      disabledForegroundColor: AppColors.muted,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                      textStyle: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    child: state.isSubmitting
-                        ? SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: state.needsHelp
-                                  ? AppColors.helpInk
-                                  : AppColors.primaryInk,
-                            ),
-                          )
-                        : Text(
-                            state.error != null
-                                ? 'Tekrar dene'
-                                : state.needsHelp
-                                ? 'yardım çağrısıyla paylaş'
-                                : 'Paylaş',
-                          ),
-                  ),
+                SubmittingButton(
+                  label: state.error != null
+                      ? 'Tekrar dene'
+                      : state.needsHelp
+                      ? 'yardım çağrısıyla paylaş'
+                      : 'Paylaş',
+                  submittingLabel: state.needsHelp
+                      ? 'yardım çağrısı gönderiliyor'
+                      : 'Paylaşılıyor',
+                  submitting: state.isSubmitting,
+                  onPressed: state.canSubmit ? _submit : null,
+                  background: state.needsHelp
+                      ? AppColors.helpStrong
+                      : AppColors.primary,
+                  // The contract's "darkens one tone" has no darker tone to
+                  // reach for in the help family — helpStrong is already
+                  // the deepest. The label change and the spinner carry the
+                  // in-flight state on this variant.
+                  submittingBackground: state.needsHelp
+                      ? AppColors.helpStrong
+                      : AppColors.primaryStrong,
+                  foreground: state.needsHelp
+                      ? AppColors.helpInk
+                      : AppColors.primaryInk,
                 ),
               ],
             ),
@@ -798,13 +780,19 @@ class _PulsingDotState extends State<_PulsingDot>
   bool _reduceMotion = false;
 
   // Reduced motion: a static dot, no repeating animation at all. Reading
-  // MediaQuery here (not in build) both subscribes to changes and keeps
-  // build side-effect free — this reruns whenever disableAnimations
-  // flips, so the controller's lifecycle follows the platform setting.
+  // the gate here (not in build) both subscribes to changes and keeps
+  // build side-effect free — this reruns whenever the platform setting
+  // flips, so the controller's lifecycle follows it.
+  //
+  // Through TekirMotion rather than MediaQuery directly: this widget used
+  // to check `disableAnimations` alone and kept pulsing under a screen
+  // reader, which the state contract names as one condition alongside
+  // `accessibleNavigation`. That drift is exactly what the shared gate
+  // exists to prevent.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _reduceMotion = MediaQuery.of(context).disableAnimations;
+    _reduceMotion = TekirMotion.of(context).reduced;
     if (_reduceMotion) {
       _controller.stop();
     } else if (!_controller.isAnimating) {

@@ -13,6 +13,7 @@ import '../../../core/motion/press_response.dart';
 import '../../../core/motion/tekir_haptics.dart';
 import '../../../core/states/fallback_location_note.dart';
 import '../../../core/states/initial_read_gate.dart';
+import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/ui/auth_gate.dart';
 import '../data/cat_marker.dart';
@@ -339,7 +340,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
           isFallback: resolved.isFallback,
           searchHint: searchHint,
         ),
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const Center(
+          child: InlineSpinner(
+            size: 28,
+            color: AppColors.primary,
+            trackColor: AppColors.line,
+          ),
+        ),
         error: (_, _) => _buildMapChrome(
           center: istanbulFallback,
           isFallback: true,
