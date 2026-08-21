@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/session_identity.dart';
-import '../../../core/states/inline_spinner.dart';
+import '../../../core/states/read_skeleton.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../../badges/data/badge.dart';
@@ -101,12 +101,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   Widget _authenticatedBody(ProfileState state) {
     if (state.isLoading && !state.hasLoadedOnce) {
-      return const Center(
-        child: InlineSpinner(
-          size: 28,
-          color: AppColors.primary,
-          trackColor: AppColors.line,
-        ),
+      return GatedReadSkeleton(
+        onRetry: () => ref.read(profileProvider.notifier).load(),
+        timedOutBuilder: (context, onRetry) => _ErrorRetry(onRetry: onRetry),
       );
     }
     if (state.error != null && state.profile == null) {
@@ -116,12 +113,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     }
     final profile = state.profile;
     if (profile == null) {
-      return const Center(
-        child: InlineSpinner(
-          size: 28,
-          color: AppColors.primary,
-          trackColor: AppColors.line,
-        ),
+      return GatedReadSkeleton(
+        onRetry: () => ref.read(profileProvider.notifier).load(),
+        timedOutBuilder: (context, onRetry) => _ErrorRetry(onRetry: onRetry),
       );
     }
     return ListView(

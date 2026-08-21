@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:app/core/identity/session_identity.dart';
+import 'package:app/core/states/initial_read_gate.dart';
+import 'package:app/core/states/shimmer_sweep.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/auth/data/auth_api.dart';
 import 'package:app/features/badges/data/badge.dart';
@@ -144,7 +146,7 @@ void main() {
     expect(find.text('Giriş yap'), findsOneWidget);
   });
 
-  testWidgets('shows a loading indicator before the profile arrives', (
+  testWidgets('stands in the screen\'s own layout while the profile loads', (
     tester,
   ) async {
     final api = _FakeProfileApi()..pending = Completer<void>();
@@ -166,8 +168,16 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    // Nothing loading-related before 400 ms (docs/design/app-states.md,
+    // timing contract), and no bare spinner screen after it either: the
+    // screen's future layout stands in.
+    expect(find.byType(ShimmerSweep), findsNothing);
+    await tester.pump(kInitialReadDelay);
+    expect(find.byType(ShimmerSweep), findsWidgets);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
     api.pending!.complete();
+    await tester.pumpAndSettle();
   });
 
   testWidgets(

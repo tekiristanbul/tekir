@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/analytics/analytics.dart';
 import '../../../core/states/inline_spinner.dart';
+import '../../../core/states/read_skeleton.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../data/notification.dart';
@@ -47,12 +48,9 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
 
   Widget _body(NotificationsState state) {
     if (state.isLoading && !state.hasLoadedOnce) {
-      return const Center(
-        child: InlineSpinner(
-          size: 28,
-          color: AppColors.primary,
-          trackColor: AppColors.line,
-        ),
+      return GatedReadSkeleton(
+        onRetry: () => ref.read(notificationsProvider.notifier).load(),
+        timedOutBuilder: (context, onRetry) => _ErrorRetry(onRetry: onRetry),
       );
     }
     if (state.error != null && state.items.isEmpty) {
