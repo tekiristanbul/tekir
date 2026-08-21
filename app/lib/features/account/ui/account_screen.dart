@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/states/inline_spinner.dart';
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 import 'account_notifier.dart';
 
@@ -126,12 +127,14 @@ class _AuthenticatedBodyState extends ConsumerState<_AuthenticatedBody> {
       await ref.read(accountProvider.notifier).deleteAccount();
       if (!mounted) return;
       setState(() => _isDeleting = false);
-      messenger.showSnackBar(const SnackBar(content: Text('Hesabın silindi.')));
+      TekirSnack.showOn(messenger, 'Hesabın silindi.');
     } catch (_) {
       if (!mounted) return;
       setState(() => _isDeleting = false);
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Hesap silinemedi, tekrar dene.')),
+      TekirSnack.showOn(
+        messenger,
+        'Hesap silinemedi, tekrar dene.',
+        tone: TekirSnackTone.failed,
       );
     }
   }

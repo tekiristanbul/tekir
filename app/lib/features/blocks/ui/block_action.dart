@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/analytics/analytics.dart';
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/ui/auth_gate.dart';
 import 'blocks_notifier.dart';
@@ -82,10 +83,12 @@ Future<void> _confirmAndBlockAuthenticated(
   try {
     await ref.read(blocksProvider.notifier).block(userId);
     onBlocked?.call();
-    messenger.showSnackBar(const SnackBar(content: Text('Hesap engellendi.')));
+    TekirSnack.showOn(messenger, 'Hesap engellendi.');
   } catch (error) {
-    messenger.showSnackBar(
-      SnackBar(content: Text(blockActionErrorMessageTr(error))),
+    TekirSnack.showOn(
+      messenger,
+      blockActionErrorMessageTr(error),
+      tone: TekirSnackTone.failed,
     );
   }
 }

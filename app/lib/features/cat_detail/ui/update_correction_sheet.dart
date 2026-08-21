@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/states/submitting_button.dart';
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/cat_detail.dart';
 import 'cat_update_composer_notifier.dart' show helpNoteMaxLength;
@@ -518,5 +519,7 @@ Future<void> openUpdateCorrectionSheet(
     UpdateCorrectionOutcome.deleted => 'Güncelleme silindi',
     UpdateCorrectionOutcome.alreadyGone => 'Bu güncelleme zaten silinmiş',
   };
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  // alreadyGone is not a failure the user caused — the update is simply
+  // no longer there, which is the same outcome they asked for.
+  TekirSnack.show(context, message, clearsFixedBar: true);
 }

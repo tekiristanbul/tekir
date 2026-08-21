@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 
 /// The 0.1 contact/support address (issue #91) — also used in the README
@@ -82,13 +83,10 @@ class FeedbackEntry extends ConsumerWidget {
     // recoverable snackbar with the address itself so the user can still
     // reach us — mirrors follow_button.dart's error pattern.
     if (!opened && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'E-posta uygulaması açılamadı. Bize $kFeedbackEmail '
-            'adresinden ulaşabilirsin.',
-          ),
-        ),
+      TekirSnack.failure(
+        context,
+        'E-posta uygulaması açılamadı. Bize $kFeedbackEmail '
+        'adresinden ulaşabilirsin.',
       );
     }
   }

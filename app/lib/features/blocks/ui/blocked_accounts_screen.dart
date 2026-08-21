@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/states/inline_spinner.dart';
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/blocks_api.dart';
 import 'blocks_notifier.dart';
@@ -57,14 +58,14 @@ class _BlockedRowState extends ConsumerState<_BlockedRow> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       await ref.read(blocksProvider.notifier).unblock(widget.account.userId);
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Engel kaldırıldı.')),
-      );
+      TekirSnack.showOn(messenger, 'Engel kaldırıldı.');
     } catch (error) {
       if (!mounted) return;
       setState(() => _isUnblocking = false);
-      messenger.showSnackBar(
-        SnackBar(content: Text(blockActionErrorMessageTr(error))),
+      TekirSnack.showOn(
+        messenger,
+        blockActionErrorMessageTr(error),
+        tone: TekirSnackTone.failed,
       );
     }
   }

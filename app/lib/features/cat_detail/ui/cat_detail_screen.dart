@@ -16,6 +16,7 @@ import '../../../core/states/initial_read_gate.dart';
 import '../../../core/states/inline_spinner.dart';
 import '../../../core/states/optimistic_inline_row.dart';
 import '../../../core/states/shimmer_sweep.dart';
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/relative_time.dart';
 import '../../auth/ui/auth_gate.dart';
@@ -146,13 +147,23 @@ class _CatDetailBody extends ConsumerWidget {
     // says "kaydedilemedi". Help failures never carry a pending row; the
     // sheet shows their error inline itself.
     ref.listen(catUpdateComposerProvider(detail.id), (previous, next) {
+      // An ordinary submission never shows a snackbar — its optimistic row
+      // is the feedback — so this transition is the only place the
+      // confirmation haptic can fire. TekirHaptics.committed names "an
+      // update posted" first in its own doc and, until now, was called
+      // from nowhere but the follow button.
+      final wasSaving = previous?.pending?.status == InlineSaveStatus.saving;
+      if (wasSaving && next.pending == null) {
+        unawaited(TekirHaptics.committed());
+      }
       final failedNow =
-          previous?.pending?.status == InlineSaveStatus.saving &&
-          next.pending?.status == InlineSaveStatus.failed;
+          wasSaving && next.pending?.status == InlineSaveStatus.failed;
       final error = next.error;
       if (!failedNow || error == null) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(updateSubmitErrorMessageTr(error))),
+      TekirSnack.failure(
+        context,
+        updateSubmitErrorMessageTr(error),
+        clearsFixedBar: true,
       );
     });
     return Stack(
@@ -550,13 +561,11 @@ class _DeleteCatButtonState extends ConsumerState<_DeleteCatButton> {
       // toast still lands once the previous screen is back on top.
       final messenger = ScaffoldMessenger.of(context);
       context.pop();
-      messenger.showSnackBar(const SnackBar(content: Text('Kedi silindi.')));
+      TekirSnack.showOn(messenger, 'Kedi silindi.');
     } catch (_) {
       if (!mounted) return;
       setState(() => _isDeleting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kedi silinemedi, tekrar dene.')),
-      );
+      TekirSnack.failure(context, 'Kedi silinemedi, tekrar dene.');
     }
   }
 
@@ -621,9 +630,7 @@ class _FullScreenPhotoState extends ConsumerState<_FullScreenPhoto> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _submitting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kapak fotoğrafı değiştirilemedi')),
-      );
+      TekirSnack.failure(context, 'Kapak fotoğrafı değiştirilemedi');
     }
   }
 
@@ -1800,9 +1807,7 @@ Future<void> _openComposer(
   // Only a synchronous help submission pops true — an ordinary one pops
   // immediately and its optimistic row carries the feedback instead.
   if (result == true && context.mounted) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Güncelleme paylaşıldı')));
+    TekirSnack.show(context, 'Güncelleme paylaşıldı', clearsFixedBar: true);
   }
 }
 

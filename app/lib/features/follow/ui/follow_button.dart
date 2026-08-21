@@ -7,6 +7,7 @@ import '../../../core/analytics/analytics.dart';
 import '../../../core/motion/press_response.dart';
 import '../../../core/motion/tekir_haptics.dart';
 import '../../../core/motion/tekir_motion.dart';
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/ui/auth_gate.dart';
 import '../../notifications/ui/notification_optin_sheet.dart';
@@ -142,11 +143,10 @@ class FollowButton extends ConsumerWidget {
     try {
       await ref.read(followsProvider.notifier).toggle(catId);
     } catch (e) {
-      unawaited(TekirHaptics.refused());
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(followActionErrorMessageTr(e))));
+      // TekirSnack fires the refused haptic itself, so the outcome cannot
+      // reach the eye without reaching the hand.
+      TekirSnack.failure(context, followActionErrorMessageTr(e));
       return;
     }
     // logged only after the server confirmed the change (issue #84) — a

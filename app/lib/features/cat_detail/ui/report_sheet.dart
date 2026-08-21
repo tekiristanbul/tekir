@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/analytics/analytics.dart';
 import '../../../core/states/submitting_button.dart';
+import '../../../core/states/tekir_snack.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/ui/auth_gate.dart';
 import 'report_notifier.dart';
@@ -317,8 +318,6 @@ Future<void> _openReportSheetAuthenticated(
     builder: (_) => ReportSheet(targetType: targetType, targetId: targetId),
   );
   if (submitted == true && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Bildirimin alındı, teşekkürler.')),
-    );
+    TekirSnack.show(context, 'Bildirimin alındı, teşekkürler.');
   }
 }
