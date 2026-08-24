@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/painting.dart';
@@ -31,6 +32,8 @@ CatMarker _cat(
 );
 
 void main() {
+  group('one ground everywhere', _oneGroundEverywhereTests);
+
   group('clusters that cannot split', _clusterSplitTests);
 
   group('basemap style', _mapStyleTests);
@@ -506,6 +509,35 @@ void _clusterSplitTests() {
         maxZoom: istanbulMaxZoom,
       ),
       isFalse,
+    );
+  });
+}
+
+// issue #285: one ground, everywhere a map is drawn. The add-cat picker
+// shipped with no style at all, so a cat was placed on google's default
+// palette and then appeared on tekir's — the same street, twice, in two
+// different cities. A third map must not be able to drift the same way.
+void _oneGroundEverywhereTests() {
+  test('every GoogleMap in the app names the shared style', () async {
+    final maps = <String>[];
+    final missing = <String>[];
+
+    await for (final entity in Directory('lib').list(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      final source = await entity.readAsString();
+      if (!source.contains('GoogleMap(')) continue;
+      maps.add(entity.path);
+      if (!source.contains('style: catsOfIstanbulMapStyle')) {
+        missing.add(entity.path);
+      }
+    }
+
+    // A guard against the check quietly finding nothing.
+    expect(maps, isNotEmpty, reason: 'no GoogleMap found to check');
+    expect(
+      missing,
+      isEmpty,
+      reason: 'these draw a map without tekir\'s own ground: $missing',
     );
   });
 }
