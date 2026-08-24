@@ -25,6 +25,11 @@ import 'discover_skeleton.dart';
 /// enough that the list feels like it is following the typing.
 const _searchDebounce = Duration(milliseconds: 300);
 
+/// Vertical padding inside the search pill. Chosen so a single line of the
+/// field's own type reaches the 44pt tap minimum — the field is its own tap
+/// target, and a hugging one would be 23pt tall.
+const _fieldVerticalPadding = 11.0;
+
 /// Cat search (issue #284, approved design artboard 03) — the surface the
 /// map's top-strip search pill opens.
 ///
@@ -299,8 +304,18 @@ class _SearchHeader extends StatelessWidget {
                             fontWeight: FontWeight.w600,
                             color: AppColors.ink,
                           ),
+                          // Symmetric padding, so the text is centred by
+                          // construction rather than by an alignment the
+                          // decorator applies differently in each state.
+                          // `isDense` left it asymmetric: the text sat low at
+                          // rest and jumped up the moment a cursor appeared.
+                          // Padding rather than a fixed height, so the field
+                          // grows with the system text scale instead of
+                          // overflowing a box sized for one.
                           decoration: const InputDecoration(
-                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(
+                              vertical: _fieldVerticalPadding,
+                            ),
                             border: InputBorder.none,
                             hintText: 'kedi ara',
                             hintStyle: TextStyle(

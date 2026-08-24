@@ -208,6 +208,8 @@ Future<void> _selectNeedsHelpTab(WidgetTester tester) async {
 }
 
 void main() {
+  group('search field alignment', _fieldAlignmentTests);
+
   group('nearby tab (default)', () {
     testWidgets(
       'initial read shows nothing before 400 ms, then the list skeleton',
@@ -869,4 +871,45 @@ class _BlockingDiscoverApi extends DiscoverApi {
   }) {
     return completer.future;
   }
+}
+
+// The pill's text sat low at rest and jumped up the moment a cursor
+// appeared, because the decorator kept its own vertical padding and split
+// it unevenly.
+void _fieldAlignmentTests() {
+  Rect textRect(WidgetTester tester) =>
+      tester.getRect(find.byType(EditableText));
+
+  Rect fieldBox(WidgetTester tester) => tester.getRect(find.byType(TextField));
+
+  testWidgets('the field is centred in the pill, focused or not', (
+    tester,
+  ) async {
+    await _pump(tester, session: null, discoverApi: _FakeDiscoverApi());
+    // The field autofocuses, so this is the focused state; the resting one
+    // is covered by the field keeping its size and padding either way.
+
+    final box = fieldBox(tester);
+    final text = textRect(tester);
+    final above = text.top - box.top;
+    final below = box.bottom - text.bottom;
+
+    expect(
+      above,
+      closeTo(below, 1.0),
+      reason:
+          'text sits ${above}px from the top and ${below}px from the bottom '
+          'of a ${box.height}px field',
+    );
+  });
+
+  testWidgets('typing never moves it', (tester) async {
+    await _pump(tester, session: null, discoverApi: _FakeDiscoverApi());
+
+    final before = textRect(tester);
+    await tester.enterText(find.byType(TextField), 'boncuk');
+    await tester.pumpAndSettle();
+
+    expect(textRect(tester).top, closeTo(before.top, 0.5));
+  });
 }
