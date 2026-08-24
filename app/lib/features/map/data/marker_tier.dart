@@ -208,6 +208,16 @@ ClusteredCats clusterCats({
   return ClusteredCats(loose: loose, clusters: clusters);
 }
 
+/// Whether zooming in would ever break [cluster] apart.
+///
+/// A cell is about seven metres across at the map's closest zoom, so two
+/// cats recorded from the same doorway share one for good: tapping the
+/// group zooms until there is no zoom left and the cats inside it stay
+/// unreachable. The caller checks this first and offers to pick from the
+/// group instead of pretending another tap will help.
+bool clusterCanSplitByZooming(CatCluster cluster, {required double maxZoom}) =>
+    clusterCats(cats: cluster.cats, zoom: maxZoom).clusters.isEmpty;
+
 /// How far a cluster tap zooms in.
 ///
 /// Fitting the camera to the group's own bounds sounds more precise, but

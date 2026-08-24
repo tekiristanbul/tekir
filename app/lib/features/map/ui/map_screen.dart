@@ -30,6 +30,7 @@ import '../data/marker_tier.dart';
 import '../data/web_mercator.dart';
 import 'cat_preview_sheet.dart';
 import 'cats_map_notifier.dart';
+import 'cluster_picker_sheet.dart';
 import 'selection_halo.dart';
 import 'map_states.dart';
 
@@ -432,15 +433,47 @@ class _MapScreenState extends ConsumerState<MapScreen>
     );
   }
 
+  /// Opens a group: by zooming in on it, or — when zooming would never
+  /// break it apart — by asking which cat inside it was meant.
+  ///
+  /// A cell is about seven metres across at the map's closest zoom, so two
+  /// cats recorded from the same doorway share one for good. Zooming at
+  /// them spends the last of the zoom and leaves them exactly as grouped as
+  /// they were, with no way to reach either one.
   Future<void> _onClusterTap(CatCluster cluster) async {
     unawaited(TekirHaptics.acknowledge());
     final controller = _controller;
     if (controller == null) return;
     final currentZoom = await controller.getZoomLevel();
-    await controller.animateCamera(
-      CameraUpdate.newLatLngZoom(
-        LatLng(cluster.lat, cluster.lng),
-        zoomAfterClusterTap(currentZoom, istanbulMaxZoom),
+    if (!mounted) return;
+
+    final splits = clusterCanSplitByZooming(cluster, maxZoom: istanbulMaxZoom);
+    if (splits && currentZoom < istanbulMaxZoom) {
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(
+          LatLng(cluster.lat, cluster.lng),
+          zoomAfterClusterTap(currentZoom, istanbulMaxZoom),
+        ),
+      );
+      return;
+    }
+    await _openClusterPicker(cluster);
+  }
+
+  Future<void> _openClusterPicker(CatCluster cluster) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useRootNavigator: true,
+      builder: (sheetContext) => PointerInterceptor(
+        child: ClusterPickerSheet(
+          cluster: cluster,
+          onPick: (cat) {
+            Navigator.of(sheetContext).pop();
+            _onCatSelected(cat);
+          },
+        ),
       ),
     );
   }

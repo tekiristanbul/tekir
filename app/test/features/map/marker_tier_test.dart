@@ -31,6 +31,8 @@ CatMarker _cat(
 );
 
 void main() {
+  group('clusters that cannot split', _clusterSplitTests);
+
   group('basemap style', _mapStyleTests);
 
   group('tierForZoom', () {
@@ -437,5 +439,73 @@ void _mapStyleTests() {
 
     expect(hidden('poi'), isTrue);
     expect(hidden('transit'), isTrue);
+  });
+}
+
+// issue #285: a group the map cannot pull apart. A cell is about seven
+// metres across at the closest zoom, so two cats recorded from the same
+// doorway share one for good — tapping the group spends the last of the
+// zoom and leaves both unreachable. The map asks which one instead, and
+// this is the check that decides.
+void _clusterSplitTests() {
+  test('cats a street apart come apart by zooming', () {
+    final grouped = clusterCats(
+      cats: [
+        _cat('a', lat: 41.0250, lng: 28.9740),
+        // ~35 m north.
+        _cat('b', lat: 41.02531, lng: 28.9740),
+      ],
+      zoom: 16,
+    );
+
+    expect(grouped.clusters, hasLength(1));
+    expect(
+      clusterCanSplitByZooming(
+        grouped.clusters.single,
+        maxZoom: istanbulMaxZoom,
+      ),
+      isTrue,
+    );
+  });
+
+  test('cats in the same doorway never do', () {
+    final grouped = clusterCats(
+      cats: [
+        _cat('a', lat: 41.0250, lng: 28.9740),
+        // ~1 m apart: closer than one cell at the closest zoom the map
+        // allows, so no amount of zooming separates them.
+        _cat('b', lat: 41.025009, lng: 28.9740),
+      ],
+      zoom: 16,
+    );
+
+    expect(grouped.clusters, hasLength(1));
+    expect(
+      clusterCanSplitByZooming(
+        grouped.clusters.single,
+        maxZoom: istanbulMaxZoom,
+      ),
+      isFalse,
+    );
+  });
+
+  test('a group is unsplittable if any pair inside it is', () {
+    final grouped = clusterCats(
+      cats: [
+        _cat('a', lat: 41.0250, lng: 28.9740),
+        _cat('b', lat: 41.025009, lng: 28.9740),
+        _cat('c', lat: 41.02528, lng: 28.9740),
+      ],
+      zoom: 15,
+    );
+
+    expect(grouped.clusters, hasLength(1));
+    expect(
+      clusterCanSplitByZooming(
+        grouped.clusters.single,
+        maxZoom: istanbulMaxZoom,
+      ),
+      isFalse,
+    );
   });
 }
