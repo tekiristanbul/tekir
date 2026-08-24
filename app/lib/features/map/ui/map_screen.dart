@@ -1029,11 +1029,15 @@ class _MapScreenState extends ConsumerState<MapScreen>
               onCameraIdle: _onCameraIdle,
               onCameraMove: _onCameraMove,
             ),
-            if (helpCentres.isNotEmpty || selectedCentre != null)
-              MapHaloLayer(
-                helpCentres: helpCentres,
-                selectedCentre: selectedCentre,
-              ),
+            // Always mounted, so its controllers — and the turn a ring is
+            // part-way through — outlive any moment with nothing to draw.
+            // Mounted only when it had work, the selected cat's ring
+            // restarted from zero every time, which looked like it kept
+            // beginning again.
+            MapHaloLayer(
+              helpCentres: helpCentres,
+              selectedCentre: selectedCentre,
+            ),
             if (isInitialRead)
               // state 13 · harita yükleniyor. keyed on the attempt counter so
               // a retry remounts the gate and earns a fresh 400 ms of silence.

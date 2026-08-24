@@ -78,24 +78,50 @@ class _MapHaloLayerState extends State<MapHaloLayer>
 
   bool _reduced = false;
 
-  /// Driven from here and nowhere else. Deciding this in `build` — which
+  /// True while there is anything to draw at all.
+  bool get _hasWork =>
+      widget.helpCentres.isNotEmpty || widget.selectedCentre != null;
+
+  /// Driven from here and [didUpdateWidget], never from `build` — which
   /// runs on every frame of a camera movement, because these rings track
-  /// their cats — let any rebuild that disagreed stop the controllers: the
-  /// ring turned once and then sat still.
+  /// their cats. Deciding it there let any rebuild that disagreed stop the
+  /// controllers: the ring turned once and then sat still.
+  ///
+  /// The layer itself is mounted for as long as the map is, so this state
+  /// — and the turn the ring is part-way through — survives a moment with
+  /// nothing to draw. Mounting it only when it had work restarted every
+  /// controller from zero each time, which is what made the selected cat's
+  /// ring look like it kept beginning again.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _reduced = TekirMotion.of(context).reduced;
+    _syncControllers();
+  }
+
+  @override
+  void didUpdateWidget(MapHaloLayer old) {
+    super.didUpdateWidget(old);
+    _syncControllers();
+  }
+
+  void _syncControllers() {
+    final running = _hasWork && !_reduced;
     for (final controller in [_help, _selection, _rotation]) {
-      if (_reduced) {
-        // Held at rest rather than stopped mid-turn, so a ring reads as a
-        // deliberate mark instead of an animation someone paused — and so
-        // the tree settles, which a repeating controller never lets it do.
-        controller
-          ..stop()
-          ..value = 0;
-      } else if (!controller.isAnimating) {
-        controller.repeat();
+      if (running) {
+        if (!controller.isAnimating) controller.repeat();
+      } else if (controller.isAnimating) {
+        // Stopped where it stands, not reset: the cat this ring belongs to
+        // may still be selected a frame later, and a ring that jumped back
+        // to zero would read as a new mark rather than the same one.
+        controller.stop();
+      }
+    }
+    // Reduced motion is the one case that does reset, so the ring rests in
+    // a deliberate position rather than wherever it happened to stop.
+    if (_reduced) {
+      for (final controller in [_help, _selection, _rotation]) {
+        controller.value = 0;
       }
     }
   }
@@ -110,6 +136,7 @@ class _MapHaloLayerState extends State<MapHaloLayer>
 
   @override
   Widget build(BuildContext context) {
+    if (!_hasWork) return const SizedBox.shrink();
     return Positioned.fill(
       child: IgnorePointer(
         // Decoration: which cat needs help and which one is selected are
@@ -146,10 +173,16 @@ class MapHaloPainter extends CustomPainter {
     required this.turn,
   });
 
-  /// The design's own sonar: a ring starts at half its radius, half
-  /// visible, and is gone before it reaches full size — so the eye reads
-  /// something leaving the cat, then a rest, rather than a ring arriving.
-  static const _pulseFromScale = 0.5;
+  /// The design's own sonar: a ring grows out of the cat and is gone
+  /// before it reaches full size, leaving a rest — so the eye reads
+  /// something leaving the cat rather than a ring arriving.
+  ///
+  /// It starts at the marker's own edge, not inside it. The artboard can
+  /// start its ring at half radius because the cat's face is a sibling
+  /// drawn over it; here the map is a platform view and every flutter
+  /// layer is above it, so a ring that started inside would cross the
+  /// photo instead of appearing from behind it.
+  static const _pulseFromScale = 1.0;
   static const _pulseToScale = 2.6;
   static const _pulseFadesBy = 0.7;
   static const _pulseFromOpacity = 0.5;
@@ -162,6 +195,15 @@ class MapHaloPainter extends CustomPainter {
   final double? helpPulse;
   final double? selectionPulse;
   final double turn;
+
+  /// Where a ring sits at [progress] through its cycle, as a multiple of
+  /// the marker's radius — the shape of the pulse, exposed so a test can
+  /// assert it leaves from the marker's edge rather than from inside it.
+  static double debugPulseScaleAt(double progress) =>
+      _pulseFromScale + (_pulseToScale - _pulseFromScale) * progress;
+
+  /// The point in a cycle by which a ring has faded to nothing.
+  static const debugPulseFadesBy = _pulseFadesBy;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -188,6 +230,10 @@ class MapHaloPainter extends CustomPainter {
       AppColors.primary,
       selectionPulse,
     );
+    // The dashed ring is the selection's own resting mark: it turns for as
+    // long as the cat is selected and never fades. The pulse comes and
+    // goes around it — without this the cat would be unmarked for the rest
+    // between two pulses, which read as the animation ending.
     canvas.save();
     canvas.translate(selected.dx, selected.dy);
     canvas.rotate(turn * 2 * math.pi);
@@ -203,8 +249,7 @@ class MapHaloPainter extends CustomPainter {
     double? progress,
   ) {
     if (progress == null) return;
-    final scale =
-        _pulseFromScale + (_pulseToScale - _pulseFromScale) * progress;
+    final scale = debugPulseScaleAt(progress);
     final fade = (1 - progress / _pulseFadesBy).clamp(0.0, 1.0);
     final opacity = _pulseFromOpacity * fade;
     if (opacity <= 0) return;
@@ -232,7 +277,7 @@ class MapHaloPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
       ..strokeCap = StrokeCap.round
-      ..color = AppColors.primary.withValues(alpha: 0.55);
+      ..color = AppColors.primary.withValues(alpha: 0.8);
     for (var i = 0; i < dashes; i++) {
       canvas.drawArc(rect, i * sweep, dash, false, paint);
     }

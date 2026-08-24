@@ -32,6 +32,11 @@ MapHaloPainter _painter(WidgetTester tester) =>
     tester.widget<CustomPaint>(find.byType(CustomPaint)).painter
         as MapHaloPainter;
 
+/// Where a ring is at [progress] through its cycle, as a multiple of the
+/// marker's own radius.
+double _ringScaleAt(double progress) =>
+    MapHaloPainter.debugPulseScaleAt(progress);
+
 void main() {
   group('what pulses', () {
     testWidgets('a cat waiting for help pulses on its own', (tester) async {
@@ -135,6 +140,61 @@ void main() {
       );
       last = now;
     }
+  });
+
+  group('the pulse leaves from behind the cat', () {
+    test('it never starts inside the marker it belongs to', () {
+      // The artboard can start its ring at half radius, because there the
+      // cat's face is drawn over it. Here every flutter layer is above the
+      // map's platform view, so a ring that started inside would cross the
+      // photo instead of appearing from behind it.
+      expect(_ringScaleAt(0), greaterThanOrEqualTo(1.0));
+    });
+
+    test('and only ever grows outward', () {
+      var previous = _ringScaleAt(0);
+      for (final progress in [0.2, 0.4, 0.6, 0.8, 1.0]) {
+        final scale = _ringScaleAt(progress);
+        expect(scale, greaterThan(previous));
+        previous = scale;
+      }
+    });
+  });
+
+  group('the selected cat keeps its mark', () {
+    testWidgets('a moment with nothing to draw does not restart it', (
+      tester,
+    ) async {
+      await _pump(tester, selectedCentre: const Offset(200, 400));
+      await tester.pump(const Duration(milliseconds: 3000));
+      final mid = _painter(tester).turn;
+      expect(mid, greaterThan(0));
+
+      // The cat is panned out of view and back — the layer has nothing to
+      // draw in between. Mounted only when it had work, this restarted
+      // every controller from zero.
+      await _pump(tester);
+      await tester.pump(const Duration(milliseconds: 100));
+      await _pump(tester, selectedCentre: const Offset(200, 400));
+
+      expect(_painter(tester).turn, greaterThanOrEqualTo(mid));
+    });
+
+    testWidgets('the ring is drawn even between two pulses', (tester) async {
+      await _pump(tester, selectedCentre: const Offset(200, 400));
+
+      // Past the point the pulse has faded to nothing: without a resting
+      // mark the cat would be unmarked here, which reads as the animation
+      // having ended.
+      await tester.pump(
+        MapHaloLayer.selectionPeriod * MapHaloPainter.debugPulseFadesBy,
+      );
+      await tester.pump(const Duration(milliseconds: 80));
+
+      final painter = _painter(tester);
+      expect(painter.selectedCentre, isNotNull);
+      expect(painter.turn, greaterThan(0));
+    });
   });
 
   testWidgets('it carries nothing to assistive technology', (tester) async {
