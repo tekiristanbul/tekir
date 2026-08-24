@@ -47,6 +47,14 @@ class _FixedCatDetailNotifier extends CatDetailNotifier {
   Future<void> load() async {}
 }
 
+// Reduced motion is on for the whole harness. Selecting a cat mounts the
+// selection halo (selection_halo.dart), whose ring turns and pulses for as
+// long as the selection lasts — a continuous animation that would hang
+// every pumpAndSettle below, exactly like state 07's sonar pulse already
+// does. Under reduced motion the halo holds still, which is its own
+// contract and costs these tests nothing: none of them are about motion.
+// selection_halo_test.dart covers the animated case on its own terms.
+
 // Idle pre-fetch state — hasLoadedOnce with zero markers would mount
 // state 07's empty-radius card (map_states.dart), whose sonar pulse
 // repeats forever and would hang every pumpAndSettle below.
@@ -115,7 +123,10 @@ Future<void> _pumpMap(WidgetTester tester) async {
           _GuestSessionIdentityService(),
         ),
       ],
-      child: MaterialApp.router(routerConfig: appRouter),
+      child: MediaQuery(
+        data: const MediaQueryData(disableAnimations: true),
+        child: MaterialApp.router(routerConfig: appRouter),
+      ),
     ),
   );
   await tester.pump();
@@ -136,6 +147,20 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(CatPreviewSheet), findsOneWidget);
+
+      // No scrim over the map. The default sheet barrier is 54% black,
+      // which washed out the very things the selection had just made: the
+      // cat's turning ring, its help pulse, and the neighbours quieted to
+      // a third around it.
+      for (final barrier in tester.widgetList<ModalBarrier>(
+        find.byType(ModalBarrier),
+      )) {
+        expect(
+          barrier.color?.a ?? 0,
+          0,
+          reason: 'a scrim is covering the map behind the sheet',
+        );
+      }
       expect(find.byType(CatDetailScreen), findsNothing);
       expect(find.text('tekir'), findsWidgets);
       expect(find.text('Galata Kulesi çevresi, Beyoğlu'), findsOneWidget);

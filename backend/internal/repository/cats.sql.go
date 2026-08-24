@@ -343,6 +343,8 @@ with candidates as (
     coalesce(c.photo_url, m.url, '') as photo_url,
     c.area_label,
     c.last_update_at,
+    st_x(c.area::geometry)::float8 as cat_lng,
+    st_y(c.area::geometry)::float8 as cat_lat,
     nh.needs_help_category,
     nh.comment as needs_help_comment,
     nh.created_at as needs_help_created_at,
@@ -365,8 +367,17 @@ with candidates as (
       where b.blocker_user_id = $7::uuid
         and b.blocked_user_id = c.created_by_user_id
     )
+    -- issue #284: search by the cat's own name. null (absent q) is a
+    -- no-op, so an unfiltered discover read is byte-identical to what it
+    -- was before search existed. a cat with no name can never match a
+    -- name query — ilike against null is null, not true — which is the
+    -- intended behaviour, not an accident of three-valued logic.
+    and (
+      $8::text is null
+      or c.name ilike '%' || $8::text || '%'
+    )
 )
-select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
+select id, name, photo_url, area_label, last_update_at, cat_lng, cat_lat, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
 where needs_help_expires_at is not null
   and needs_help_expires_at > $1::timestamptz
@@ -387,6 +398,7 @@ type ListActiveNeedsHelpCatsByDistanceParams struct {
 	Lng            float64            `json:"lng"`
 	Lat            float64            `json:"lat"`
 	ViewerUserID   pgtype.UUID        `json:"viewer_user_id"`
+	NameQuery      pgtype.Text        `json:"name_query"`
 }
 
 type ListActiveNeedsHelpCatsByDistanceRow struct {
@@ -395,6 +407,8 @@ type ListActiveNeedsHelpCatsByDistanceRow struct {
 	PhotoUrl           string             `json:"photo_url"`
 	AreaLabel          pgtype.Text        `json:"area_label"`
 	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
+	CatLng             float64            `json:"cat_lng"`
+	CatLat             float64            `json:"cat_lat"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
 	NeedsHelpComment   pgtype.Text        `json:"needs_help_comment"`
 	NeedsHelpCreatedAt pgtype.Timestamptz `json:"needs_help_created_at"`
@@ -425,6 +439,7 @@ func (q *Queries) ListActiveNeedsHelpCatsByDistance(ctx context.Context, arg Lis
 		arg.Lng,
 		arg.Lat,
 		arg.ViewerUserID,
+		arg.NameQuery,
 	)
 	if err != nil {
 		return nil, err
@@ -439,6 +454,8 @@ func (q *Queries) ListActiveNeedsHelpCatsByDistance(ctx context.Context, arg Lis
 			&i.PhotoUrl,
 			&i.AreaLabel,
 			&i.LastUpdateAt,
+			&i.CatLng,
+			&i.CatLat,
 			&i.NeedsHelpCategory,
 			&i.NeedsHelpComment,
 			&i.NeedsHelpCreatedAt,
@@ -463,6 +480,8 @@ with candidates as (
     coalesce(c.photo_url, m.url, '') as photo_url,
     c.area_label,
     c.last_update_at,
+    st_x(c.area::geometry)::float8 as cat_lng,
+    st_y(c.area::geometry)::float8 as cat_lat,
     nh.needs_help_category,
     nh.comment as needs_help_comment,
     nh.created_at as needs_help_created_at,
@@ -485,8 +504,17 @@ with candidates as (
       where b.blocker_user_id = $6::uuid
         and b.blocked_user_id = c.created_by_user_id
     )
+    -- issue #284: search by the cat's own name. null (absent q) is a
+    -- no-op, so an unfiltered discover read is byte-identical to what it
+    -- was before search existed. a cat with no name can never match a
+    -- name query — ilike against null is null, not true — which is the
+    -- intended behaviour, not an accident of three-valued logic.
+    and (
+      $7::text is null
+      or c.name ilike '%' || $7::text || '%'
+    )
 )
-select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
+select id, name, photo_url, area_label, last_update_at, cat_lng, cat_lat, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
 where $1::float8 is null
   or distance_m > $1::float8
@@ -502,6 +530,7 @@ type ListCatsByDistanceParams struct {
 	Lng            float64       `json:"lng"`
 	Lat            float64       `json:"lat"`
 	ViewerUserID   pgtype.UUID   `json:"viewer_user_id"`
+	NameQuery      pgtype.Text   `json:"name_query"`
 }
 
 type ListCatsByDistanceRow struct {
@@ -510,6 +539,8 @@ type ListCatsByDistanceRow struct {
 	PhotoUrl           string             `json:"photo_url"`
 	AreaLabel          pgtype.Text        `json:"area_label"`
 	LastUpdateAt       pgtype.Timestamptz `json:"last_update_at"`
+	CatLng             float64            `json:"cat_lng"`
+	CatLat             float64            `json:"cat_lat"`
 	NeedsHelpCategory  pgtype.Text        `json:"needs_help_category"`
 	NeedsHelpComment   pgtype.Text        `json:"needs_help_comment"`
 	NeedsHelpCreatedAt pgtype.Timestamptz `json:"needs_help_created_at"`
@@ -548,6 +579,7 @@ func (q *Queries) ListCatsByDistance(ctx context.Context, arg ListCatsByDistance
 		arg.Lng,
 		arg.Lat,
 		arg.ViewerUserID,
+		arg.NameQuery,
 	)
 	if err != nil {
 		return nil, err
@@ -562,6 +594,8 @@ func (q *Queries) ListCatsByDistance(ctx context.Context, arg ListCatsByDistance
 			&i.PhotoUrl,
 			&i.AreaLabel,
 			&i.LastUpdateAt,
+			&i.CatLng,
+			&i.CatLat,
 			&i.NeedsHelpCategory,
 			&i.NeedsHelpComment,
 			&i.NeedsHelpCreatedAt,

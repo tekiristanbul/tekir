@@ -105,11 +105,23 @@ class CatsMapNotifier extends Notifier<CatsMapState> {
     try {
       final markers = await ref.read(catsApiProvider).fetchInBounds(bounds);
       if (requestId != _requestId) return;
-      state = CatsMapState(
+      // copyWith, never a hand-built CatsMapState: this rebuilt the whole
+      // object field by field and dropped [CatsMapState.selectedMarker],
+      // which defaults to null. Selecting a cat moves the camera, the
+      // camera settling refetches the viewport, and the refetch landing
+      // deselected the cat — a second or so after the tap, with its sheet
+      // still open about it. The selected pin returned to its resting
+      // size, its neighbours came back up to full strength, and its ring
+      // and pulse went out, all while the sheet said a cat was chosen.
+      //
+      // Exactly the failure `CatDetailNotifier.prependUpdate` had for the
+      // same reason (issue #281): every optional field a hand-built copy
+      // forgets is a field that silently resets.
+      state = state.copyWith(
         markers: markers,
         isLoading: false,
         hasLoadedOnce: true,
-        attempt: state.attempt,
+        clearError: true,
         searchRadiusMeters: searchRadiusOf(bounds),
       );
     } catch (e) {

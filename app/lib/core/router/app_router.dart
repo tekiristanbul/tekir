@@ -8,22 +8,20 @@ import '../../features/auth/ui/login_screen.dart';
 import '../../features/badges/ui/badge_detail_screen.dart';
 import '../../features/badges/ui/badges_screen.dart';
 import '../../features/cat_detail/ui/cat_detail_screen.dart';
-import '../../features/discover/ui/discover_screen.dart';
 import '../../features/map/ui/map_screen.dart';
 import '../../features/notifications/ui/notifications_screen.dart';
 import '../../features/profile/ui/profile_screen.dart';
-import 'app_shell.dart';
 
-/// The 3 root tabs (Harita/Keşfet/Profil, issue #80 product-owner review,
-/// finding 1) live inside a [StatefulShellRoute.indexedStack] wrapped by
-/// [AppShell] — this matches the approved prototype's exact IA
-/// (prototype/app.js:153-167's bottomNav) and keeps each branch's own
-/// navigation state alive (via IndexedStack) when switching tabs. Every
-/// other route (cat detail, login, account, add-cat, notifications,
-/// badges) stays a plain top-level route, pushed on top of the shell — the
-/// shell's chrome (nav bar + add-cat fab) disappears the moment one of
-/// those is pushed, exactly like the prototype's per-screen bottomNav
-/// visibility.
+/// The map is the application (issue #284, approved design artboard 01).
+///
+/// There is no shell and no tab bar. `/` is the map, full height, and every
+/// other screen is a plain route pushed over it — including the profile,
+/// which used to be a peer tab and is now what the top strip's avatar
+/// opens. The keşfet tab is gone entirely: its three surfaces live in the
+/// search panel the strip's search pill opens
+/// (features/discover/ui/cat_search_panel.dart), which is not a route of
+/// its own but a surface over the map, so picking a cat can hand it back to
+/// the map instead of navigating away from it.
 ///
 /// `/login` and `/account` are reachable directly (e.g. via `context.push`),
 /// but no route here redirects or guards based on auth state — public
@@ -32,32 +30,10 @@ import 'app_shell.dart';
 /// redirect (see auth_gate.dart).
 final appRouter = GoRouter(
   routes: [
-    StatefulShellRoute.indexedStack(
-      builder: (context, state, navigationShell) =>
-          AppShell(navigationShell: navigationShell),
-      branches: [
-        StatefulShellBranch(
-          routes: [
-            GoRoute(path: '/', builder: (context, state) => const MapScreen()),
-          ],
-        ),
-        StatefulShellBranch(
-          routes: [
-            GoRoute(
-              path: '/discover',
-              builder: (context, state) => const DiscoverScreen(),
-            ),
-          ],
-        ),
-        StatefulShellBranch(
-          routes: [
-            GoRoute(
-              path: '/profile',
-              builder: (context, state) => const ProfileScreen(),
-            ),
-          ],
-        ),
-      ],
+    GoRoute(path: '/', builder: (context, state) => const MapScreen()),
+    GoRoute(
+      path: '/profile',
+      builder: (context, state) => const ProfileScreen(),
     ),
     GoRoute(
       path: '/cats/:id',

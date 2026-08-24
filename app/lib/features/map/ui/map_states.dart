@@ -253,8 +253,14 @@ class EmptyRadiusCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: _CardButton(
+                    // No glyph: with one, the label wrapped to two lines at
+                    // normal text scale in half a card's width, which read
+                    // as a button whose text had slipped rather than as a
+                    // label that needed the room. The label is what carries
+                    // this action — and shortening it instead would have
+                    // made it "kedi ekle", the same words as the map's own
+                    // pill a few pixels below, on screen at the same time.
                     label: 'ilk kediyi ekle',
-                    icon: Icons.add,
                     background: AppColors.primary,
                     foreground: AppColors.primaryInk,
                     onTap: onAddCat,
@@ -284,14 +290,12 @@ class EmptyRadiusCard extends StatelessWidget {
 class _CardButton extends StatelessWidget {
   const _CardButton({
     required this.label,
-    this.icon,
     required this.background,
     required this.foreground,
     required this.onTap,
   });
 
   final String label;
-  final IconData? icon;
   final Color background;
   final Color foreground;
   final VoidCallback? onTap;
@@ -317,10 +321,6 @@ class _CardButton extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              if (icon != null) ...[
-                Icon(icon, size: 16, color: ink),
-                const SizedBox(width: AppSpacing.s2),
-              ],
               // Wraps to a second line when the button is narrower than
               // the label (large text scale on a narrow phone) — the
               // minHeight-only constraint above lets the button grow.

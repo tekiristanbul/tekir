@@ -35,15 +35,23 @@ const _healthyCat = CatMarker(
   lng: 28.97440,
 );
 
-// Same rationale as map_marker_navigation_test.dart: GoogleMap's platform
-// view throws MissingPluginException the moment the marker set becomes
-// non-empty under `flutter test`. selectCat() only ever sets
-// CatsMapState.selectedMarker, never CatsMapState.markers, so driving
-// selection directly (as a real marker tap does under the hood) never
-// populates that set and never touches the platform view.
+// Reduced motion is on for the whole harness. Selecting a cat mounts the
+// selection halo (selection_halo.dart), whose ring turns and pulses for as
+// long as the selection lasts — a continuous animation that would hang
+// every pumpAndSettle below, exactly like state 07's sonar pulse already
+// does. Under reduced motion the halo holds still, which is its own
+// contract and costs these tests nothing: none of them are about motion.
+// selection_halo_test.dart covers the animated case on its own terms.
+
+// One cat needing help is loaded, because the help strip states a count and
+// is absent at zero (issue #284) — an affordance for filtering to nothing
+// is not an affordance. Selection is still driven directly rather than by a
+// real marker tap: selectCat() only ever sets CatsMapState.selectedMarker,
+// which is exactly what a marker tap does under the hood.
 class _EmptyCatsMapNotifier extends CatsMapNotifier {
   @override
-  CatsMapState build() => const CatsMapState();
+  CatsMapState build() =>
+      CatsMapState(markers: [_needsHelpCat], hasLoadedOnce: true);
 }
 
 Widget _harness() {
@@ -55,7 +63,10 @@ Widget _harness() {
       ),
       catsMapProvider.overrideWith(_EmptyCatsMapNotifier.new),
     ],
-    child: const MaterialApp(home: MapScreen()),
+    child: const MediaQuery(
+      data: MediaQueryData(disableAnimations: true),
+      child: MaterialApp(home: MapScreen()),
+    ),
   );
 }
 
@@ -80,7 +91,7 @@ void _tapHelpFilterChip(WidgetTester tester) {
   tester
       .widget<InkWell>(
         find.ancestor(
-          of: find.text('yardım gerekiyor'),
+          of: find.textContaining('kedi yardım bekliyor'),
           matching: find.byType(InkWell),
         ),
       )
@@ -95,7 +106,7 @@ void main() {
       try {
         await _pumpMap(tester);
 
-        final chip = find.bySemanticsLabel('yardım gerekiyor filtresi');
+        final chip = find.bySemanticsLabel(RegExp('kedi yardım bekliyor'));
         expect(
           tester.getSemantics(chip).flagsCollection.isToggled.toBoolOrNull(),
           isFalse,
