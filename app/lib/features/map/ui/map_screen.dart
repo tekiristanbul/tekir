@@ -31,7 +31,7 @@ import '../data/web_mercator.dart';
 import 'cat_preview_sheet.dart';
 import 'cats_map_notifier.dart';
 import 'cluster_picker_sheet.dart';
-import 'selection_halo.dart';
+import 'map_halo_layer.dart';
 import 'map_states.dart';
 
 /// istanbul street-level: about 2-3 streets, per docs/product/map.md.
@@ -146,6 +146,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
   /// Photo urls already asked for, so a rebuild does not re-request one
   /// that is still in flight.
   final _requestedPhotos = <String>{};
+
+  /// Cats waiting for help that are currently drawn as their own face, and
+  /// therefore carry a pulsing ring (approved design, artboard 01). Only
+  /// the avatar tier: at the zooms where a cat is a dot, a screenful of
+  /// expanding rings is weather, not a signal. Resolved with the marker
+  /// set, projected on every camera frame.
+  List<CatMarker> _helpHaloCats = const [];
 
   // prototype/app.js's `mapHelpFilter` (map.js's renderLeafletMarkers):
   // hides every non-alerted marker instead of navigating or refetching —
@@ -264,8 +271,16 @@ class _MapScreenState extends ConsumerState<MapScreen>
         ),
     ]);
 
+    final helpHaloCats = [
+      for (final cat in grouped.loose)
+        if (cat.needsHelp && tiers[cat.id] == MarkerTier.avatar) cat,
+    ];
+
     if (generation != _markerBuildGeneration || !mounted) return;
-    setState(() => _markers = built.expand((m) => m).toSet());
+    setState(() {
+      _markers = built.expand((m) => m).toSet();
+      _helpHaloCats = helpHaloCats;
+    });
   }
 
   /// Rebuilds from whatever the provider currently holds — the shape every
@@ -642,19 +657,20 @@ class _MapScreenState extends ConsumerState<MapScreen>
     });
   }
 
-  /// Where the selected cat sits on screen right now, or null when there is
-  /// no selection, no camera yet, or the cat has been panned out of view.
-  Offset? _selectedHaloCentre(CatMarker? selected) {
+  /// Where [cat] sits on screen right now, or null when there is no camera
+  /// yet or the cat has been panned out of view.
+  ///
+  /// Off-screen by more than a ring's own reach means no ring: drawing one
+  /// would pin it to an edge the cat is not at.
+  Offset? _haloCentre(CatMarker? cat) {
     final camera = _camera;
-    if (selected == null || camera == null || _mapSize.isEmpty) return null;
+    if (cat == null || camera == null || _mapSize.isEmpty) return null;
     final offset = screenOffsetOf(
-      LatLng(selected.lat, selected.lng),
+      LatLng(cat.lat, cat.lng),
       cameraTarget: camera.target,
       zoom: camera.zoom,
       size: _mapSize,
     );
-    // Off-screen by more than the halo's own reach: drawing it would pin a
-    // ring to an edge the cat is not at.
     const slack = _selectionHaloRadius * 2;
     if (offset.dx < -slack ||
         offset.dy < -slack ||
@@ -934,7 +950,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
       zoom: isFallback ? istanbulFallbackZoom : _initialZoom,
     );
     _camera ??= initialCamera;
-    final haloCentre = _selectedHaloCentre(selected);
+    final selectedCentre = _haloCentre(selected);
+    final helpCentres = <Offset>[
+      for (final cat in _helpHaloCats)
+        if (cat.id != selected?.id) ?_haloCentre(cat),
+    ];
 
     return LayoutBuilder(
       builder: (context, box) {
@@ -982,8 +1002,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
               onCameraIdle: _onCameraIdle,
               onCameraMove: _onCameraMove,
             ),
-            if (haloCentre != null)
-              SelectionHalo(center: haloCentre, radius: _selectionHaloRadius),
+            if (helpCentres.isNotEmpty || selectedCentre != null)
+              MapHaloLayer(
+                helpCentres: helpCentres,
+                selectedCentre: selectedCentre,
+              ),
             if (isInitialRead)
               // state 13 · harita yükleniyor. keyed on the attempt counter so
               // a retry remounts the gate and earns a fresh 400 ms of silence.

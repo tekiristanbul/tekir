@@ -31,7 +31,9 @@ class MarkerBitmapBuilder {
   MarkerBitmapBuilder({Dio? photoClient}) : _photoClient = photoClient ?? Dio();
 
   /// The approved design's avatar marker: 54pt with a 2.5pt paper contour.
-  static const _avatarSize = 54.0;
+  /// Public because the halo layer's rings start at this marker's own edge
+  /// — the two are the same object seen from two layers.
+  static const avatarSize = 54.0;
   static const _avatarRing = 2.5;
 
   /// Keeps the shipped proportion between a resting and a selected pin, so
@@ -148,7 +150,7 @@ class MarkerBitmapBuilder {
     required bool needsHelp,
     required bool selected,
   }) async {
-    final displaySize = selected ? selectedAvatarSize : _avatarSize;
+    final displaySize = selected ? selectedAvatarSize : avatarSize;
     final canvasSize = displaySize;
     final px = (canvasSize * _renderScale).round();
     final recorder = ui.PictureRecorder();
@@ -277,28 +279,45 @@ class MarkerBitmapBuilder {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     final center = Offset(px / 2, px / 2);
-    final radius = px / 2 - 3 * _renderScale;
+    final ringWidth = 2.5 * _renderScale;
+    final radius = px / 2 - ringWidth - (containsHelp ? 3 * _renderScale : 0);
 
-    canvas.drawCircle(center, radius, Paint()..color = AppColors.bgElevated);
+    // Filled, not hollow. A group stands in for several cats, and the cats
+    // it stands in for are solid faces cut out of the map with a paper
+    // contour — an empty white circle read as a hole in the map rather
+    // than as something on it. Same terracotta the product's own actions
+    // are, so the count belongs to tekir and not to the basemap.
+    canvas.drawCircle(center, radius, Paint()..color = AppColors.primary);
     canvas.drawCircle(
       center,
       radius,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5 * _renderScale
-        // A group holding a cat that needs help says so, so a help mark is
-        // never hidden by the grouping that happens to be in front of it.
-        ..color = containsHelp ? AppColors.help : AppColors.primary,
+        ..strokeWidth = ringWidth
+        ..color = AppColors.bgElevated,
     );
+    if (containsHelp) {
+      // A group holding a cat that needs help says so, so a help mark is
+      // never hidden by the grouping in front of it — by its own colour
+      // *and* by the badge below, never by colour alone.
+      canvas.drawCircle(
+        center,
+        radius + ringWidth,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2 * _renderScale
+          ..color = AppColors.help,
+      );
+    }
 
     final painter = TextPainter(textDirection: TextDirection.ltr)
       ..text = TextSpan(
         text: '$count',
         style: TextStyle(
           fontFamily: 'Work Sans',
-          fontSize: 15 * _renderScale,
+          fontSize: 16 * _renderScale,
           fontWeight: FontWeight.w800,
-          color: containsHelp ? AppColors.helpStrong : AppColors.ink,
+          color: AppColors.primaryInk,
         ),
       )
       ..layout();
@@ -306,7 +325,7 @@ class MarkerBitmapBuilder {
       canvas,
       center - Offset(painter.width / 2, painter.height / 2),
     );
-    if (containsHelp) _drawHelpBadge(canvas, center, radius);
+    if (containsHelp) _drawHelpBadge(canvas, center, radius + ringWidth);
 
     return _finish(recorder, px, canvasSize);
   }
