@@ -76,17 +76,31 @@ class MarkerBitmapBuilder {
   /// drawn as a dot, and the same holds for a silhouette. The caller is
   /// still free to pass the url; not fetching it is decided here, in one
   /// place, rather than at every call site.
+  ///
+  /// [restingHelpMark] false draws a cat that needs help as if it did not.
+  /// That is only ever right when something else is saying so at the same
+  /// moment: the halo layer's pulse, which runs on the avatar tier while
+  /// the platform allows motion. Where the pulse cannot run — reduced
+  /// motion, or a zoom where the cat is a silhouette or a dot — the ring
+  /// and the badge are the whole of the mark and stay put. The caller owns
+  /// that condition, because the caller is what knows whether a pulse is
+  /// being drawn.
   Future<BitmapDescriptor> pin({
     required String cacheKey,
     required String photoUrl,
     required bool needsHelp,
     required MarkerTier tier,
     bool selected = false,
+    bool restingHelpMark = true,
   }) {
     // A silhouette and a dot carry nothing of the individual cat, so every
-    // cat at that tier shares one bitmap and one cache entry.
+    // cat at that tier shares one bitmap and one cache entry. They also
+    // never take a pulse — a screenful of expanding rings at those zooms
+    // is weather, not a signal — so they always keep the resting mark and
+    // it stays out of their key.
     final key = switch (tier) {
-      MarkerTier.avatar => 'avatar:$cacheKey:$needsHelp:$selected',
+      MarkerTier.avatar =>
+        'avatar:$cacheKey:$needsHelp:$selected:$restingHelpMark',
       MarkerTier.silhouette => 'silhouette:$needsHelp:$selected',
       MarkerTier.dot => 'dot:$needsHelp:$selected',
     };
@@ -95,7 +109,7 @@ class MarkerBitmapBuilder {
       () => switch (tier) {
         MarkerTier.avatar => _renderAvatar(
           photoUrl: photoUrl,
-          needsHelp: needsHelp,
+          needsHelp: needsHelp && restingHelpMark,
           selected: selected,
         ),
         MarkerTier.silhouette => _renderSilhouette(needsHelp: needsHelp),

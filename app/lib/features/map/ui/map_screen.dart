@@ -154,6 +154,12 @@ class _MapScreenState extends ConsumerState<MapScreen>
   /// set, projected on every camera frame.
   List<CatMarker> _helpHaloCats = const [];
 
+  /// Whether the platform is asking for reduced motion. Part of what the
+  /// marker set depends on, not just what the halo layer draws: a cat only
+  /// gives up its resting help mark to a pulse that is actually running,
+  /// so flipping this preference has to redraw the pins.
+  bool _reducedMotion = false;
+
   // prototype/app.js's `mapHelpFilter` (map.js's renderLeafletMarkers):
   // hides every non-alerted marker instead of navigating or refetching —
   // a pure client-side view over the cats already fetched for the current
@@ -197,6 +203,17 @@ class _MapScreenState extends ConsumerState<MapScreen>
     _photoFade.dispose();
     _controller?.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = TekirMotion.of(context).reduced;
+    if (reduced == _reducedMotion) return;
+    _reducedMotion = reduced;
+    // The pins carry the help ring and badge again the moment the pulse
+    // that was standing in for them stops running.
+    unawaited(_rebuildFromState());
   }
 
   // Covers returning from the settings app the `konum iznini aç` cta may
@@ -245,6 +262,18 @@ class _MapScreenState extends ConsumerState<MapScreen>
       selectedId: selectedId,
     );
 
+    // Which cats a pulse will actually be drawn for. A cat gives up the
+    // ring and badge painted into its own bitmap only to a pulse that is
+    // really running — the avatar tier, with motion allowed — so this is
+    // resolved before the pins are drawn rather than after.
+    final helpHaloCats = _reducedMotion
+        ? const <CatMarker>[]
+        : [
+            for (final cat in grouped.loose)
+              if (cat.needsHelp && tiers[cat.id] == MarkerTier.avatar) cat,
+          ];
+    final pulsingHelpIds = {for (final cat in helpHaloCats) cat.id};
+
     // Cats recorded at the same doorway end up on the same coordinate, and
     // identical positions make the one drawn last the only one that can be
     // tapped: the others are unreachable, not merely hidden. Fanning a
@@ -268,13 +297,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
           selected: cat.id == selectedId,
           dimUnselected: dimUnselected,
           fadeValue: fadeValue,
+          restingHelpMark: !pulsingHelpIds.contains(cat.id),
         ),
     ]);
-
-    final helpHaloCats = [
-      for (final cat in grouped.loose)
-        if (cat.needsHelp && tiers[cat.id] == MarkerTier.avatar) cat,
-    ];
 
     if (generation != _markerBuildGeneration || !mounted) return;
     setState(() {
@@ -323,6 +348,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     required bool selected,
     required bool dimUnselected,
     required double fadeValue,
+    required bool restingHelpMark,
   }) async {
     // A cat that should be a face but whose photo has not landed is drawn
     // as a silhouette, and the photo is asked for. No spinner: the mark is
@@ -356,6 +382,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       needsHelp: cat.needsHelp,
       tier: tier,
       selected: selected,
+      restingHelpMark: restingHelpMark,
     );
     final base = _alphaFor(selected: selected, dimUnselected: dimUnselected);
     if (!_fadingIn.contains(cat.id)) {

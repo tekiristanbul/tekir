@@ -29,6 +29,8 @@ class _RecordingDio implements Dio {
 }
 
 void main() {
+  group('resting help mark (issue #285)', _restingHelpMarkTests);
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late _RecordingDio dio;
@@ -174,5 +176,89 @@ void main() {
       expect(settled, isFalse);
       expect(builder.hasPhoto('https://example.test/cat-1.jpg'), isFalse);
     });
+  });
+}
+
+// The resting help mark — the ring and the badge painted into the pin —
+// gives way to the halo layer's pulse, but only where that pulse is
+// actually drawn: the avatar tier, with motion allowed. Everywhere else it
+// is the whole of the mark and must stay.
+void _restingHelpMarkTests() {
+  test('a pulsing cat is drawn as if it did not need help', () async {
+    final dio = _RecordingDio();
+    final builder = MarkerBitmapBuilder(photoClient: dio);
+
+    final plain = await builder.pin(
+      cacheKey: 'cat-1',
+      photoUrl: '',
+      needsHelp: false,
+      tier: MarkerTier.avatar,
+    );
+    final pulsing = await builder.pin(
+      cacheKey: 'cat-1',
+      photoUrl: '',
+      needsHelp: true,
+      tier: MarkerTier.avatar,
+      restingHelpMark: false,
+    );
+
+    // Same pixels: the pin says nothing about help, because the pulse
+    // does. (Not the same object — the cache keys differ, which is what
+    // keeps both renderings available at once.)
+    expect(
+      (pulsing as BytesMapBitmap).byteData,
+      (plain as BytesMapBitmap).byteData,
+    );
+  });
+
+  test('a cat with no pulse keeps its ring and badge', () async {
+    final dio = _RecordingDio();
+    final builder = MarkerBitmapBuilder(photoClient: dio);
+
+    final plain = await builder.pin(
+      cacheKey: 'cat-1',
+      photoUrl: '',
+      needsHelp: false,
+      tier: MarkerTier.avatar,
+    );
+    final marked = await builder.pin(
+      cacheKey: 'cat-1',
+      photoUrl: '',
+      needsHelp: true,
+      tier: MarkerTier.avatar,
+    );
+
+    expect(
+      (marked as BytesMapBitmap).byteData,
+      isNot((plain as BytesMapBitmap).byteData),
+    );
+  });
+
+  test('a silhouette and a dot always keep the mark', () async {
+    final dio = _RecordingDio();
+    final builder = MarkerBitmapBuilder(photoClient: dio);
+
+    for (final tier in [MarkerTier.silhouette, MarkerTier.dot]) {
+      final plain = await builder.pin(
+        cacheKey: 'cat-1',
+        photoUrl: '',
+        needsHelp: false,
+        tier: tier,
+      );
+      // No pulse is ever drawn at these resolutions, so asking for the
+      // resting mark to go must change nothing.
+      final asked = await builder.pin(
+        cacheKey: 'cat-1',
+        photoUrl: '',
+        needsHelp: true,
+        tier: tier,
+        restingHelpMark: false,
+      );
+      expect(
+        (asked as BytesMapBitmap).byteData,
+        isNot((plain as BytesMapBitmap).byteData),
+        reason: '$tier lost its mark',
+      );
+    }
   });
 }
