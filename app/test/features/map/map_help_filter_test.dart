@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/features/map/data/cat_marker.dart';
 import 'package:app/features/map/data/location_service.dart';
-import 'package:app/features/map/ui/cat_preview_sheet.dart';
+import 'package:app/features/map/ui/cat_quick_update_sheet.dart';
 import 'package:app/features/map/ui/cats_map_notifier.dart';
 import 'package:app/features/map/ui/map_screen.dart';
 
@@ -143,12 +143,12 @@ void main() {
       );
       container.read(catsMapProvider.notifier).selectCat(_healthyCat);
       await tester.pumpAndSettle();
-      expect(find.byType(CatPreviewSheet), findsOneWidget);
+      expect(find.byType(CatQuickUpdateSheet), findsOneWidget);
 
       _tapHelpFilterChip(tester);
       await tester.pumpAndSettle();
 
-      expect(find.byType(CatPreviewSheet), findsNothing);
+      expect(find.byType(CatQuickUpdateSheet), findsNothing);
       expect(container.read(catsMapProvider).selectedMarker, isNull);
     },
   );
@@ -163,12 +163,12 @@ void main() {
       );
       container.read(catsMapProvider.notifier).selectCat(_needsHelpCat);
       await tester.pumpAndSettle();
-      expect(find.byType(CatPreviewSheet), findsOneWidget);
+      expect(find.byType(CatQuickUpdateSheet), findsOneWidget);
 
       _tapHelpFilterChip(tester);
       await tester.pumpAndSettle();
 
-      expect(find.byType(CatPreviewSheet), findsOneWidget);
+      expect(find.byType(CatQuickUpdateSheet), findsOneWidget);
       expect(
         container.read(catsMapProvider).selectedMarker?.id,
         _needsHelpCat.id,

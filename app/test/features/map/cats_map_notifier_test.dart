@@ -59,6 +59,8 @@ class _ControllableCatsApi implements CatsApi {
 void main() {
   group('the selection survives a refetch', _selectionSurvivesRefetchTests);
 
+  group('applyUpdate (issue #286)', _applyUpdateTests);
+
   test('a slower stale request never overwrites a newer one', () async {
     final api = _ControllableCatsApi();
     final container = ProviderContainer(
@@ -369,5 +371,104 @@ void _selectionSurvivesRefetchTests() {
     notifier.clearSelection();
 
     expect(container.read(catsMapProvider).selectedMarker, isNull);
+  });
+}
+
+// issue #286: a cat updated from the map's own quick sheet reflects it
+// without waiting for the next viewport read.
+void _applyUpdateTests() {
+  final alert = ActiveAlert(
+    createdAt: DateTime.utc(2026, 3, 1, 9),
+    expiresAt: DateTime.utc(2026, 3, 4, 9),
+  );
+  const cat = CatMarker(
+    id: 'cat-1',
+    name: 'tekir',
+    primaryPhoto: '',
+    lat: 41.0,
+    lng: 29.0,
+  );
+
+  test('moves the marker freshness forward in place', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(catsMapProvider.notifier);
+    notifier.state = const CatsMapState(markers: [cat], hasLoadedOnce: true);
+
+    notifier.applyUpdate('cat-1', lastUpdateAt: DateTime.utc(2026, 3, 1, 9));
+
+    expect(
+      container.read(catsMapProvider).markers.single.lastUpdateAt,
+      DateTime.utc(2026, 3, 1, 9),
+    );
+  });
+
+  test('a help-carrying update puts the mark on the marker', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(catsMapProvider.notifier);
+    notifier.state = const CatsMapState(markers: [cat], hasLoadedOnce: true);
+
+    notifier.applyUpdate(
+      'cat-1',
+      lastUpdateAt: alert.createdAt,
+      activeAlert: alert,
+    );
+
+    expect(container.read(catsMapProvider).markers.single.needsHelp, isTrue);
+  });
+
+  test('an ordinary update never clears an existing help mark', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(catsMapProvider.notifier);
+    notifier.state = CatsMapState(
+      markers: [
+        CatMarker(
+          id: 'cat-1',
+          name: 'tekir',
+          primaryPhoto: '',
+          lat: 41.0,
+          lng: 29.0,
+          activeAlert: alert,
+        ),
+      ],
+      hasLoadedOnce: true,
+    );
+
+    notifier.applyUpdate('cat-1', lastUpdateAt: DateTime.utc(2026, 3, 2));
+
+    // Help ends by expiring, never because someone put food down.
+    expect(container.read(catsMapProvider).markers.single.needsHelp, isTrue);
+  });
+
+  test('the open selection is patched alongside the marker', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(catsMapProvider.notifier);
+    notifier.state = const CatsMapState(
+      markers: [cat],
+      selectedMarker: cat,
+      hasLoadedOnce: true,
+    );
+
+    notifier.applyUpdate('cat-1', lastUpdateAt: DateTime.utc(2026, 3, 1, 9));
+
+    expect(
+      container.read(catsMapProvider).selectedMarker!.lastUpdateAt,
+      DateTime.utc(2026, 3, 1, 9),
+    );
+  });
+
+  test('a cat that is not loaded is left alone', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(catsMapProvider.notifier);
+    notifier.state = const CatsMapState(markers: [cat], hasLoadedOnce: true);
+    final before = container.read(catsMapProvider);
+
+    notifier.applyUpdate('cat-999', lastUpdateAt: DateTime.utc(2026, 3, 1, 9));
+
+    expect(identical(container.read(catsMapProvider), before), isTrue);
   });
 }

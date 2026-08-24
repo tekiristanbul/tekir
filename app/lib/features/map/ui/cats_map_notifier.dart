@@ -170,6 +170,41 @@ class CatsMapNotifier extends Notifier<CatsMapState> {
     );
   }
 
+  /// Folds a just-created update into [catId]'s marker in place (issue
+  /// #286), so a cat updated from the map's quick sheet reflects it without
+  /// waiting for the next viewport read.
+  ///
+  /// Both values are the server's own: [lastUpdateAt] is the created
+  /// entry's timestamp and [activeAlert] its server-computed help window.
+  /// Nothing here is derived from a client clock, and an ordinary update
+  /// passes a null alert — it does not resolve an existing help mark, and
+  /// only expiry ever ends one.
+  void applyUpdate(
+    String catId, {
+    required DateTime lastUpdateAt,
+    ActiveAlert? activeAlert,
+  }) {
+    if (!state.markers.any((m) => m.id == catId)) return;
+    final selected = state.selectedMarker;
+    state = state.copyWith(
+      markers: [
+        for (final marker in state.markers)
+          marker.id == catId
+              ? marker.copyWith(
+                  lastUpdateAt: lastUpdateAt,
+                  activeAlert: activeAlert,
+                )
+              : marker,
+      ],
+      selectedMarker: selected != null && selected.id == catId
+          ? selected.copyWith(
+              lastUpdateAt: lastUpdateAt,
+              activeAlert: activeAlert,
+            )
+          : selected,
+    );
+  }
+
   /// Drops [catId]'s marker from state in place (issue #228's delete
   /// flow) — never a re-fetch/invalidate, since this notifier's own
   /// build() fetches nothing: invalidating would empty the map instead of

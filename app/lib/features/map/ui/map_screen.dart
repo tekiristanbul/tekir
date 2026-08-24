@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
@@ -28,7 +29,7 @@ import '../data/marker_layout.dart';
 import '../data/marker_bitmap_builder.dart';
 import '../data/marker_tier.dart';
 import '../data/web_mercator.dart';
-import 'cat_preview_sheet.dart';
+import 'cat_quick_update_sheet.dart';
 import 'cats_map_notifier.dart';
 import 'cluster_picker_sheet.dart';
 import 'map_halo_layer.dart';
@@ -602,6 +603,23 @@ class _MapScreenState extends ConsumerState<MapScreen>
     );
   }
 
+  /// How far [cat] is from the user, or null when no real position is
+  /// known.
+  ///
+  /// A fallback centre is a hard-coded istanbul point, not a location, and
+  /// a distance measured from it would read as "distance from you" and be
+  /// wrong — the same rule the search panel's own rows follow.
+  double? _distanceToUser(CatMarker cat) {
+    final resolved = ref.read(initialLocationProvider).value;
+    if (resolved == null || resolved.isFallback) return null;
+    return Geolocator.distanceBetween(
+      resolved.center.latitude,
+      resolved.center.longitude,
+      cat.lat,
+      cat.lng,
+    );
+  }
+
   Future<void> _openPreviewSheet(CatMarker cat) async {
     _sheetOpen = true;
     await showModalBottomSheet<void>(
@@ -623,8 +641,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
       // nav/add-cat fab (app_shell.dart) instead of above the whole app.
       useRootNavigator: true,
       builder: (sheetContext) => PointerInterceptor(
-        child: CatPreviewSheet(
+        child: CatQuickUpdateSheet(
           cat: cat,
+          distanceMeters: _distanceToUser(cat),
           onOpenDetail: () => _openDetailFromSheet(sheetContext, cat),
         ),
       ),
