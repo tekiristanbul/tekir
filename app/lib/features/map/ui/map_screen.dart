@@ -129,6 +129,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
   /// The viewport the halo is projected into.
   Size _mapSize = Size.zero;
 
+  /// What `GoogleMap.padding` currently is. The sdk centres the camera's
+  /// target in the region this leaves, so the projection has to know it.
+  EdgeInsets _mapPadding = EdgeInsets.zero;
+
   /// Zoom the marker set was last resolved at. Resolution changes on
   /// settle, not per frame: rebuilding a screenful of bitmaps on every step
   /// of a pinch is exactly the cost this map has always avoided.
@@ -697,6 +701,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       cameraTarget: camera.target,
       zoom: camera.zoom,
       size: _mapSize,
+      padding: _mapPadding,
     );
     const slack = _selectionHaloRadius * 2;
     if (offset.dx < -slack ||
@@ -977,6 +982,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
       zoom: isFallback ? istanbulFallbackZoom : _initialZoom,
     );
     _camera ??= initialCamera;
+    // Recorded, not recomputed at projection time: the halo projects during
+    // a camera frame, which is not a layout pass — and it has to use the
+    // very padding the sdk is centring against, or every ring lands below
+    // the marker it belongs to.
+    _mapPadding = EdgeInsets.only(
+      bottom: selected == null ? 0 : _mapSize.height * _sheetHeightFraction,
+    );
     final selectedCentre = _haloCentre(selected);
     final helpCentres = <Offset>[
       for (final cat in _helpHaloCats)
@@ -1019,11 +1031,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
               // idea of "centre" then excludes the covered band, and
               // centring on the cat puts it above the sheet rather than
               // behind it.
-              padding: EdgeInsets.only(
-                bottom: selected == null
-                    ? 0
-                    : box.maxHeight * _sheetHeightFraction,
-              ),
+              padding: _mapPadding,
               markers: _markers,
               onMapCreated: _onMapCreated,
               onCameraIdle: _onCameraIdle,

@@ -16,7 +16,7 @@ library;
 
 import 'dart:math' as math;
 
-import 'package:flutter/painting.dart' show Offset, Size;
+import 'package:flutter/painting.dart' show EdgeInsets, Offset, Size;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 /// Side of the world square, in pixels, at zoom 0. Google's own tile size.
@@ -44,11 +44,20 @@ Offset worldPixel(double lat, double lng, double zoom) {
 /// Returns a point outside [size] for a coordinate off screen — callers
 /// that care (the halo) check for themselves rather than being handed a
 /// clamped answer that would silently pin a marker to an edge it is not at.
+///
+/// [padding] must be whatever `GoogleMap.padding` was given. The sdk
+/// centres the camera's target in the region the padding leaves, not in
+/// the widget — so while a sheet covers the bottom third of the map, the
+/// target sits a sixth of the screen higher than the widget's own middle.
+/// Ignoring it put every projected ring that far below the marker it
+/// belonged to, which is behind the sheet: the mark vanished at exactly
+/// the moment the sheet opened.
 Offset screenOffsetOf(
   LatLng position, {
   required LatLng cameraTarget,
   required double zoom,
   required Size size,
+  EdgeInsets padding = EdgeInsets.zero,
 }) {
   final point = worldPixel(position.latitude, position.longitude, zoom);
   final centre = worldPixel(
@@ -56,8 +65,12 @@ Offset screenOffsetOf(
     cameraTarget.longitude,
     zoom,
   );
+  final target = Offset(
+    padding.left + (size.width - padding.left - padding.right) / 2,
+    padding.top + (size.height - padding.top - padding.bottom) / 2,
+  );
   return Offset(
-    size.width / 2 + (point.dx - centre.dx),
-    size.height / 2 + (point.dy - centre.dy),
+    target.dx + (point.dx - centre.dx),
+    target.dy + (point.dy - centre.dy),
   );
 }

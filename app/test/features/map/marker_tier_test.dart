@@ -293,6 +293,49 @@ void main() {
       expect(east.dx, greaterThan(200));
     });
 
+    // The sdk centres the camera's target in the region the padding leaves,
+    // not in the widget. Ignoring that put every projected ring a sixth of
+    // the screen below the marker it belonged to — behind the sheet that
+    // had just opened, which is exactly when the mark disappeared.
+    test('the target follows the padding, not the widget centre', () {
+      const target = LatLng(41.02, 28.97);
+      const size = Size(400, 900);
+
+      final unpadded = screenOffsetOf(
+        target,
+        cameraTarget: target,
+        zoom: 16,
+        size: size,
+      );
+      final padded = screenOffsetOf(
+        target,
+        cameraTarget: target,
+        zoom: 16,
+        size: size,
+        padding: const EdgeInsets.only(bottom: 300),
+      );
+
+      expect(unpadded.dy, closeTo(450, 0.001));
+      // Centre of the 600px the padding leaves.
+      expect(padded.dy, closeTo(300, 0.001));
+      expect(padded.dx, closeTo(unpadded.dx, 0.001));
+    });
+
+    test('padding on every side moves the target accordingly', () {
+      const target = LatLng(41.02, 28.97);
+
+      final offset = screenOffsetOf(
+        target,
+        cameraTarget: target,
+        zoom: 16,
+        size: const Size(400, 800),
+        padding: const EdgeInsets.fromLTRB(40, 20, 0, 100),
+      );
+
+      expect(offset.dx, closeTo(40 + (400 - 40) / 2, 0.001));
+      expect(offset.dy, closeTo(20 + (800 - 20 - 100) / 2, 0.001));
+    });
+
     test('one zoom step doubles the distance from the centre', () {
       const target = LatLng(41.02, 28.97);
       const other = LatLng(41.03, 28.98);
