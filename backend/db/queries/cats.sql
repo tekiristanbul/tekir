@@ -298,6 +298,8 @@ with candidates as (
     coalesce(c.photo_url, m.url, '') as photo_url,
     c.area_label,
     c.last_update_at,
+    st_x(c.area::geometry)::float8 as cat_lng,
+    st_y(c.area::geometry)::float8 as cat_lat,
     nh.needs_help_category,
     nh.comment as needs_help_comment,
     nh.created_at as needs_help_created_at,
@@ -320,8 +322,17 @@ with candidates as (
       where b.blocker_user_id = sqlc.narg(viewer_user_id)::uuid
         and b.blocked_user_id = c.created_by_user_id
     )
+    -- issue #284: search by the cat's own name. null (absent q) is a
+    -- no-op, so an unfiltered discover read is byte-identical to what it
+    -- was before search existed. a cat with no name can never match a
+    -- name query — ilike against null is null, not true — which is the
+    -- intended behaviour, not an accident of three-valued logic.
+    and (
+      sqlc.narg(name_query)::text is null
+      or c.name ilike '%' || sqlc.narg(name_query)::text || '%'
+    )
 )
-select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
+select id, name, photo_url, area_label, last_update_at, cat_lng, cat_lat, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
 where sqlc.narg(after_distance_m)::float8 is null
   or distance_m > sqlc.narg(after_distance_m)::float8
@@ -351,6 +362,8 @@ with candidates as (
     coalesce(c.photo_url, m.url, '') as photo_url,
     c.area_label,
     c.last_update_at,
+    st_x(c.area::geometry)::float8 as cat_lng,
+    st_y(c.area::geometry)::float8 as cat_lat,
     nh.needs_help_category,
     nh.comment as needs_help_comment,
     nh.created_at as needs_help_created_at,
@@ -373,8 +386,17 @@ with candidates as (
       where b.blocker_user_id = sqlc.narg(viewer_user_id)::uuid
         and b.blocked_user_id = c.created_by_user_id
     )
+    -- issue #284: search by the cat's own name. null (absent q) is a
+    -- no-op, so an unfiltered discover read is byte-identical to what it
+    -- was before search existed. a cat with no name can never match a
+    -- name query — ilike against null is null, not true — which is the
+    -- intended behaviour, not an accident of three-valued logic.
+    and (
+      sqlc.narg(name_query)::text is null
+      or c.name ilike '%' || sqlc.narg(name_query)::text || '%'
+    )
 )
-select id, name, photo_url, area_label, last_update_at, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
+select id, name, photo_url, area_label, last_update_at, cat_lng, cat_lat, needs_help_category, needs_help_comment, needs_help_created_at, needs_help_expires_at, distance_m
 from candidates
 where needs_help_expires_at is not null
   and needs_help_expires_at > sqlc.arg(now)::timestamptz

@@ -32,6 +32,23 @@ var ErrCatNotFound = errors.New("cat not found")
 // ErrInvalidCursor means the pagination cursor doesn't decode to a valid position.
 var ErrInvalidCursor = errors.New("invalid cursor")
 
+// ErrInvalidNameQuery means GET /v1/cats/discover's q param (issue #284) is
+// longer than a cat name could plausibly be. Distinct from a filter or
+// cursor error so the client can say what was actually wrong.
+var ErrInvalidNameQuery = errors.New("invalid name query")
+
+// escapeLikePattern neutralises the three characters postgres' LIKE/ILIKE
+// treats as pattern syntax, so a user searching for a literal "%" finds a
+// cat named with one instead of matching every cat. The backslash escape
+// itself has to be replaced first, or it would escape the escapes added
+// after it.
+func escapeLikePattern(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, "%", `\%`)
+	value = strings.ReplaceAll(value, "_", `\_`)
+	return value
+}
+
 // ErrInvalidLimit means the requested page size is non-positive or exceeds maxUpdatesLimit.
 var ErrInvalidLimit = errors.New("invalid limit")
 
@@ -164,6 +181,13 @@ const (
 	// GET /v1/cats/discover's own page size.
 	defaultDiscoverLimit = 20
 	maxDiscoverLimit     = 50
+
+	// maxDiscoverNameQueryLength (issue #284) caps GET /v1/cats/discover's
+	// name search. A cat name is itself short, so anything past this is not
+	// a search anyone typed — it is a caller pushing an unbounded string
+	// into a LIKE pattern. Counted in runes, not bytes: turkish names are
+	// multi-byte and a byte cap would reject shorter ones unevenly.
+	maxDiscoverNameQueryLength = 60
 )
 
 // discoverFilterNearby/discoverFilterNeedsHelp are the only two values
@@ -350,16 +374,25 @@ type CatMarker struct {
 
 // DiscoverCat is one entry of GET /v1/cats/discover's paginated result
 // (issue #82): the same map-marker-preview fields ListNearby/ListFollows
-// already return, minus lat/lng (this is a distance-ordered list, not a
-// viewport — a client that needs a cat's coordinates fetches its detail),
-// plus DistanceMeters, the one field this endpoint adds. ActiveAlert is
-// always non-nil for a "needs_help"-filter result (the query itself only
-// returns cats with a currently active alert) and may be nil or non-nil
-// for a "nearby"-filter result, exactly like CatMarker's.
+// already return, plus DistanceMeters, the one field this endpoint adds.
+// ActiveAlert is always non-nil for a "needs_help"-filter result (the query
+// itself only returns cats with a currently active alert) and may be nil or
+// non-nil for a "nearby"-filter result, exactly like CatMarker's.
+//
+// Lat/Lng were absent until issue #284, on the reasoning that a
+// distance-ordered list is not a viewport and a caller that needed
+// coordinates would fetch the cat's detail. That reasoning no longer holds:
+// picking a search result now selects that cat on the map, which needs its
+// position immediately, and a second round trip to learn it would put a
+// visible gap between the tap and the camera moving. Carrying the two
+// floats the row already computes makes this shape identical to
+// ListNearby's and ListFollows'.
 type DiscoverCat struct {
 	ID             string
 	Name           string
 	PrimaryPhoto   string
+	Lat            float64
+	Lng            float64
 	AreaLabel      *string
 	DistanceMeters float64
 	ActiveAlert    *ActiveAlert
@@ -721,9 +754,23 @@ func (s *CatsService) ListNearby(ctx context.Context, bounds Bounds, callerUserI
 // guest-readable read path. cursor is the opaque token from a previous
 // page's NextCursor, or "" for the first page; limit == 0 falls back to
 // defaultDiscoverLimit, matching ListCatUpdates' own convention.
-func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng float64, cursor string, limit int, callerUserID string) (DiscoverPage, error) {
+func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng float64, nameQuery, cursor string, limit int, callerUserID string) (DiscoverPage, error) {
 	if filter != discoverFilterNearby && filter != discoverFilterNeedsHelp {
 		return DiscoverPage{}, ErrInvalidDiscoverFilter
+	}
+	// issue #284: search is by the cat's own name only — never a
+	// neighbourhood, street or address, which the approved design puts
+	// explicitly out of scope. An absent or whitespace-only query is not a
+	// search at all: the surface it serves shows the nearest cats before
+	// anything is typed, so "no query" has to mean "the whole filtered
+	// list", not "no results".
+	nameQuery = strings.TrimSpace(nameQuery)
+	if len([]rune(nameQuery)) > maxDiscoverNameQueryLength {
+		return DiscoverPage{}, ErrInvalidNameQuery
+	}
+	var namePattern pgtype.Text
+	if nameQuery != "" {
+		namePattern = pgtype.Text{String: escapeLikePattern(nameQuery), Valid: true}
 	}
 	if !withinIstanbul(lat, lng) {
 		return DiscoverPage{}, ErrInvalidArea
@@ -780,6 +827,7 @@ func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng 
 	case discoverFilterNearby:
 		rows, err := s.db.ListCatsByDistance(ctx, repository.ListCatsByDistanceParams{
 			Lng: lng, Lat: lat,
+			NameQuery:      namePattern,
 			AfterDistanceM: afterDistance,
 			AfterID:        afterID,
 			RowLimit:       rowLimit,
@@ -793,7 +841,7 @@ func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng 
 			rows = rows[:limit]
 		}
 		for _, r := range rows {
-			items = append(items, toDiscoverCat(fixedClock, r.ID, r.Name, r.PhotoUrl, r.AreaLabel, r.LastUpdateAt, r.NeedsHelpCategory, r.NeedsHelpComment, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt, r.DistanceM))
+			items = append(items, toDiscoverCat(fixedClock, r.ID, r.Name, r.PhotoUrl, r.CatLat, r.CatLng, r.AreaLabel, r.LastUpdateAt, r.NeedsHelpCategory, r.NeedsHelpComment, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt, r.DistanceM))
 		}
 		if hasMore && len(rows) > 0 {
 			last := rows[len(rows)-1]
@@ -802,6 +850,7 @@ func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng 
 	case discoverFilterNeedsHelp:
 		rows, err := s.db.ListActiveNeedsHelpCatsByDistance(ctx, repository.ListActiveNeedsHelpCatsByDistanceParams{
 			Lng: lng, Lat: lat,
+			NameQuery:      namePattern,
 			Now:            pgtype.Timestamptz{Time: now, Valid: true},
 			AfterDistanceM: afterDistance,
 			AfterID:        afterID,
@@ -816,7 +865,7 @@ func (s *CatsService) ListDiscover(ctx context.Context, filter string, lat, lng 
 			rows = rows[:limit]
 		}
 		for _, r := range rows {
-			items = append(items, toDiscoverCat(fixedClock, r.ID, r.Name, r.PhotoUrl, r.AreaLabel, r.LastUpdateAt, r.NeedsHelpCategory, r.NeedsHelpComment, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt, r.DistanceM))
+			items = append(items, toDiscoverCat(fixedClock, r.ID, r.Name, r.PhotoUrl, r.CatLat, r.CatLng, r.AreaLabel, r.LastUpdateAt, r.NeedsHelpCategory, r.NeedsHelpComment, r.NeedsHelpCreatedAt, r.NeedsHelpExpiresAt, r.DistanceM))
 		}
 		if hasMore && len(rows) > 0 {
 			last := rows[len(rows)-1]
@@ -847,11 +896,13 @@ type discoverRow struct {
 // it per row type. clock is ListDiscover's fixedClock (a single s.clock()
 // reading pinned for the whole call), not s.clock itself — see ListDiscover's
 // own comment on why.
-func toDiscoverCat(clock func() time.Time, id pgtype.UUID, name pgtype.Text, photoURL string, areaLabel pgtype.Text, lastUpdateAt pgtype.Timestamptz, needsHelpCategory, needsHelpComment pgtype.Text, needsHelpCreatedAt, needsHelpExpiresAt pgtype.Timestamptz, distanceMeters float64) DiscoverCat {
+func toDiscoverCat(clock func() time.Time, id pgtype.UUID, name pgtype.Text, photoURL string, lat, lng float64, areaLabel pgtype.Text, lastUpdateAt pgtype.Timestamptz, needsHelpCategory, needsHelpComment pgtype.Text, needsHelpCreatedAt, needsHelpExpiresAt pgtype.Timestamptz, distanceMeters float64) DiscoverCat {
 	return DiscoverCat{
 		ID:             uuid.UUID(id.Bytes).String(),
 		Name:           name.String,
 		PrimaryPhoto:   photoURL,
+		Lat:            lat,
+		Lng:            lng,
 		AreaLabel:      textPtr(areaLabel),
 		DistanceMeters: distanceMeters,
 		ActiveAlert:    deriveActiveAlert(clock, needsHelpCategory, needsHelpComment, needsHelpCreatedAt, needsHelpExpiresAt),
