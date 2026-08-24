@@ -147,6 +147,20 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(CatPreviewSheet), findsOneWidget);
+
+      // No scrim over the map. The default sheet barrier is 54% black,
+      // which washed out the very things the selection had just made: the
+      // cat's turning ring, its help pulse, and the neighbours quieted to
+      // a third around it.
+      for (final barrier in tester.widgetList<ModalBarrier>(
+        find.byType(ModalBarrier),
+      )) {
+        expect(
+          barrier.color?.a ?? 0,
+          0,
+          reason: 'a scrim is covering the map behind the sheet',
+        );
+      }
       expect(find.byType(CatDetailScreen), findsNothing);
       expect(find.text('tekir'), findsWidgets);
       expect(find.text('Galata Kulesi çevresi, Beyoğlu'), findsOneWidget);

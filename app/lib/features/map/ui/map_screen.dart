@@ -507,6 +507,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      // No scrim, for the same reason the selection sheet has none: the
+      // group this is about is on the map behind it.
+      barrierColor: Colors.transparent,
       useRootNavigator: true,
       builder: (sheetContext) => PointerInterceptor(
         child: ClusterPickerSheet(
@@ -605,6 +608,15 @@ class _MapScreenState extends ConsumerState<MapScreen>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      // No scrim. A sheet's default barrier is 54% black over everything
+      // behind it, which here is the map — and the map behind this sheet
+      // is not backdrop, it is the thing the sheet is about: the cat has
+      // just been centred on it, its ring is turning, and the cats around
+      // it have been quieted to a third to say so. A wash of black over
+      // all of that hid the marks at the exact moment they were made, and
+      // fought the dimming that carries the same meaning honestly. The
+      // barrier itself stays, so a tap outside still dismisses.
+      barrierColor: Colors.transparent,
       // issue #80 product-owner review: MapScreen is now a
       // StatefulShellRoute branch with its own nested Navigator — without
       // this, the sheet paints underneath the shell's persistent bottom

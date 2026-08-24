@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -28,9 +30,13 @@ Future<void> _pump(
   await tester.pump();
 }
 
-MapHaloPainter _painter(WidgetTester tester) =>
-    tester.widget<CustomPaint>(find.byType(CustomPaint)).painter
-        as MapHaloPainter;
+/// The halo's own painter, picked out of whatever else on screen happens
+/// to paint (a Scaffold and a modal route bring their own).
+MapHaloPainter _painter(WidgetTester tester) => tester
+    .widgetList<CustomPaint>(find.byType(CustomPaint))
+    .map((p) => p.painter)
+    .whereType<MapHaloPainter>()
+    .single;
 
 /// Where a ring is at [progress] through its cycle, as a multiple of the
 /// marker's own radius.
@@ -195,6 +201,46 @@ void main() {
       expect(painter.selectedCentre, isNotNull);
       expect(painter.turn, greaterThan(0));
     });
+  });
+
+  testWidgets('a modal sheet over it does not stop it', (tester) async {
+    // Selecting a cat opens a sheet over the map. A route pushed above the
+    // map's own could mute its tickers, which would stop every ring at the
+    // moment the sheet appeared — this is the check that it does not.
+    final key = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: key,
+        home: const Stack(
+          children: [
+            MapHaloLayer(
+              helpCentres: [Offset(200, 300)],
+              selectedCentre: Offset(200, 300),
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pump();
+
+    unawaited(
+      showModalBottomSheet<void>(
+        context: key.currentContext!,
+        builder: (_) => const SizedBox(height: 200),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final before = _painter(tester);
+    await tester.pump(const Duration(milliseconds: 500));
+    final after = _painter(tester);
+
+    expect(
+      before.shouldRepaint(after),
+      isTrue,
+      reason: 'the sheet stopped the halo',
+    );
   });
 
   testWidgets('it carries nothing to assistive technology', (tester) async {
