@@ -9,7 +9,7 @@ import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_screen.dart';
 import 'package:app/features/map/data/cat_marker.dart';
 import 'package:app/features/map/data/location_service.dart';
-import 'package:app/features/map/ui/cat_preview_sheet.dart';
+import 'package:app/features/map/ui/cat_quick_update_sheet.dart';
 import 'package:app/features/map/ui/cats_map_notifier.dart';
 import 'package:app/features/map/ui/map_screen.dart';
 
@@ -46,6 +46,14 @@ class _FixedCatDetailNotifier extends CatDetailNotifier {
   @override
   Future<void> load() async {}
 }
+
+// Reduced motion is on for the whole harness. Selecting a cat mounts the
+// selection halo (selection_halo.dart), whose ring turns and pulses for as
+// long as the selection lasts — a continuous animation that would hang
+// every pumpAndSettle below, exactly like state 07's sonar pulse already
+// does. Under reduced motion the halo holds still, which is its own
+// contract and costs these tests nothing: none of them are about motion.
+// selection_halo_test.dart covers the animated case on its own terms.
 
 // Idle pre-fetch state — hasLoadedOnce with zero markers would mount
 // state 07's empty-radius card (map_states.dart), whose sonar pulse
@@ -115,7 +123,10 @@ Future<void> _pumpMap(WidgetTester tester) async {
           _GuestSessionIdentityService(),
         ),
       ],
-      child: MaterialApp.router(routerConfig: appRouter),
+      child: MediaQuery(
+        data: const MediaQueryData(disableAnimations: true),
+        child: MaterialApp.router(routerConfig: appRouter),
+      ),
     ),
   );
   await tester.pump();
@@ -124,7 +135,7 @@ Future<void> _pumpMap(WidgetTester tester) async {
 
 void main() {
   testWidgets(
-    'selecting a cat (as a marker tap does) opens the preview sheet over the map — not the detail screen directly',
+    'selecting a cat (as a marker tap does) opens the quick-update sheet over the map — not the detail screen directly',
     (tester) async {
       await _pumpMap(tester);
       expect(find.byType(MapScreen), findsOneWidget);
@@ -135,31 +146,47 @@ void main() {
       container.read(catsMapProvider.notifier).selectCat(_marker);
       await tester.pumpAndSettle();
 
-      expect(find.byType(CatPreviewSheet), findsOneWidget);
+      expect(find.byType(CatQuickUpdateSheet), findsOneWidget);
+
+      // No scrim over the map. The default sheet barrier is 54% black,
+      // which washed out the very things the selection had just made: the
+      // cat's turning ring, its help pulse, and the neighbours quieted to
+      // a third around it.
+      for (final barrier in tester.widgetList<ModalBarrier>(
+        find.byType(ModalBarrier),
+      )) {
+        expect(
+          barrier.color?.a ?? 0,
+          0,
+          reason: 'a scrim is covering the map behind the sheet',
+        );
+      }
       expect(find.byType(CatDetailScreen), findsNothing);
       expect(find.text('tekir'), findsWidgets);
-      expect(find.text('Galata Kulesi çevresi, Beyoğlu'), findsOneWidget);
-      expect(find.text('Detaya git'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'the sheet\'s "Detaya git" action opens that cat\'s detail view',
-    (tester) async {
-      await _pumpMap(tester);
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(MapScreen)),
+      expect(
+        find.textContaining('Galata Kulesi çevresi, Beyoğlu'),
+        findsOneWidget,
       );
-      container.read(catsMapProvider.notifier).selectCat(_marker);
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Detaya git'));
-      await tester.pumpAndSettle();
-
-      expect(find.byType(CatDetailScreen), findsOneWidget);
-      expect(find.text('tekir'), findsWidgets);
+      expect(find.text('kedi detayına git'), findsOneWidget);
     },
   );
+
+  testWidgets('the sheet\'s detail link opens that cat\'s detail view', (
+    tester,
+  ) async {
+    await _pumpMap(tester);
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(MapScreen)),
+    );
+    container.read(catsMapProvider.notifier).selectCat(_marker);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('kedi detayına git'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CatDetailScreen), findsOneWidget);
+    expect(find.text('tekir'), findsWidgets);
+  });
 
   testWidgets(
     'dismissing the sheet (tapping outside it) clears the selection and leaves the user on the map',
@@ -170,7 +197,7 @@ void main() {
       );
       container.read(catsMapProvider.notifier).selectCat(_marker);
       await tester.pumpAndSettle();
-      expect(find.byType(CatPreviewSheet), findsOneWidget);
+      expect(find.byType(CatQuickUpdateSheet), findsOneWidget);
 
       // taps the modal barrier above the sheet — the area of the screen the
       // sheet itself doesn't cover — exactly like tapping the map outside
@@ -178,7 +205,7 @@ void main() {
       await tester.tapAt(const Offset(20, 20));
       await tester.pumpAndSettle();
 
-      expect(find.byType(CatPreviewSheet), findsNothing);
+      expect(find.byType(CatQuickUpdateSheet), findsNothing);
       expect(find.byType(MapScreen), findsOneWidget);
       expect(container.read(catsMapProvider).selectedMarker, isNull);
     },
@@ -193,7 +220,7 @@ void main() {
     );
     container.read(catsMapProvider.notifier).selectCat(_marker);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Detaya git'));
+    await tester.tap(find.text('kedi detayına git'));
     await tester.pumpAndSettle();
     expect(find.byType(CatDetailScreen), findsOneWidget);
 

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
@@ -10,42 +11,88 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 import '../../../core/analytics/analytics.dart';
 import '../../../core/geo/istanbul_bounds.dart';
 import '../../../core/motion/press_response.dart';
+import '../../../core/motion/tekir_motion.dart';
 import '../../../core/motion/tekir_haptics.dart';
 import '../../../core/states/fallback_location_note.dart';
 import '../../../core/states/initial_read_gate.dart';
 import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/identity/session_identity.dart';
 import '../../auth/ui/auth_gate.dart';
+import '../../discover/ui/cat_search_panel.dart';
+import '../../notifications/ui/notifications_notifier.dart';
+import '../../profile/ui/profile_notifier.dart';
 import '../data/cat_marker.dart';
 import '../data/location_service.dart';
 import '../data/map_style.dart';
 import '../data/marker_layout.dart';
 import '../data/marker_bitmap_builder.dart';
-import 'cat_preview_sheet.dart';
+import '../data/marker_tier.dart';
+import '../data/web_mercator.dart';
+import 'cat_quick_update_sheet.dart';
 import 'cats_map_notifier.dart';
+import 'cluster_picker_sheet.dart';
+import 'map_halo_layer.dart';
 import 'map_states.dart';
 
 /// istanbul street-level: about 2-3 streets, per docs/product/map.md.
 const _initialZoom = 17.0;
 const _debounceDuration = Duration(milliseconds: 400);
 
-// how far a single cluster tap zooms in. fitting the camera to the
-// cluster's own bounds (CameraUpdate.newLatLngBounds) sounds more
-// "precise", but for a tight cluster (markers a few meters apart, like
-// the seeded galata group) the bounds-fit zoom can come out *lower* than
-// the current zoom — the tap would then not zoom in at all, and the
-// cluster would never split. a fixed step guarantees forward progress on
-// every tap, splitting any cluster within a couple of taps.
-const _clusterTapZoomStep = 2.0;
+// How long a cat's face takes to fade in over the silhouette that stood in
+// for it (approved design, `marker · LOD`: a late avatar cross-fades in
+// over 200 ms, with no spinner). Only marker alpha moves for this.
+const _photoFadeDuration = Duration(milliseconds: 200);
 
-// clustering itself is native (google_maps_flutter's own ClusterManager,
-// which wraps Google's official @googlemaps/markerclusterer on web) — every
-// cat marker just tags itself with this id and the sdk groups them.
-const _catsClusterManagerId = ClusterManagerId('cats');
+// The approved design's selection move: the camera brings the cat to rest
+// over this long, decelerating. The sheet's own height is handed to
+// GoogleMap.padding while a cat is selected, so "centred" means centred in
+// the band above the sheet rather than behind it.
+const _selectionCameraDuration = Duration(milliseconds: 600);
 
-// keeps state 07's card clear of the shell's center-floating add-cat fab
-// (app_shell.dart: 46 px diameter floating ~16 px above the body bottom).
-const _fabClearance = 80.0;
+// The band the preview sheet covers, as a fraction of the screen. The
+// sheet's real height is not known until it lays out, and the camera has to
+// move before that; this is what it occupies at the content sizes it can
+// reach.
+const _sheetHeightFraction = 1 / 3;
+
+// Every mark on this map is a disc centred on the cat's own coordinate, not
+// a teardrop pin resting on it, so it is anchored by its middle. The sdk's
+// default (0.5, 1.0) puts the bitmap's *bottom* on the point — which floated
+// each pin half its height above where the cat actually is, and left the
+// selection halo, drawn at the real coordinate, sitting visibly below the
+// marker it belongs to.
+const _markerAnchor = Offset(0.5, 0.5);
+
+// The selected cat's halo sits just outside the selected avatar it
+// surrounds, derived from that marker's own size rather than guessed — the
+// two are the same object seen from two layers.
+const _selectionHaloRadius =
+    MarkerBitmapBuilder.selectedAvatarSize / 2 + AppSpacing.s2;
+
+// What an unselected marker fades to while another cat is selected
+// (approved design, artboard 02).
+const _unselectedMarkerAlpha = 0.32;
+
+// The approved design's bottom measurements (artboard 01 / spec block):
+// the add-cat pill sits 44 px above the screen bottom and the locate button
+// 112 px, on a 874 px-tall reference screen. Both are measured from the
+// safe-area inset here rather than from the raw screen edge, so a device
+// with a home indicator does not put the pill underneath it.
+const _addCatPillInset = 24.0;
+const _addCatPillHeight = 50.0;
+const _locateButtonGap = AppSpacing.s4;
+
+double _addCatPillBottom(BuildContext context) =>
+    MediaQuery.paddingOf(context).bottom + _addCatPillInset;
+
+double _locateButtonBottom(BuildContext context) =>
+    _addCatPillBottom(context) + _addCatPillHeight + _locateButtonGap;
+
+/// Vertical room anything anchored to the bottom of the map has to leave
+/// for the add-cat pill and the locate button above it.
+double _bottomChromeClearance(BuildContext context) =>
+    _locateButtonBottom(context) + kTapMin + AppSpacing.s3;
 
 // how far "alanı genişlet" zooms out per tap — the inverse of the cluster
 // tap's fixed step, for the same reason: guaranteed progress per tap.
@@ -67,12 +114,52 @@ class MapScreen extends ConsumerStatefulWidget {
 }
 
 class _MapScreenState extends ConsumerState<MapScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   GoogleMapController? _controller;
   Timer? _debounce;
   Set<Marker> _markers = {};
   int _markerBuildGeneration = 0;
   bool _atMinZoom = false;
+
+  /// The camera the map is currently showing. Seeded when the map is
+  /// created, because no camera event fires for a map nobody has touched,
+  /// and updated on every frame of every movement after that — the halo is
+  /// projected from it, so it has to be current, not settled.
+  CameraPosition? _camera;
+
+  /// The viewport the halo is projected into.
+  Size _mapSize = Size.zero;
+
+  /// Zoom the marker set was last resolved at. Resolution changes on
+  /// settle, not per frame: rebuilding a screenful of bitmaps on every step
+  /// of a pinch is exactly the cost this map has always avoided.
+  double _resolvedZoom = _initialZoom;
+
+  /// Cats whose face has just arrived and is fading in over their
+  /// silhouette, and the controller driving it. Only marker alpha moves —
+  /// no bitmap is re-rendered for a frame of this.
+  final _fadingIn = <String>{};
+  late final AnimationController _photoFade = AnimationController(
+    vsync: this,
+    duration: _photoFadeDuration,
+  );
+
+  /// Photo urls already asked for, so a rebuild does not re-request one
+  /// that is still in flight.
+  final _requestedPhotos = <String>{};
+
+  /// Cats waiting for help that are currently drawn as their own face, and
+  /// therefore carry a pulsing ring (approved design, artboard 01). Only
+  /// the avatar tier: at the zooms where a cat is a dot, a screenful of
+  /// expanding rings is weather, not a signal. Resolved with the marker
+  /// set, projected on every camera frame.
+  List<CatMarker> _helpHaloCats = const [];
+
+  /// Whether the platform is asking for reduced motion. Part of what the
+  /// marker set depends on, not just what the halo layer draws: a cat only
+  /// gives up its resting help mark to a pulse that is actually running,
+  /// so flipping this preference has to redraw the pins.
+  bool _reducedMotion = false;
 
   // prototype/app.js's `mapHelpFilter` (map.js's renderLeafletMarkers):
   // hides every non-alerted marker instead of navigating or refetching —
@@ -94,6 +181,19 @@ class _MapScreenState extends ConsumerState<MapScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _photoFade.addListener(_onPhotoFadeTick);
+    _photoFade.addStatusListener(_onPhotoFadeStatus);
+  }
+
+  void _onPhotoFadeTick() {
+    if (mounted) setState(() {});
+  }
+
+  void _onPhotoFadeStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    if (_fadingIn.isEmpty) return;
+    _fadingIn.clear();
+    unawaited(_rebuildFromState());
   }
 
   @override
@@ -101,8 +201,20 @@ class _MapScreenState extends ConsumerState<MapScreen>
     WidgetsBinding.instance.removeObserver(this);
     _debounce?.cancel();
     _heroFlightClearanceTimer?.cancel();
+    _photoFade.dispose();
     _controller?.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = TekirMotion.of(context).reduced;
+    if (reduced == _reducedMotion) return;
+    _reducedMotion = reduced;
+    // The pins carry the help ring and badge again the moment the pulse
+    // that was standing in for them stops running.
+    unawaited(_rebuildFromState());
   }
 
   // Covers returning from the settings app the `konum iznini aç` cta may
@@ -117,17 +229,51 @@ class _MapScreenState extends ConsumerState<MapScreen>
     }
   }
 
-  // rebuilds the marker set (fetching/decoding each cat's photo into a
-  // BitmapDescriptor) whenever the fetched cat list or the selected marker
-  // changes — selection re-renders that one pin larger/ringed (prototype's
-  // .marker.is-selected). guarded by a generation counter so a slow rebuild
-  // from stale inputs can't clobber a newer one that finished first.
+  /// Rebuilds the whole marker set from the current cats, selection and
+  /// camera.
+  ///
+  /// Three decisions happen here, in order, because each depends on the one
+  /// before it: which cats are visible at all, which of them are grouped
+  /// into a cluster, and at what resolution the rest are drawn. Guarded by
+  /// a generation counter so a slow rebuild from stale inputs cannot
+  /// clobber a newer one that finished first.
+  ///
+  /// This runs on a camera settle, never on a camera frame — a bitmap
+  /// rebuild and a marker-set diff on every step of a pinch is the cost the
+  /// map exists to avoid.
   Future<void> _rebuildMarkers(List<CatMarker> cats, String? selectedId) async {
     final generation = ++_markerBuildGeneration;
     final bitmaps = ref.read(markerBitmapBuilderProvider);
+    final camera = _camera;
+    final zoom = _resolvedZoom;
     final visibleCats = _helpFilterOn
         ? cats.where((cat) => cat.needsHelp).toList()
         : cats;
+
+    final grouped = clusterCats(
+      cats: visibleCats,
+      zoom: zoom,
+      selectedId: selectedId,
+    );
+    final tiers = resolveTiers(
+      cats: grouped.loose,
+      zoom: zoom,
+      cameraLat: camera?.target.latitude ?? istanbulFallback.latitude,
+      cameraLng: camera?.target.longitude ?? istanbulFallback.longitude,
+      selectedId: selectedId,
+    );
+
+    // Which cats a pulse will actually be drawn for. A cat gives up the
+    // ring and badge painted into its own bitmap only to a pulse that is
+    // really running — the avatar tier, with motion allowed — so this is
+    // resolved before the pins are drawn rather than after.
+    final helpHaloCats = _reducedMotion
+        ? const <CatMarker>[]
+        : [
+            for (final cat in grouped.loose)
+              if (cat.needsHelp && tiers[cat.id] == MarkerTier.avatar) cat,
+          ];
+    final pulsingHelpIds = {for (final cat in helpHaloCats) cat.id};
 
     // Cats recorded at the same doorway end up on the same coordinate, and
     // identical positions make the one drawn last the only one that can be
@@ -136,53 +282,251 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // target. It is display only — nothing is written back, and the offset
     // is derived from the cat's own id, so a pin lands in the same place on
     // every rebuild instead of jumping between renders.
-    final positions = fanOutCoincident(visibleCats);
+    final positions = fanOutCoincident(grouped.loose);
+    final dimUnselected = selectedId != null;
+    final fadeValue = _photoFade.value;
 
-    final markers = await Future.wait(
-      visibleCats.map((cat) async {
-        final selected = cat.id == selectedId;
-        final icon = await bitmaps.pin(
-          cacheKey: cat.id,
-          photoUrl: cat.primaryPhoto,
-          needsHelp: cat.needsHelp,
-          selected: selected,
-        );
-        return Marker(
-          markerId: MarkerId(cat.id),
+    final built = await Future.wait([
+      for (final cluster in grouped.clusters)
+        _buildClusterMarker(bitmaps, cluster, dimUnselected),
+      for (final cat in grouped.loose)
+        _buildCatMarkers(
+          bitmaps: bitmaps,
+          cat: cat,
+          tier: tiers[cat.id] ?? MarkerTier.dot,
           position: positions[cat.id] ?? LatLng(cat.lat, cat.lng),
-          icon: icon,
-          clusterManagerId: _catsClusterManagerId,
-          // The selected pin is always on top; everything else stacks by
-          // latitude, southern pins over northern ones, which is what a map
-          // reader expects and — more to the point — is stable, so the same
-          // cat does not win the overlap one rebuild and lose it the next.
-          zIndexInt: selected ? selectedMarkerZIndex : latitudeZIndex(cat.lat),
-          onTap: () => _onCatSelected(cat),
-        );
-      }),
-    );
+          selected: cat.id == selectedId,
+          dimUnselected: dimUnselected,
+          fadeValue: fadeValue,
+          restingHelpMark: !pulsingHelpIds.contains(cat.id),
+        ),
+    ]);
 
     if (generation != _markerBuildGeneration || !mounted) return;
-    setState(() => _markers = markers.toSet());
+    setState(() {
+      _markers = built.expand((m) => m).toSet();
+      _helpHaloCats = helpHaloCats;
+    });
   }
 
-  Future<void> _onClusterTap(Cluster cluster) async {
+  /// Rebuilds from whatever the provider currently holds — the shape every
+  /// caller that is reacting to something other than a provider change
+  /// (a camera settle, a photo landing) needs.
+  Future<void> _rebuildFromState() {
+    final state = ref.read(catsMapProvider);
+    return _rebuildMarkers(state.markers, state.selectedMarker?.id);
+  }
+
+  Future<List<Marker>> _buildClusterMarker(
+    MarkerBitmapBuilder bitmaps,
+    CatCluster cluster,
+    bool dimUnselected,
+  ) async {
+    final icon = await bitmaps.cluster(
+      count: cluster.count,
+      containsHelp: cluster.containsHelp,
+    );
+    return [
+      Marker(
+        markerId: MarkerId(cluster.id),
+        position: LatLng(cluster.lat, cluster.lng),
+        icon: icon,
+        alpha: dimUnselected ? _unselectedMarkerAlpha : 1.0,
+        anchor: _markerAnchor,
+        zIndexInt: latitudeZIndex(cluster.lat),
+        onTap: () => unawaited(_onClusterTap(cluster)),
+      ),
+    ];
+  }
+
+  /// One cat's markers — two of them, briefly, while its face fades in over
+  /// the silhouette that stood in for it.
+  Future<List<Marker>> _buildCatMarkers({
+    required MarkerBitmapBuilder bitmaps,
+    required CatMarker cat,
+    required MarkerTier tier,
+    required LatLng position,
+    required bool selected,
+    required bool dimUnselected,
+    required double fadeValue,
+    required bool restingHelpMark,
+  }) async {
+    // A cat that should be a face but whose photo has not landed is drawn
+    // as a silhouette, and the photo is asked for. No spinner: the mark is
+    // already the right shape in the right place, it just does not know
+    // whose face it is yet.
+    final wantsPhoto = tier == MarkerTier.avatar && cat.primaryPhoto.isNotEmpty;
+    if (wantsPhoto && !bitmaps.hasPhoto(cat.primaryPhoto)) {
+      _requestPhoto(cat.primaryPhoto, cat.id);
+      final icon = await bitmaps.pin(
+        cacheKey: cat.id,
+        photoUrl: cat.primaryPhoto,
+        needsHelp: cat.needsHelp,
+        tier: MarkerTier.silhouette,
+        selected: selected,
+      );
+      return [
+        _marker(
+          id: cat.id,
+          cat: cat,
+          position: position,
+          icon: icon,
+          selected: selected,
+          alpha: _alphaFor(selected: selected, dimUnselected: dimUnselected),
+        ),
+      ];
+    }
+
+    final icon = await bitmaps.pin(
+      cacheKey: cat.id,
+      photoUrl: cat.primaryPhoto,
+      needsHelp: cat.needsHelp,
+      tier: tier,
+      selected: selected,
+      restingHelpMark: restingHelpMark,
+    );
+    final base = _alphaFor(selected: selected, dimUnselected: dimUnselected);
+    if (!_fadingIn.contains(cat.id)) {
+      return [
+        _marker(
+          id: cat.id,
+          cat: cat,
+          position: position,
+          icon: icon,
+          selected: selected,
+          alpha: base,
+        ),
+      ];
+    }
+
+    // The cross-fade: the outgoing silhouette and the incoming face are
+    // both real markers at the same point, and only their alpha moves. No
+    // bitmap is re-rendered for a frame of this, so the cost is a marker
+    // diff over the platform channel and nothing else.
+    final outgoing = await bitmaps.pin(
+      cacheKey: cat.id,
+      photoUrl: cat.primaryPhoto,
+      needsHelp: cat.needsHelp,
+      tier: MarkerTier.silhouette,
+      selected: selected,
+    );
+    return [
+      _marker(
+        id: '${cat.id}#outgoing',
+        cat: cat,
+        position: position,
+        icon: outgoing,
+        selected: selected,
+        alpha: base * (1 - fadeValue),
+      ),
+      _marker(
+        id: cat.id,
+        cat: cat,
+        position: position,
+        icon: icon,
+        selected: selected,
+        alpha: base * fadeValue,
+      ),
+    ];
+  }
+
+  double _alphaFor({required bool selected, required bool dimUnselected}) =>
+      (dimUnselected && !selected) ? _unselectedMarkerAlpha : 1.0;
+
+  Marker _marker({
+    required String id,
+    required CatMarker cat,
+    required LatLng position,
+    required BitmapDescriptor icon,
+    required bool selected,
+    required double alpha,
+  }) {
+    return Marker(
+      markerId: MarkerId(id),
+      position: position,
+      icon: icon,
+      alpha: alpha,
+      anchor: _markerAnchor,
+      // The selected pin is always on top; everything else stacks by
+      // latitude, southern pins over northern ones, which is what a map
+      // reader expects and — more to the point — is stable, so the same cat
+      // does not win the overlap one rebuild and lose it the next.
+      zIndexInt: selected ? selectedMarkerZIndex : latitudeZIndex(cat.lat),
+      onTap: () => _onCatSelected(cat),
+    );
+  }
+
+  /// Asks for a cat's photo once, and fades its face in when it lands.
+  void _requestPhoto(String url, String catId) {
+    if (!_requestedPhotos.add(url)) return;
+    final bitmaps = ref.read(markerBitmapBuilderProvider);
+    unawaited(
+      bitmaps.warmPhoto(url).then((settled) {
+        if (!settled || !mounted) return;
+        // Reduced motion still swaps the face in — it is a value arriving,
+        // not travel — it simply does so without the fade.
+        if (TekirMotion.of(context).reduced) {
+          unawaited(_rebuildFromState());
+          return;
+        }
+        _fadingIn.add(catId);
+        unawaited(_rebuildFromState());
+        _photoFade.forward(from: 0);
+      }),
+    );
+  }
+
+  /// Opens a group: by zooming in on it, or — when zooming would never
+  /// break it apart — by asking which cat inside it was meant.
+  ///
+  /// A cell is about seven metres across at the map's closest zoom, so two
+  /// cats recorded from the same doorway share one for good. Zooming at
+  /// them spends the last of the zoom and leaves them exactly as grouped as
+  /// they were, with no way to reach either one.
+  Future<void> _onClusterTap(CatCluster cluster) async {
     unawaited(TekirHaptics.acknowledge());
     final controller = _controller;
     if (controller == null) return;
     final currentZoom = await controller.getZoomLevel();
-    final targetZoom = math.min(
-      currentZoom + _clusterTapZoomStep,
-      istanbulMaxZoom,
-    );
-    await controller.animateCamera(
-      CameraUpdate.newLatLngZoom(cluster.position, targetZoom),
+    if (!mounted) return;
+
+    final splits = clusterCanSplitByZooming(cluster, maxZoom: istanbulMaxZoom);
+    if (splits && currentZoom < istanbulMaxZoom) {
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(
+          LatLng(cluster.lat, cluster.lng),
+          zoomAfterClusterTap(currentZoom, istanbulMaxZoom),
+        ),
+      );
+      return;
+    }
+    await _openClusterPicker(cluster);
+  }
+
+  Future<void> _openClusterPicker(CatCluster cluster) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      // No scrim, for the same reason the selection sheet has none: the
+      // group this is about is on the map behind it.
+      barrierColor: Colors.transparent,
+      useRootNavigator: true,
+      builder: (sheetContext) => PointerInterceptor(
+        child: ClusterPickerSheet(
+          cluster: cluster,
+          onPick: (cat) {
+            Navigator.of(sheetContext).pop();
+            _onCatSelected(cat);
+          },
+        ),
+      ),
     );
   }
 
   // Selecting a marker highlights it and opens the preview sheet — it never
-  // navigates directly (prototype/app.js's selectCat -> openSheet). Only
-  // the sheet's "Detaya git" action opens the cat-detail route.
+  // navigates directly. Only the sheet's own action opens the cat-detail
+  // route.
   void _onCatSelected(CatMarker cat) {
     // Fired here, synchronously, rather than after the marker set is
     // rebuilt: the pin's own selected state is a re-rendered bitmap that
@@ -190,48 +534,51 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // acknowledges the tap.
     unawaited(TekirHaptics.acknowledge());
     ref.read(catsMapProvider.notifier).selectCat(cat);
-    unawaited(_liftSelectedPinClearOfSheet(cat));
+    unawaited(_centreSelected(cat));
   }
 
-  /// Slides the camera so the tapped pin sits above the preview sheet
-  /// rather than behind it.
+  /// Brings the selected cat to rest in the band above the sheet (approved
+  /// design, artboard 02).
   ///
-  /// The sheet covers roughly the bottom third of the screen, and a pin
-  /// tapped low — or near the right edge, where a pin can sit half off the
-  /// map — was then hidden by the surface describing it. Nothing marked the
-  /// connection between the two.
+  /// The shipped behaviour was a nudge — scroll the pin just far enough to
+  /// clear the sheet — chosen so the user's own framing of the
+  /// neighbourhood survived the tap. The approved design replaces that with
+  /// a real centring, and answers the objection differently: the sheet is
+  /// about this one cat, so the map should be too.
   ///
-  /// Deliberately a nudge, not a recentre: moving the pin to the middle of
-  /// the remaining space would throw away the user's own framing of the
-  /// neighbourhood, which is the thing they were reading when they tapped.
-  Future<void> _liftSelectedPinClearOfSheet(CatMarker cat) async {
+  /// "Centred" is centred in what is left of the map, not in the whole
+  /// widget. [GoogleMap.padding] carries the sheet's height while a cat is
+  /// selected, so the sdk's own idea of the centre already excludes the
+  /// covered band and `newLatLng` lands the cat above it without any
+  /// arithmetic here.
+  Future<void> _centreSelected(CatMarker cat) async {
     final controller = _controller;
     if (controller == null) return;
-    final size = MediaQuery.sizeOf(context);
-    // The sheet's own height is not known until it lays out, and this runs
-    // before it opens; a third of the screen is what it occupies at the
-    // content sizes this sheet can reach.
-    final sheetHeight = size.height / 3;
-    final screenPoint = await controller.getScreenCoordinate(
-      LatLng(cat.lat, cat.lng),
-    );
+    // Close enough that the cat is its own face, never further out than the
+    // user already was. Selecting a cat from a city-wide view and being
+    // shown a dot answers the tap with the same mark that prompted it.
+    final zoom = math.max(await controller.getZoomLevel(), avatarTierMinZoom);
     if (!mounted) return;
-
-    final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
-    final pinY = screenPoint.y / devicePixelRatio;
-    final pinX = screenPoint.x / devicePixelRatio;
-    // The band the sheet will cover, plus the pin's own height so a pin
-    // resting exactly on the sheet's edge still clears it.
-    final safeBottom = size.height - sheetHeight - 48;
-    final dy = pinY > safeBottom ? pinY - safeBottom : 0.0;
-    // Horizontal only when the pin is genuinely near an edge.
-    const edgeMargin = 56.0;
-    final dx = pinX > size.width - edgeMargin
-        ? pinX - (size.width - edgeMargin)
-        : (pinX < edgeMargin ? pinX - edgeMargin : 0.0);
-    if (dy == 0 && dx == 0) return;
-
-    await controller.animateCamera(CameraUpdate.scrollBy(dx, dy));
+    final target = _mapSize.isEmpty
+        ? LatLng(cat.lat, cat.lng)
+        : cameraTargetPlacing(
+            LatLng(cat.lat, cat.lng),
+            screenPoint: Offset(
+              _mapSize.width / 2,
+              // The middle of what the sheet leaves, which is where the
+              // approved design rests a selected cat.
+              _mapSize.height * (1 - _sheetHeightFraction) / 2,
+            ),
+            zoom: zoom,
+            size: _mapSize,
+          );
+    await controller.animateCamera(
+      CameraUpdate.newLatLngZoom(target, zoom),
+      // Reduced motion arrives in the same frame: the camera still moves —
+      // the cat has to end up above the sheet either way — it just does not
+      // travel there.
+      duration: TekirMotion.of(context)(_selectionCameraDuration),
+    );
   }
 
   void _toggleHelpFilter() {
@@ -256,20 +603,47 @@ class _MapScreenState extends ConsumerState<MapScreen>
     );
   }
 
+  /// How far [cat] is from the user, or null when no real position is
+  /// known.
+  ///
+  /// A fallback centre is a hard-coded istanbul point, not a location, and
+  /// a distance measured from it would read as "distance from you" and be
+  /// wrong — the same rule the search panel's own rows follow.
+  double? _distanceToUser(CatMarker cat) {
+    final resolved = ref.read(initialLocationProvider).value;
+    if (resolved == null || resolved.isFallback) return null;
+    return Geolocator.distanceBetween(
+      resolved.center.latitude,
+      resolved.center.longitude,
+      cat.lat,
+      cat.lng,
+    );
+  }
+
   Future<void> _openPreviewSheet(CatMarker cat) async {
     _sheetOpen = true;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      // No scrim. A sheet's default barrier is 54% black over everything
+      // behind it, which here is the map — and the map behind this sheet
+      // is not backdrop, it is the thing the sheet is about: the cat has
+      // just been centred on it, its ring is turning, and the cats around
+      // it have been quieted to a third to say so. A wash of black over
+      // all of that hid the marks at the exact moment they were made, and
+      // fought the dimming that carries the same meaning honestly. The
+      // barrier itself stays, so a tap outside still dismisses.
+      barrierColor: Colors.transparent,
       // issue #80 product-owner review: MapScreen is now a
       // StatefulShellRoute branch with its own nested Navigator — without
       // this, the sheet paints underneath the shell's persistent bottom
       // nav/add-cat fab (app_shell.dart) instead of above the whole app.
       useRootNavigator: true,
       builder: (sheetContext) => PointerInterceptor(
-        child: CatPreviewSheet(
+        child: CatQuickUpdateSheet(
           cat: cat,
+          distanceMeters: _distanceToUser(cat),
           onOpenDetail: () => _openDetailFromSheet(sheetContext, cat),
         ),
       ),
@@ -327,13 +701,55 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // on every frame of a pan or fling gesture.
     _debounce?.cancel();
     _debounce = Timer(_debounceDuration, _fetchVisible);
+    // Resolution and grouping settle with the camera, for the same reason:
+    // both would otherwise redraw a screenful of bitmaps on every frame of
+    // a pinch.
+    unawaited(_resolveMarkersAtCurrentCamera());
+  }
+
+  Future<void> _resolveMarkersAtCurrentCamera() async {
+    final camera = _camera;
+    if (camera == null) return;
+    if (camera.zoom == _resolvedZoom) return;
+    _resolvedZoom = camera.zoom;
+    await _rebuildFromState();
   }
 
   void _onCameraMove(CameraPosition position) {
     // tracks whether "alanı genişlet" can still widen anything; the small
     // epsilon absorbs the sdk reporting e.g. 12.000001 at the floor.
     final atMin = position.zoom <= istanbulMinZoom + 0.01;
-    if (atMin != _atMinZoom) setState(() => _atMinZoom = atMin);
+    // The halo is projected from this camera, so it has to move with every
+    // frame rather than with the settle — a ring that lagged the map would
+    // read as belonging to the screen, not to the cat.
+    setState(() {
+      _camera = position;
+      if (atMin != _atMinZoom) _atMinZoom = atMin;
+    });
+  }
+
+  /// Where [cat] sits on screen right now, or null when there is no camera
+  /// yet or the cat has been panned out of view.
+  ///
+  /// Off-screen by more than a ring's own reach means no ring: drawing one
+  /// would pin it to an edge the cat is not at.
+  Offset? _haloCentre(CatMarker? cat) {
+    final camera = _camera;
+    if (cat == null || camera == null || _mapSize.isEmpty) return null;
+    final offset = screenOffsetOf(
+      LatLng(cat.lat, cat.lng),
+      cameraTarget: camera.target,
+      zoom: camera.zoom,
+      size: _mapSize,
+    );
+    const slack = _selectionHaloRadius * 2;
+    if (offset.dx < -slack ||
+        offset.dy < -slack ||
+        offset.dx > _mapSize.width + slack ||
+        offset.dy > _mapSize.height + slack) {
+      return null;
+    }
+    return offset;
   }
 
   Future<void> _fetchVisible() async {
@@ -363,12 +779,14 @@ class _MapScreenState extends ConsumerState<MapScreen>
         mapState.error == null &&
         mapState.markers.isEmpty;
     // app-states.html's 07/13 frames swap the topbar search placeholder to
-    // this copy while the map itself is loading or the radius is empty;
-    // the prototype's static "Mahalle veya sokak ara" is the normal-state
-    // baseline everywhere else.
+    // this copy while the map itself is loading or the radius is empty.
+    // The normal-state baseline is no longer "Mahalle veya sokak ara":
+    // search is by the cat's own name now (issue #284), and neighbourhood
+    // or street search is explicitly out of scope in the approved design,
+    // so a placeholder promising it would be a lie.
     final searchHint = (isInitialRead || isEmptyRadius)
         ? 'bu civarda ara'
-        : 'Mahalle veya sokak ara';
+        : 'kedi ara';
 
     ref.listen(catsMapProvider, (previous, next) {
       final selectionChanged =
@@ -432,51 +850,52 @@ class _MapScreenState extends ConsumerState<MapScreen>
     required bool isFallback,
     required String searchHint,
   }) {
+    final mapState = ref.watch(catsMapProvider);
+    final topInset = MediaQuery.of(context).padding.top;
+    final helpCount = mapState.markers.where((m) => m.needsHelp).length;
     return Stack(
       children: [
         _buildMap(center: center, isFallback: isFallback),
+        // The whole top strip is one row (approved design artboard 01):
+        // search pill, bell, avatar. The bell and the profile stopped being
+        // a corner button and a tab respectively — they are the two things
+        // that sit beside search, and nothing else does.
         Positioned(
-          top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-          left: AppSpacing.s4,
-          // clears the notifications button parked at the same top
-          // offset on the right (map_screen.dart's own issue #78
-          // addition — no prototype IA, so it stays a corner button
-          // instead of folding into this topbar).
-          right: AppSpacing.s4 + kTapMin + AppSpacing.s2,
-          child: PointerInterceptor(
-            child: _MapSearchField(hintText: searchHint),
-          ),
-        ),
-        Positioned(
-          top:
-              MediaQuery.of(context).padding.top +
-              AppSpacing.s3 +
-              kTapMin +
-              AppSpacing.s2,
+          top: topInset + AppSpacing.s3,
           left: AppSpacing.s4,
           right: AppSpacing.s4,
           child: PointerInterceptor(
-            child: _MapChipRow(
-              helpFilterOn: _helpFilterOn,
-              onToggleHelpFilter: _toggleHelpFilter,
+            child: _TopStrip(
+              searchHint: searchHint,
+              nearbyCount: mapState.hasLoadedOnce
+                  ? mapState.markers.length
+                  : null,
+              onSearch: _openSearch,
             ),
           ),
         ),
-        Positioned(
-          top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-          right: AppSpacing.s4,
-          child: PointerInterceptor(child: _NotificationsButton()),
-        ),
-        // Below the chip row, which itself sits one tap-target below the
-        // search field. The banner used to live inside _buildMap's stack at
-        // the search field's own offset and was drawn first, so the search
-        // field covered it and it was never actually visible.
+        if (helpCount > 0)
+          Positioned(
+            top: topInset + AppSpacing.s3 + kTapMin + AppSpacing.s2,
+            left: AppSpacing.s4,
+            // Not stretched: the strip is a statement sized to its own
+            // sentence, and a full-width bar would read as a banner.
+            child: PointerInterceptor(
+              child: _HelpStrip(
+                count: helpCount,
+                isOn: _helpFilterOn,
+                onTap: _toggleHelpFilter,
+              ),
+            ),
+          ),
+        // Below the help strip, which itself sits one tap-target below the
+        // top strip.
         if (isFallback)
           Positioned(
             top:
-                MediaQuery.of(context).padding.top +
+                topInset +
                 AppSpacing.s3 +
-                (kTapMin + AppSpacing.s2) * 2,
+                (kTapMin + AppSpacing.s2) * (helpCount > 0 ? 2 : 1),
             left: AppSpacing.s4,
             right: AppSpacing.s4,
             child: PointerInterceptor(
@@ -485,7 +904,81 @@ class _MapScreenState extends ConsumerState<MapScreen>
               ),
             ),
           ),
+        Positioned(
+          right: AppSpacing.s4,
+          bottom: _locateButtonBottom(context),
+          child: PointerInterceptor(child: _LocateButton(onTap: _locate)),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: _addCatPillBottom(context),
+          child: PointerInterceptor(
+            child: Center(child: _AddCatPill(onTap: _addCat)),
+          ),
+        ),
       ],
+    );
+  }
+
+  /// Opens the search panel and, if the user picked a cat, selects it on
+  /// the map — the panel never navigates anywhere itself.
+  Future<void> _openSearch() async {
+    final picked = await CatSearchPanel.push(context);
+    if (picked == null || !mounted) return;
+    await _revealCat(picked);
+  }
+
+  /// Brings [cat] into view and selects it.
+  ///
+  /// A searched cat is routinely outside the current viewport, and the
+  /// shipped selection path only ever nudged a pin that was already on
+  /// screen. The camera is moved first so the sheet that follows is
+  /// describing something visible; the marker itself arrives with the
+  /// camera-idle refetch that the move triggers, so a cat from outside the
+  /// loaded set does not have to be fetched separately.
+  Future<void> _revealCat(CatMarker cat) async {
+    final controller = _controller;
+    if (controller != null) {
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(LatLng(cat.lat, cat.lng), _initialZoom),
+      );
+    }
+    if (!mounted) return;
+    ref.read(catsMapProvider.notifier).selectCat(cat);
+  }
+
+  /// Recentres on the user's own position (approved design artboard 01).
+  ///
+  /// A fallback centre is a hard-coded istanbul point, not a location —
+  /// centring on it would claim to have found the user. That case re-runs
+  /// permission recovery instead, which is the only thing that can actually
+  /// answer the request.
+  Future<void> _locate() async {
+    unawaited(TekirHaptics.acknowledge());
+    final resolved = ref.read(initialLocationProvider).value;
+    if (resolved == null || resolved.isFallback) {
+      _requestLocationPermission();
+      return;
+    }
+    await _controller?.animateCamera(
+      CameraUpdate.newLatLngZoom(resolved.center, _initialZoom),
+    );
+  }
+
+  // Gate-at-intent, the exact mechanism the retired shell fab used
+  // (app_shell.dart's _AddCatFab): a guest sees AuthGate's prompt sheet
+  // first, and `/add-cat` is pushed only once sign-in completes.
+  void _addCat() {
+    unawaited(TekirHaptics.acknowledge());
+    unawaited(
+      AuthGate.require(
+        context,
+        ref,
+        contextText: 'Kedi eklemek için giriş yap',
+        intent: AnalyticsAuthIntent.addCat,
+        onAuthenticated: () => context.push('/add-cat'),
+      ),
     );
   }
 
@@ -509,21 +1002,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
     );
   }
 
-  // Gate-at-intent, the exact mechanism of the shell's add-cat fab
-  // (app_shell.dart's _AddCatFab): a guest sees AuthGate's prompt sheet
-  // first, and `/add-cat` is pushed only once sign-in completes.
-  void _addFirstCat() {
-    unawaited(
-      AuthGate.require(
-        context,
-        ref,
-        contextText: 'Kedi eklemek için giriş yap',
-        intent: AnalyticsAuthIntent.addCat,
-        onAuthenticated: () => context.push('/add-cat'),
-      ),
-    );
-  }
-
   Widget _buildMap({required LatLng center, required bool isFallback}) {
     final mapState = ref.watch(catsMapProvider);
     final isInitialRead = mapState.isLoading && !mapState.hasLoadedOnce;
@@ -532,81 +1010,120 @@ class _MapScreenState extends ConsumerState<MapScreen>
         !mapState.isLoading &&
         mapState.error == null &&
         mapState.markers.isEmpty;
+    final selected = mapState.selectedMarker;
+    final initialCamera = CameraPosition(
+      target: center,
+      // A fallback center is a fixed, hard-coded istanbul point, not a
+      // real location — the close walking-distance zoom would read as
+      // pointing at one specific place. Zooming out to the map's own
+      // widest allowed view instead shows "greater istanbul", per issue
+      // #235.
+      zoom: isFallback ? istanbulFallbackZoom : _initialZoom,
+    );
+    _camera ??= initialCamera;
+    final selectedCentre = _haloCentre(selected);
+    // The selected cat keeps its own help pulse. Suppressing it meant that
+    // tapping a cat waiting for help stopped the very thing that made it
+    // worth tapping, at the moment the sheet about it opened. The approved
+    // design's own selected marker carries both rings at once.
+    final helpCentres = <Offset>[
+      for (final cat in _helpHaloCats) ?_haloCentre(cat),
+    ];
 
-    return Stack(
-      children: [
-        GoogleMap(
-          initialCameraPosition: CameraPosition(
-            target: center,
-            // A fallback center is a fixed, hard-coded istanbul point, not
-            // a real location — the close walking-distance zoom would read
-            // as pointing at one specific place. Zooming out to the map's
-            // own widest allowed view instead shows "greater istanbul", per
-            // issue #235.
-            zoom: isFallback ? istanbulFallbackZoom : _initialZoom,
-          ),
-          style: catsOfIstanbulMapStyle,
-          cameraTargetBounds: CameraTargetBounds(istanbulBounds),
-          minMaxZoomPreference: const MinMaxZoomPreference(
-            istanbulMinZoom,
-            istanbulMaxZoom,
-          ),
-          myLocationButtonEnabled: false,
-          zoomControlsEnabled: false,
-          mapToolbarEnabled: false,
-          markers: _markers,
-          clusterManagers: {
-            ClusterManager(
-              clusterManagerId: _catsClusterManagerId,
-              onClusterTap: _onClusterTap,
-            ),
-          },
-          onMapCreated: _onMapCreated,
-          onCameraIdle: _onCameraIdle,
-          onCameraMove: _onCameraMove,
-        ),
-        if (isInitialRead)
-          // state 13 · harita yükleniyor. keyed on the attempt counter so
-          // a retry remounts the gate and earns a fresh 400 ms of silence.
-          _InitialReadOverlay(
-            key: ValueKey(mapState.attempt),
-            locationKnown: !isFallback,
-            onRetry: _retryVisible,
-          )
-        else ...[
-          if (mapState.isLoading) const _LoadingBar(),
-          if (mapState.error != null)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-              left: AppSpacing.s3,
-              right: AppSpacing.s3,
-              // on web, GoogleMap is a real platform view (an html
-              // element), not flutter-rendered pixels — widgets stacked
-              // above it need PointerInterceptor or their taps can fall
-              // through to the map underneath.
-              child: PointerInterceptor(
-                child: MapErrorBanner(onRetry: _retryVisible),
+    return LayoutBuilder(
+      builder: (context, box) {
+        // Recorded rather than read at projection time: the halo projects
+        // during a camera frame, which is not a layout pass.
+        if (box.biggest != _mapSize) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && box.biggest != _mapSize) {
+              setState(() => _mapSize = box.biggest);
+            }
+          });
+        }
+        return Stack(
+          children: [
+            GoogleMap(
+              initialCameraPosition: initialCamera,
+              style: catsOfIstanbulMapStyle,
+              cameraTargetBounds: CameraTargetBounds(istanbulBounds),
+              minMaxZoomPreference: const MinMaxZoomPreference(
+                istanbulMinZoom,
+                istanbulMaxZoom,
               ),
+              myLocationButtonEnabled: false,
+              zoomControlsEnabled: false,
+              mapToolbarEnabled: false,
+              // The selected cat's halo is drawn in dart, over the map, and
+              // dart can only project a flat, north-up camera — the sdk
+              // exposes no perspective transform of its own. Neither
+              // gesture is part of the approved design's map either: it is
+              // a paper street map, not a 3d one.
+              rotateGesturesEnabled: false,
+              tiltGesturesEnabled: false,
+              // While a cat is selected the sheet covers the bottom band,
+              // so the sdk is told the map is that much shorter. Its own
+              // idea of "centre" then excludes the covered band, and
+              // centring on the cat puts it above the sheet rather than
+              // behind it.
+              markers: _markers,
+              onMapCreated: _onMapCreated,
+              onCameraIdle: _onCameraIdle,
+              onCameraMove: _onCameraMove,
             ),
-        ],
-        if (isEmptyRadius)
-          // state 07 · civarda kayıt yok. no user dot is drawn: a
-          // screen-center dot stops being the user's position the moment
-          // the camera pans, and nothing anchors it to the real
-          // coordinate yet.
-          Positioned(
-            left: AppSpacing.s4,
-            right: AppSpacing.s4,
-            bottom: _fabClearance,
-            child: PointerInterceptor(
-              child: EmptyRadiusCard(
-                searchRadiusMeters: mapState.searchRadiusMeters,
-                onAddCat: _addFirstCat,
-                onWidenArea: _atMinZoom ? null : _widenArea,
+            // Always mounted, so its controllers — and the turn a ring is
+            // part-way through — outlive any moment with nothing to draw.
+            // Mounted only when it had work, the selected cat's ring
+            // restarted from zero every time, which looked like it kept
+            // beginning again.
+            MapHaloLayer(
+              helpCentres: helpCentres,
+              selectedCentre: selectedCentre,
+            ),
+            if (isInitialRead)
+              // state 13 · harita yükleniyor. keyed on the attempt counter so
+              // a retry remounts the gate and earns a fresh 400 ms of silence.
+              _InitialReadOverlay(
+                key: ValueKey(mapState.attempt),
+                locationKnown: !isFallback,
+                onRetry: _retryVisible,
+              )
+            else ...[
+              if (mapState.isLoading) const _LoadingBar(),
+              if (mapState.error != null)
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+                  left: AppSpacing.s3,
+                  right: AppSpacing.s3,
+                  // on web, GoogleMap is a real platform view (an html
+                  // element), not flutter-rendered pixels — widgets stacked
+                  // above it need PointerInterceptor or their taps can fall
+                  // through to the map underneath.
+                  child: PointerInterceptor(
+                    child: MapErrorBanner(onRetry: _retryVisible),
+                  ),
+                ),
+            ],
+            if (isEmptyRadius)
+              // state 07 · civarda kayıt yok. no user dot is drawn: a
+              // screen-center dot stops being the user's position the moment
+              // the camera pans, and nothing anchors it to the real
+              // coordinate yet.
+              Positioned(
+                left: AppSpacing.s4,
+                right: AppSpacing.s4,
+                bottom: _bottomChromeClearance(context),
+                child: PointerInterceptor(
+                  child: EmptyRadiusCard(
+                    searchRadiusMeters: mapState.searchRadiusMeters,
+                    onAddCat: _addCat,
+                    onWidenArea: _atMinZoom ? null : _widenArea,
+                  ),
+                ),
               ),
-            ),
-          ),
-      ],
+          ],
+        );
+      },
     );
   }
 }
@@ -652,11 +1169,11 @@ class _InitialReadOverlay extends StatelessWidget {
                 ),
                 if (locationKnown) const Center(child: SonarUserDot()),
                 if (phase == InitialReadPhase.skeletonWithStatus)
-                  const Positioned(
+                  Positioned(
                     left: 0,
                     right: 0,
-                    bottom: _fabClearance + AppSpacing.s3,
-                    child: Center(child: MapLoadingStatusPill()),
+                    bottom: _bottomChromeClearance(context),
+                    child: const Center(child: MapLoadingStatusPill()),
                   ),
               ],
             ),
@@ -681,155 +1198,103 @@ class _LoadingBar extends StatelessWidget {
   }
 }
 
-/// The map topbar's search field (prototype/app.js's `renderMap`,
-/// `.search-field`) — visual parity only, not editable. The prototype's own
-/// input has no wired handler either (no oninput, no search-results
-/// rendering; the audit at docs/design/issue-121-visual-parity-audit.md
-/// confirmed this), and issue #138 removed the typeable `TextField` since it
-/// never did anything but pop the keyboard with no way to dismiss it.
-class _MapSearchField extends StatelessWidget {
-  const _MapSearchField({required this.hintText});
-
-  final String hintText;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.94),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadius.full),
-        side: const BorderSide(color: AppColors.lineStrong),
-      ),
-      elevation: 1,
-      shadowColor: const Color(0x122A1F1B),
-      child: SizedBox(
-        height: kTapMin,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            const SizedBox(width: AppSpacing.s4),
-            const Icon(Icons.search, size: 17, color: AppColors.muted),
-            const SizedBox(width: AppSpacing.s2),
-            Expanded(
-              child: Text(
-                hintText,
-                style: const TextStyle(fontSize: 15, color: AppColors.faint),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: AppSpacing.s4),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The map topbar's chip row (prototype/app.js's `renderMapChrome`) — only
-/// the needs-help filter ships here. The prototype's second chip
-/// ("konum kapalı", shown only once `state.locationGranted === false`)
-/// depends on the location-permission screen issue #121 leaves open
-/// pending a product decision (docs/design/app-states.md's open question
-/// on state 06) — omitted rather than guessed.
-class _MapChipRow extends StatelessWidget {
-  const _MapChipRow({
-    required this.helpFilterOn,
-    required this.onToggleHelpFilter,
+/// The map's whole top chrome (issue #284, approved design artboard 01):
+/// a search pill, the notification bell, and the account avatar, in one
+/// 44px row. This replaced three separate things — a decorative search
+/// field that was never typeable (issue #138), a corner notifications
+/// button, and a profil tab in a bottom bar that no longer exists.
+class _TopStrip extends StatelessWidget {
+  const _TopStrip({
+    required this.searchHint,
+    required this.nearbyCount,
+    required this.onSearch,
   });
 
-  final bool helpFilterOn;
-  final VoidCallback onToggleHelpFilter;
+  final String searchHint;
+
+  /// Cats in the current viewport, or null before the first read lands —
+  /// the design's "yakında 12". Null rather than 0 so an unread map never
+  /// claims there are no cats here.
+  final int? nearbyCount;
+
+  final VoidCallback onSearch;
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: _HelpFilterChip(isOn: helpFilterOn, onTap: onToggleHelpFilter),
+    return Row(
+      children: [
+        Expanded(
+          child: _SearchPill(
+            hintText: searchHint,
+            nearbyCount: nearbyCount,
+            onTap: onSearch,
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s2 + 1),
+        const _NotificationsButton(),
+        const SizedBox(width: AppSpacing.s2 + 1),
+        const _AccountAvatarButton(),
+      ],
     );
   }
 }
 
-/// `.chip.is-warm` (prototype/styles.css): bolder than a plain chip even
-/// off, so it reads as "the alert filter" at a glance against the rest of
-/// the map chrome.
-class _HelpFilterChip extends StatelessWidget {
-  const _HelpFilterChip({required this.isOn, required this.onTap});
+/// The strip's search entry point. Not a field: it opens
+/// [CatSearchPanel], which has the real one. A `TextField` here would have
+/// to type over a platform view with the map's own gestures underneath it,
+/// which is the arrangement issue #138 removed.
+class _SearchPill extends StatelessWidget {
+  const _SearchPill({
+    required this.hintText,
+    required this.nearbyCount,
+    required this.onTap,
+  });
 
-  final bool isOn;
+  final String hintText;
+  final int? nearbyCount;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final background = isOn
-        ? AppColors.help
-        : Colors.white.withValues(alpha: 0.94);
-    final foreground = isOn ? AppColors.helpInk : AppColors.helpStrong;
-    // visible pill stays 32px tall (prototype's `.chip`); the tap target
-    // still meets the 44px minimum (`.chip::before`'s invisible hit-area
-    // expansion) via the surrounding InkWell instead of the visible chrome.
+    final label = nearbyCount == null
+        ? hintText
+        : '$hintText · yakında $nearbyCount';
     return Semantics(
-      container: true,
-      excludeSemantics: true,
       button: true,
-      toggled: isOn,
-      label: 'yardım gerekiyor filtresi',
-      onTap: onTap,
+      label: label,
       child: PressResponse(
         child: Material(
-          color: Colors.transparent,
+          color: AppColors.bgElevated,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            side: const BorderSide(color: AppColors.lineStrong),
+          ),
+          elevation: 1,
+          shadowColor: const Color(0x122A1F1B),
           child: InkWell(
             borderRadius: BorderRadius.circular(AppRadius.full),
             onTap: onTap,
-            child: Container(
-              constraints: const BoxConstraints(minHeight: kTapMin),
-              alignment: Alignment.center,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: background,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
-                  border: Border.all(color: AppColors.help),
-                  boxShadow: isOn
-                      ? const [
-                          BoxShadow(
-                            color: Color(0x122A1F1B),
-                            offset: Offset(0, 1),
-                            blurRadius: 2,
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.s3,
-                    vertical: AppSpacing.s2 - 2,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.warning_amber_rounded,
-                        size: 14,
-                        color: foreground,
+            child: SizedBox(
+              height: kTapMin,
+              child: Row(
+                children: [
+                  const SizedBox(width: AppSpacing.s4),
+                  const Icon(Icons.search, size: 17, color: AppColors.muted),
+                  const SizedBox(width: AppSpacing.s2),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.faint,
                       ),
-                      const SizedBox(width: AppSpacing.s1),
-                      // Flexible (not a bare Text) so the label shrinks
-                      // instead of overflowing the chip row's positioned
-                      // width budget at large text-scale factors.
-                      Flexible(
-                        child: Text(
-                          'yardım gerekiyor',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: foreground,
-                          ),
-                        ),
-                      ),
-                    ],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: AppSpacing.s4),
+                ],
               ),
             ),
           ),
@@ -839,37 +1304,113 @@ class _HelpFilterChip extends StatelessWidget {
   }
 }
 
-/// Entry point onto the notification inbox (issue #78) — a glass circle
-/// button over the map, matching cat_detail_screen's `_BackCircleButton`
-/// visual language. Gate-at-intent, exactly like the shell's add-cat fab
-/// (app_shell.dart): a guest's tap shows AuthGate's prompt sheet first
-/// (there is nothing to show a guest — an inbox is inherently
-/// account-owned state, see docs/product/privacy.md) rather than pushing
-/// `/notifications` and failing there. The prototype has no notifications
-/// screen at all (issue #78 postdates it), so unlike the profile entry
-/// point this button has no prototype IA to match — it stays a corner
-/// button rather than moving into the bottom nav (issue #80 product-owner
-/// review, finding 1).
-class _NotificationsButton extends ConsumerWidget {
+/// Shared shape for the strip's two circular controls, so the bell and the
+/// avatar are the same object with different contents rather than two
+/// buttons that happen to look alike.
+class _StripCircle extends StatelessWidget {
+  const _StripCircle({
+    required this.semanticLabel,
+    required this.onTap,
+    required this.child,
+    this.badge,
+  });
+
+  final String semanticLabel;
+  final VoidCallback onTap;
+  final Widget child;
+  final Widget? badge;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.92),
-      shape: const CircleBorder(),
-      elevation: 2,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: () => _gatedOpenNotifications(context, ref),
-        child: const SizedBox(
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: PressResponse(
+        child: SizedBox(
           width: kTapMin,
           height: kTapMin,
-          child: Icon(Icons.notifications_outlined, color: AppColors.ink),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Material(
+                color: AppColors.bgElevated,
+                shape: const CircleBorder(),
+                elevation: 1,
+                shadowColor: const Color(0x122A1F1B),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onTap,
+                  child: SizedBox(
+                    width: kTapMin,
+                    height: kTapMin,
+                    child: Center(child: child),
+                  ),
+                ),
+              ),
+              ?badge,
+            ],
+          ),
         ),
       ),
     );
   }
+}
 
-  void _gatedOpenNotifications(BuildContext context, WidgetRef ref) {
+/// Entry point onto the notification inbox (issue #78), now carrying an
+/// unread count (issue #284). Gate-at-intent: a guest's tap shows AuthGate's
+/// prompt sheet first — an inbox is inherently account-owned state (see
+/// docs/product/privacy.md) — rather than pushing `/notifications` and
+/// failing there.
+class _NotificationsButton extends ConsumerStatefulWidget {
+  const _NotificationsButton();
+
+  @override
+  ConsumerState<_NotificationsButton> createState() =>
+      _NotificationsButtonState();
+}
+
+class _NotificationsButtonState extends ConsumerState<_NotificationsButton> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_loadIfAuthenticated);
+  }
+
+  // The badge is persistent chrome, so the inbox's first page is read once
+  // the account settles rather than only when the inbox is opened. A guest
+  // reads nothing at all.
+  void _loadIfAuthenticated() {
+    if (!mounted) return;
+    final state = ref.read(notificationsProvider);
+    if (ref.read(sessionIdentityServiceProvider).cached == null) return;
+    if (state.hasLoadedOnce || state.isLoading) return;
+    unawaited(ref.read(notificationsProvider.notifier).load());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(sessionProvider, (previous, next) {
+      if (next.value != null) _loadIfAuthenticated();
+    });
+    final unread = ref.watch(unreadNotificationCountProvider);
+    final label = unread == 0
+        ? 'Bildirimler'
+        : 'Bildirimler, $unread okunmamış';
+    return _StripCircle(
+      semanticLabel: label,
+      onTap: () => _gatedOpen(context, ref),
+      badge: unread == 0
+          ? null
+          : Positioned(right: 2, top: 1, child: _UnreadBadge(count: unread)),
+      child: const Icon(
+        Icons.notifications_outlined,
+        size: 20,
+        color: AppColors.ink,
+      ),
+    );
+  }
+
+  void _gatedOpen(BuildContext context, WidgetRef ref) {
     unawaited(
       AuthGate.require(
         context,
@@ -877,6 +1418,278 @@ class _NotificationsButton extends ConsumerWidget {
         contextText: 'Bildirimlerini görmek için giriş yap',
         intent: AnalyticsAuthIntent.profile,
         onAuthenticated: () => context.push('/notifications'),
+      ),
+    );
+  }
+}
+
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = count > unreadBadgeCap ? '$unreadBadgeCap+' : '$count';
+    return Container(
+      constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        shape: BoxShape.rectangle,
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        border: Border.all(color: AppColors.bgElevated, width: 2),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 9.5,
+          height: 1.1,
+          fontWeight: FontWeight.w800,
+          color: AppColors.primaryInk,
+        ),
+      ),
+    );
+  }
+}
+
+/// The account entry point the retired profil tab used to be. Shows the
+/// signed-in account's initials, per the approved design; a guest — or an
+/// account whose profile has not loaded yet — gets the neutral glyph rather
+/// than invented initials.
+class _AccountAvatarButton extends ConsumerStatefulWidget {
+  const _AccountAvatarButton();
+
+  @override
+  ConsumerState<_AccountAvatarButton> createState() =>
+      _AccountAvatarButtonState();
+}
+
+class _AccountAvatarButtonState extends ConsumerState<_AccountAvatarButton> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_loadIfAuthenticated);
+  }
+
+  void _loadIfAuthenticated() {
+    if (!mounted) return;
+    final state = ref.read(profileProvider);
+    if (ref.read(sessionIdentityServiceProvider).cached == null) return;
+    if (state.hasLoadedOnce || state.isLoading) return;
+    unawaited(ref.read(profileProvider.notifier).load());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(sessionProvider, (previous, next) {
+      if (next.value != null) _loadIfAuthenticated();
+    });
+    final displayName = ref.watch(
+      profileProvider.select((s) => s.profile?.displayName),
+    );
+    final initials = accountInitials(displayName);
+    return _StripCircle(
+      semanticLabel: displayName == null ? 'Hesabım' : 'Hesabım, $displayName',
+      onTap: () => context.push('/profile'),
+      child: initials == null
+          ? const Icon(Icons.person_outline, size: 20, color: AppColors.ink)
+          : Text(
+              initials,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: AppColors.muted,
+              ),
+            ),
+    );
+  }
+}
+
+/// At most two initials from a display name, upper-cased in turkish (where
+/// "i" upper-cases to "İ", not "I"). Null for an absent or blank name — the
+/// avatar shows its glyph rather than a guess.
+///
+/// Public and file-level so it can be tested directly; the widget it serves
+/// is private.
+String? accountInitials(String? displayName) {
+  if (displayName == null) return null;
+  final parts = displayName
+      .split(RegExp(r'\s+'))
+      .where((p) => p.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) return null;
+  final letters = parts.length == 1
+      ? [parts.first.characters.first]
+      : [parts.first.characters.first, parts.last.characters.first];
+  return _upperTr(letters.join());
+}
+
+/// Dart's own `toUpperCase` is locale-independent, so it turns "irem" into
+/// "Irem" — the wrong letter in the language this app is written in. The
+/// two dotted/dotless pairs are mapped first; everything else follows the
+/// default rule.
+String _upperTr(String value) {
+  return value.replaceAll('i', 'İ').replaceAll('ı', 'I').toUpperCase();
+}
+
+/// The approved design's help strip: how many cats in view are waiting,
+/// stated rather than implied. Tapping it keeps the shipped filter
+/// behaviour (prototype/app.js's `mapHelpFilter`) — hiding every
+/// non-alerted marker, a pure client-side view over the cats already
+/// fetched for this viewport.
+class _HelpStrip extends StatelessWidget {
+  const _HelpStrip({
+    required this.count,
+    required this.isOn,
+    required this.onTap,
+  });
+
+  final int count;
+  final bool isOn;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = '$count kedi yardım bekliyor';
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      toggled: isOn,
+      label: label,
+      onTap: onTap,
+      child: PressResponse(
+        child: Material(
+          color: isOn ? AppColors.help : AppColors.helpSoft,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: kTapMin),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s3 + 1,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // A dot in the help colour, not an alert glyph: the strip
+                  // is a count, and a warning triangle beside a number reads
+                  // as the number itself being wrong.
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isOn ? AppColors.helpInk : AppColors.help,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.s2 - 1),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: isOn ? AppColors.helpInk : AppColors.helpStrong,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Recentre on the user's own position (approved design artboard 01). The
+/// map had no such control at all: `myLocationButtonEnabled` is off, so
+/// once the camera moved there was no way back to yourself.
+class _LocateButton extends StatelessWidget {
+  const _LocateButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Konumuma dön',
+      child: PressResponse(
+        child: Material(
+          color: AppColors.bgElevated,
+          shape: const CircleBorder(),
+          elevation: 2,
+          shadowColor: const Color(0x1A2A1F1B),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            child: const SizedBox(
+              width: kTapMin,
+              height: kTapMin,
+              child: Icon(Icons.my_location, size: 19, color: AppColors.ink),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The app's one primary action, centred at the bottom of the map
+/// (approved design artboard 01). It was a bare circular fab docked in the
+/// bottom bar; with the bar gone it carries its own label, which is what
+/// the design asks for and what makes an unlabelled "+" over a map
+/// unnecessary.
+class _AddCatPill extends StatelessWidget {
+  const _AddCatPill({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Kedi ekle',
+      child: PressResponse(
+        child: Material(
+          color: AppColors.primary,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          elevation: 4,
+          shadowColor: const Color(0x66A44732),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: _addCatPillHeight),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s6 + 2,
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add, size: 19, color: AppColors.primaryInk),
+                  SizedBox(width: AppSpacing.s2 + 1),
+                  Text(
+                    'kedi ekle',
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primaryInk,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -6,7 +6,10 @@ import 'package:app/core/analytics/screen_view_logging.dart';
 void main() {
   test('route paths map onto the approved screen vocabulary', () {
     expect(analyticsScreenForPath('/'), AnalyticsScreen.map);
-    expect(analyticsScreenForPath('/discover'), AnalyticsScreen.discover);
+    // '/discover' is deliberately absent since issue #284: the discover
+    // surfaces moved into the search panel, which is not a route, and the
+    // panel emits that screen_view itself.
+    expect(analyticsScreenForPath('/discover'), isNull);
     expect(analyticsScreenForPath('/profile'), AnalyticsScreen.profile);
     expect(analyticsScreenForPath('/login'), AnalyticsScreen.login);
     expect(analyticsScreenForPath('/account'), AnalyticsScreen.account);

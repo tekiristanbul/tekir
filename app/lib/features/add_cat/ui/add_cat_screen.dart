@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../../../core/geo/istanbul_bounds.dart';
+import '../../map/data/map_style.dart';
 import '../../../core/states/photo_upload_progress.dart';
 import '../../../core/states/submitting_button.dart';
 import '../../../core/states/inline_spinner.dart';
@@ -137,6 +138,12 @@ class _LocationStepState extends ConsumerState<_LocationStep> {
                         target: center,
                         zoom: _initialZoom,
                       ),
+                      // The same ground the main map draws (issue #285).
+                      // This picker had no style at all, so placing a cat
+                      // happened on google's default palette and the cat
+                      // then appeared on tekir's — the same street, twice,
+                      // in two different cities.
+                      style: catsOfIstanbulMapStyle,
                       cameraTargetBounds: CameraTargetBounds(istanbulBounds),
                       minMaxZoomPreference: const MinMaxZoomPreference(
                         istanbulMinZoom,

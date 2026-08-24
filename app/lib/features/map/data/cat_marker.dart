@@ -34,7 +34,11 @@ class CatMarker {
 
   bool get needsHelp => activeAlert != null;
 
-  CatMarker copyWith({String? name}) {
+  CatMarker copyWith({
+    String? name,
+    DateTime? lastUpdateAt,
+    ActiveAlert? activeAlert,
+  }) {
     return CatMarker(
       id: id,
       name: name ?? this.name,
@@ -42,8 +46,11 @@ class CatMarker {
       lat: lat,
       lng: lng,
       areaLabel: areaLabel,
-      activeAlert: activeAlert,
-      lastUpdateAt: lastUpdateAt,
+      // A null [activeAlert] means "leave it alone", never "clear it": an
+      // ordinary update does not resolve a help mark, and only the server's
+      // own expiry ever ends one.
+      activeAlert: activeAlert ?? this.activeAlert,
+      lastUpdateAt: lastUpdateAt ?? this.lastUpdateAt,
     );
   }
 
