@@ -151,3 +151,26 @@ final notificationsProvider =
     NotifierProvider<NotificationsNotifier, NotificationsState>(
       NotificationsNotifier.new,
     );
+
+/// How many unread notifications the map's bell badge may claim (issue
+/// #284). Past this the badge says "9+" — a two-digit count on a 17px badge
+/// is unreadable, and the exact number stops mattering once it is "several".
+const unreadBadgeCap = 9;
+
+/// Unread count for the top strip's bell, derived from the inbox's own
+/// first page rather than from a dedicated endpoint.
+///
+/// This deliberately does not implement #195's unread-indicator model: it
+/// counts notification rows the server already marks unread, over one page,
+/// and claims nothing about update-level seen state or its 24h/72h windows.
+/// A count that only ever reflects the newest page is honest here — the cap
+/// hides the difference, and the inbox itself is the surface that shows the
+/// rest.
+final unreadNotificationCountProvider = Provider<int>((ref) {
+  final state = ref.watch(notificationsProvider);
+  var count = 0;
+  for (final item in state.items) {
+    if (!item.read) count++;
+  }
+  return count;
+});

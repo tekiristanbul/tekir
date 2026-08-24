@@ -53,10 +53,14 @@ class DiscoverApi {
 
   final ApiClient _apiClient;
 
+  /// [query] searches by the cat's own name (issue #284). Null or blank is
+  /// not a filter — the surface this serves lists the nearest cats before
+  /// anything is typed.
   Future<DiscoverPage> fetch({
     required DiscoverFilter filter,
     required double lat,
     required double lng,
+    String? query,
     String? cursor,
   }) async {
     try {
@@ -66,6 +70,9 @@ class DiscoverApi {
           'lat': lat,
           'lng': lng,
           'filter': filter.wireValue,
+          'q': ?(query != null && query.trim().isNotEmpty
+              ? query.trim()
+              : null),
           'cursor': ?cursor,
         },
       );

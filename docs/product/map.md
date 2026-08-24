@@ -9,7 +9,8 @@ define the role of the map in helping people find and help Istanbul street cats.
 - the first screen when the app opens is the map, with cats shown on it.
 - the map should start zoomed in close, around walking distance — about 2-3 streets.
 - on launch, the map centers on the user's location when it's available and within the supported istanbul area. when location is denied, unavailable, invalid, or outside that area, the map opens on a fixed, hard-coded istanbul fallback viewport instead — zoomed out to a broad area rather than a single street, so it reads as "istanbul" rather than pointing at one place. the fallback is intentionally static for 0.4: no live cat-density calculation picks it (issue #235).
-- the map should mainly show cat photos and the map itself. a bottom menu can hold navigation.
+- the map should mainly show cat photos and the map itself. it is the application, not one destination among several: since 0.5 (issue #284) there is no bottom navigation bar, and the map runs full height under a top strip holding search, notifications and the account. every other screen is pushed over it.
+- cat search, notifications and the account are reached from that strip; adding a cat and returning to the user's own position are the two actions anchored to the bottom of the map.
 - the map should stay simple and avoid unnecessary detail.
 - nearby cat markers are clustered. as the user zooms in, clusters separate into individual cats.
 - tapping a cat opens a detail page showing identifying information, help needs, media, and updates.

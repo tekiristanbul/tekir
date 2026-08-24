@@ -15,7 +15,11 @@ import '../../../core/states/fallback_location_note.dart';
 import '../../../core/states/initial_read_gate.dart';
 import '../../../core/states/inline_spinner.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/identity/session_identity.dart';
 import '../../auth/ui/auth_gate.dart';
+import '../../discover/ui/cat_search_panel.dart';
+import '../../notifications/ui/notifications_notifier.dart';
+import '../../profile/ui/profile_notifier.dart';
 import '../data/cat_marker.dart';
 import '../data/location_service.dart';
 import '../data/map_style.dart';
@@ -43,9 +47,25 @@ const _clusterTapZoomStep = 2.0;
 // cat marker just tags itself with this id and the sdk groups them.
 const _catsClusterManagerId = ClusterManagerId('cats');
 
-// keeps state 07's card clear of the shell's center-floating add-cat fab
-// (app_shell.dart: 46 px diameter floating ~16 px above the body bottom).
-const _fabClearance = 80.0;
+// The approved design's bottom measurements (artboard 01 / spec block):
+// the add-cat pill sits 44 px above the screen bottom and the locate button
+// 112 px, on a 874 px-tall reference screen. Both are measured from the
+// safe-area inset here rather than from the raw screen edge, so a device
+// with a home indicator does not put the pill underneath it.
+const _addCatPillInset = 24.0;
+const _addCatPillHeight = 50.0;
+const _locateButtonGap = AppSpacing.s4;
+
+double _addCatPillBottom(BuildContext context) =>
+    MediaQuery.paddingOf(context).bottom + _addCatPillInset;
+
+double _locateButtonBottom(BuildContext context) =>
+    _addCatPillBottom(context) + _addCatPillHeight + _locateButtonGap;
+
+/// Vertical room anything anchored to the bottom of the map has to leave
+/// for the add-cat pill and the locate button above it.
+double _bottomChromeClearance(BuildContext context) =>
+    _locateButtonBottom(context) + kTapMin + AppSpacing.s3;
 
 // how far "alanı genişlet" zooms out per tap — the inverse of the cluster
 // tap's fixed step, for the same reason: guaranteed progress per tap.
@@ -363,12 +383,14 @@ class _MapScreenState extends ConsumerState<MapScreen>
         mapState.error == null &&
         mapState.markers.isEmpty;
     // app-states.html's 07/13 frames swap the topbar search placeholder to
-    // this copy while the map itself is loading or the radius is empty;
-    // the prototype's static "Mahalle veya sokak ara" is the normal-state
-    // baseline everywhere else.
+    // this copy while the map itself is loading or the radius is empty.
+    // The normal-state baseline is no longer "Mahalle veya sokak ara":
+    // search is by the cat's own name now (issue #284), and neighbourhood
+    // or street search is explicitly out of scope in the approved design,
+    // so a placeholder promising it would be a lie.
     final searchHint = (isInitialRead || isEmptyRadius)
         ? 'bu civarda ara'
-        : 'Mahalle veya sokak ara';
+        : 'kedi ara';
 
     ref.listen(catsMapProvider, (previous, next) {
       final selectionChanged =
@@ -432,51 +454,52 @@ class _MapScreenState extends ConsumerState<MapScreen>
     required bool isFallback,
     required String searchHint,
   }) {
+    final mapState = ref.watch(catsMapProvider);
+    final topInset = MediaQuery.of(context).padding.top;
+    final helpCount = mapState.markers.where((m) => m.needsHelp).length;
     return Stack(
       children: [
         _buildMap(center: center, isFallback: isFallback),
+        // The whole top strip is one row (approved design artboard 01):
+        // search pill, bell, avatar. The bell and the profile stopped being
+        // a corner button and a tab respectively — they are the two things
+        // that sit beside search, and nothing else does.
         Positioned(
-          top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-          left: AppSpacing.s4,
-          // clears the notifications button parked at the same top
-          // offset on the right (map_screen.dart's own issue #78
-          // addition — no prototype IA, so it stays a corner button
-          // instead of folding into this topbar).
-          right: AppSpacing.s4 + kTapMin + AppSpacing.s2,
-          child: PointerInterceptor(
-            child: _MapSearchField(hintText: searchHint),
-          ),
-        ),
-        Positioned(
-          top:
-              MediaQuery.of(context).padding.top +
-              AppSpacing.s3 +
-              kTapMin +
-              AppSpacing.s2,
+          top: topInset + AppSpacing.s3,
           left: AppSpacing.s4,
           right: AppSpacing.s4,
           child: PointerInterceptor(
-            child: _MapChipRow(
-              helpFilterOn: _helpFilterOn,
-              onToggleHelpFilter: _toggleHelpFilter,
+            child: _TopStrip(
+              searchHint: searchHint,
+              nearbyCount: mapState.hasLoadedOnce
+                  ? mapState.markers.length
+                  : null,
+              onSearch: _openSearch,
             ),
           ),
         ),
-        Positioned(
-          top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-          right: AppSpacing.s4,
-          child: PointerInterceptor(child: _NotificationsButton()),
-        ),
-        // Below the chip row, which itself sits one tap-target below the
-        // search field. The banner used to live inside _buildMap's stack at
-        // the search field's own offset and was drawn first, so the search
-        // field covered it and it was never actually visible.
+        if (helpCount > 0)
+          Positioned(
+            top: topInset + AppSpacing.s3 + kTapMin + AppSpacing.s2,
+            left: AppSpacing.s4,
+            // Not stretched: the strip is a statement sized to its own
+            // sentence, and a full-width bar would read as a banner.
+            child: PointerInterceptor(
+              child: _HelpStrip(
+                count: helpCount,
+                isOn: _helpFilterOn,
+                onTap: _toggleHelpFilter,
+              ),
+            ),
+          ),
+        // Below the help strip, which itself sits one tap-target below the
+        // top strip.
         if (isFallback)
           Positioned(
             top:
-                MediaQuery.of(context).padding.top +
+                topInset +
                 AppSpacing.s3 +
-                (kTapMin + AppSpacing.s2) * 2,
+                (kTapMin + AppSpacing.s2) * (helpCount > 0 ? 2 : 1),
             left: AppSpacing.s4,
             right: AppSpacing.s4,
             child: PointerInterceptor(
@@ -485,7 +508,81 @@ class _MapScreenState extends ConsumerState<MapScreen>
               ),
             ),
           ),
+        Positioned(
+          right: AppSpacing.s4,
+          bottom: _locateButtonBottom(context),
+          child: PointerInterceptor(child: _LocateButton(onTap: _locate)),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: _addCatPillBottom(context),
+          child: PointerInterceptor(
+            child: Center(child: _AddCatPill(onTap: _addCat)),
+          ),
+        ),
       ],
+    );
+  }
+
+  /// Opens the search panel and, if the user picked a cat, selects it on
+  /// the map — the panel never navigates anywhere itself.
+  Future<void> _openSearch() async {
+    final picked = await CatSearchPanel.push(context);
+    if (picked == null || !mounted) return;
+    await _revealCat(picked);
+  }
+
+  /// Brings [cat] into view and selects it.
+  ///
+  /// A searched cat is routinely outside the current viewport, and the
+  /// shipped selection path only ever nudged a pin that was already on
+  /// screen. The camera is moved first so the sheet that follows is
+  /// describing something visible; the marker itself arrives with the
+  /// camera-idle refetch that the move triggers, so a cat from outside the
+  /// loaded set does not have to be fetched separately.
+  Future<void> _revealCat(CatMarker cat) async {
+    final controller = _controller;
+    if (controller != null) {
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(LatLng(cat.lat, cat.lng), _initialZoom),
+      );
+    }
+    if (!mounted) return;
+    ref.read(catsMapProvider.notifier).selectCat(cat);
+  }
+
+  /// Recentres on the user's own position (approved design artboard 01).
+  ///
+  /// A fallback centre is a hard-coded istanbul point, not a location —
+  /// centring on it would claim to have found the user. That case re-runs
+  /// permission recovery instead, which is the only thing that can actually
+  /// answer the request.
+  Future<void> _locate() async {
+    unawaited(TekirHaptics.acknowledge());
+    final resolved = ref.read(initialLocationProvider).value;
+    if (resolved == null || resolved.isFallback) {
+      _requestLocationPermission();
+      return;
+    }
+    await _controller?.animateCamera(
+      CameraUpdate.newLatLngZoom(resolved.center, _initialZoom),
+    );
+  }
+
+  // Gate-at-intent, the exact mechanism the retired shell fab used
+  // (app_shell.dart's _AddCatFab): a guest sees AuthGate's prompt sheet
+  // first, and `/add-cat` is pushed only once sign-in completes.
+  void _addCat() {
+    unawaited(TekirHaptics.acknowledge());
+    unawaited(
+      AuthGate.require(
+        context,
+        ref,
+        contextText: 'Kedi eklemek için giriş yap',
+        intent: AnalyticsAuthIntent.addCat,
+        onAuthenticated: () => context.push('/add-cat'),
+      ),
     );
   }
 
@@ -506,21 +603,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
     );
     await controller.animateCamera(
       CameraUpdate.newLatLngZoom(center, targetZoom),
-    );
-  }
-
-  // Gate-at-intent, the exact mechanism of the shell's add-cat fab
-  // (app_shell.dart's _AddCatFab): a guest sees AuthGate's prompt sheet
-  // first, and `/add-cat` is pushed only once sign-in completes.
-  void _addFirstCat() {
-    unawaited(
-      AuthGate.require(
-        context,
-        ref,
-        contextText: 'Kedi eklemek için giriş yap',
-        intent: AnalyticsAuthIntent.addCat,
-        onAuthenticated: () => context.push('/add-cat'),
-      ),
     );
   }
 
@@ -597,11 +679,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
           Positioned(
             left: AppSpacing.s4,
             right: AppSpacing.s4,
-            bottom: _fabClearance,
+            bottom: _bottomChromeClearance(context),
             child: PointerInterceptor(
               child: EmptyRadiusCard(
                 searchRadiusMeters: mapState.searchRadiusMeters,
-                onAddCat: _addFirstCat,
+                onAddCat: _addCat,
                 onWidenArea: _atMinZoom ? null : _widenArea,
               ),
             ),
@@ -652,11 +734,11 @@ class _InitialReadOverlay extends StatelessWidget {
                 ),
                 if (locationKnown) const Center(child: SonarUserDot()),
                 if (phase == InitialReadPhase.skeletonWithStatus)
-                  const Positioned(
+                  Positioned(
                     left: 0,
                     right: 0,
-                    bottom: _fabClearance + AppSpacing.s3,
-                    child: Center(child: MapLoadingStatusPill()),
+                    bottom: _bottomChromeClearance(context),
+                    child: const Center(child: MapLoadingStatusPill()),
                   ),
               ],
             ),
@@ -681,155 +763,103 @@ class _LoadingBar extends StatelessWidget {
   }
 }
 
-/// The map topbar's search field (prototype/app.js's `renderMap`,
-/// `.search-field`) — visual parity only, not editable. The prototype's own
-/// input has no wired handler either (no oninput, no search-results
-/// rendering; the audit at docs/design/issue-121-visual-parity-audit.md
-/// confirmed this), and issue #138 removed the typeable `TextField` since it
-/// never did anything but pop the keyboard with no way to dismiss it.
-class _MapSearchField extends StatelessWidget {
-  const _MapSearchField({required this.hintText});
-
-  final String hintText;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.94),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadius.full),
-        side: const BorderSide(color: AppColors.lineStrong),
-      ),
-      elevation: 1,
-      shadowColor: const Color(0x122A1F1B),
-      child: SizedBox(
-        height: kTapMin,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            const SizedBox(width: AppSpacing.s4),
-            const Icon(Icons.search, size: 17, color: AppColors.muted),
-            const SizedBox(width: AppSpacing.s2),
-            Expanded(
-              child: Text(
-                hintText,
-                style: const TextStyle(fontSize: 15, color: AppColors.faint),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: AppSpacing.s4),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The map topbar's chip row (prototype/app.js's `renderMapChrome`) — only
-/// the needs-help filter ships here. The prototype's second chip
-/// ("konum kapalı", shown only once `state.locationGranted === false`)
-/// depends on the location-permission screen issue #121 leaves open
-/// pending a product decision (docs/design/app-states.md's open question
-/// on state 06) — omitted rather than guessed.
-class _MapChipRow extends StatelessWidget {
-  const _MapChipRow({
-    required this.helpFilterOn,
-    required this.onToggleHelpFilter,
+/// The map's whole top chrome (issue #284, approved design artboard 01):
+/// a search pill, the notification bell, and the account avatar, in one
+/// 44px row. This replaced three separate things — a decorative search
+/// field that was never typeable (issue #138), a corner notifications
+/// button, and a profil tab in a bottom bar that no longer exists.
+class _TopStrip extends StatelessWidget {
+  const _TopStrip({
+    required this.searchHint,
+    required this.nearbyCount,
+    required this.onSearch,
   });
 
-  final bool helpFilterOn;
-  final VoidCallback onToggleHelpFilter;
+  final String searchHint;
+
+  /// Cats in the current viewport, or null before the first read lands —
+  /// the design's "yakında 12". Null rather than 0 so an unread map never
+  /// claims there are no cats here.
+  final int? nearbyCount;
+
+  final VoidCallback onSearch;
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: _HelpFilterChip(isOn: helpFilterOn, onTap: onToggleHelpFilter),
+    return Row(
+      children: [
+        Expanded(
+          child: _SearchPill(
+            hintText: searchHint,
+            nearbyCount: nearbyCount,
+            onTap: onSearch,
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s2 + 1),
+        const _NotificationsButton(),
+        const SizedBox(width: AppSpacing.s2 + 1),
+        const _AccountAvatarButton(),
+      ],
     );
   }
 }
 
-/// `.chip.is-warm` (prototype/styles.css): bolder than a plain chip even
-/// off, so it reads as "the alert filter" at a glance against the rest of
-/// the map chrome.
-class _HelpFilterChip extends StatelessWidget {
-  const _HelpFilterChip({required this.isOn, required this.onTap});
+/// The strip's search entry point. Not a field: it opens
+/// [CatSearchPanel], which has the real one. A `TextField` here would have
+/// to type over a platform view with the map's own gestures underneath it,
+/// which is the arrangement issue #138 removed.
+class _SearchPill extends StatelessWidget {
+  const _SearchPill({
+    required this.hintText,
+    required this.nearbyCount,
+    required this.onTap,
+  });
 
-  final bool isOn;
+  final String hintText;
+  final int? nearbyCount;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final background = isOn
-        ? AppColors.help
-        : Colors.white.withValues(alpha: 0.94);
-    final foreground = isOn ? AppColors.helpInk : AppColors.helpStrong;
-    // visible pill stays 32px tall (prototype's `.chip`); the tap target
-    // still meets the 44px minimum (`.chip::before`'s invisible hit-area
-    // expansion) via the surrounding InkWell instead of the visible chrome.
+    final label = nearbyCount == null
+        ? hintText
+        : '$hintText · yakında $nearbyCount';
     return Semantics(
-      container: true,
-      excludeSemantics: true,
       button: true,
-      toggled: isOn,
-      label: 'yardım gerekiyor filtresi',
-      onTap: onTap,
+      label: label,
       child: PressResponse(
         child: Material(
-          color: Colors.transparent,
+          color: AppColors.bgElevated,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            side: const BorderSide(color: AppColors.lineStrong),
+          ),
+          elevation: 1,
+          shadowColor: const Color(0x122A1F1B),
           child: InkWell(
             borderRadius: BorderRadius.circular(AppRadius.full),
             onTap: onTap,
-            child: Container(
-              constraints: const BoxConstraints(minHeight: kTapMin),
-              alignment: Alignment.center,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: background,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
-                  border: Border.all(color: AppColors.help),
-                  boxShadow: isOn
-                      ? const [
-                          BoxShadow(
-                            color: Color(0x122A1F1B),
-                            offset: Offset(0, 1),
-                            blurRadius: 2,
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.s3,
-                    vertical: AppSpacing.s2 - 2,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.warning_amber_rounded,
-                        size: 14,
-                        color: foreground,
+            child: SizedBox(
+              height: kTapMin,
+              child: Row(
+                children: [
+                  const SizedBox(width: AppSpacing.s4),
+                  const Icon(Icons.search, size: 17, color: AppColors.muted),
+                  const SizedBox(width: AppSpacing.s2),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.faint,
                       ),
-                      const SizedBox(width: AppSpacing.s1),
-                      // Flexible (not a bare Text) so the label shrinks
-                      // instead of overflowing the chip row's positioned
-                      // width budget at large text-scale factors.
-                      Flexible(
-                        child: Text(
-                          'yardım gerekiyor',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: foreground,
-                          ),
-                        ),
-                      ),
-                    ],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: AppSpacing.s4),
+                ],
               ),
             ),
           ),
@@ -839,37 +869,113 @@ class _HelpFilterChip extends StatelessWidget {
   }
 }
 
-/// Entry point onto the notification inbox (issue #78) — a glass circle
-/// button over the map, matching cat_detail_screen's `_BackCircleButton`
-/// visual language. Gate-at-intent, exactly like the shell's add-cat fab
-/// (app_shell.dart): a guest's tap shows AuthGate's prompt sheet first
-/// (there is nothing to show a guest — an inbox is inherently
-/// account-owned state, see docs/product/privacy.md) rather than pushing
-/// `/notifications` and failing there. The prototype has no notifications
-/// screen at all (issue #78 postdates it), so unlike the profile entry
-/// point this button has no prototype IA to match — it stays a corner
-/// button rather than moving into the bottom nav (issue #80 product-owner
-/// review, finding 1).
-class _NotificationsButton extends ConsumerWidget {
+/// Shared shape for the strip's two circular controls, so the bell and the
+/// avatar are the same object with different contents rather than two
+/// buttons that happen to look alike.
+class _StripCircle extends StatelessWidget {
+  const _StripCircle({
+    required this.semanticLabel,
+    required this.onTap,
+    required this.child,
+    this.badge,
+  });
+
+  final String semanticLabel;
+  final VoidCallback onTap;
+  final Widget child;
+  final Widget? badge;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.92),
-      shape: const CircleBorder(),
-      elevation: 2,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: () => _gatedOpenNotifications(context, ref),
-        child: const SizedBox(
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: PressResponse(
+        child: SizedBox(
           width: kTapMin,
           height: kTapMin,
-          child: Icon(Icons.notifications_outlined, color: AppColors.ink),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Material(
+                color: AppColors.bgElevated,
+                shape: const CircleBorder(),
+                elevation: 1,
+                shadowColor: const Color(0x122A1F1B),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onTap,
+                  child: SizedBox(
+                    width: kTapMin,
+                    height: kTapMin,
+                    child: Center(child: child),
+                  ),
+                ),
+              ),
+              ?badge,
+            ],
+          ),
         ),
       ),
     );
   }
+}
 
-  void _gatedOpenNotifications(BuildContext context, WidgetRef ref) {
+/// Entry point onto the notification inbox (issue #78), now carrying an
+/// unread count (issue #284). Gate-at-intent: a guest's tap shows AuthGate's
+/// prompt sheet first — an inbox is inherently account-owned state (see
+/// docs/product/privacy.md) — rather than pushing `/notifications` and
+/// failing there.
+class _NotificationsButton extends ConsumerStatefulWidget {
+  const _NotificationsButton();
+
+  @override
+  ConsumerState<_NotificationsButton> createState() =>
+      _NotificationsButtonState();
+}
+
+class _NotificationsButtonState extends ConsumerState<_NotificationsButton> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_loadIfAuthenticated);
+  }
+
+  // The badge is persistent chrome, so the inbox's first page is read once
+  // the account settles rather than only when the inbox is opened. A guest
+  // reads nothing at all.
+  void _loadIfAuthenticated() {
+    if (!mounted) return;
+    final state = ref.read(notificationsProvider);
+    if (ref.read(sessionIdentityServiceProvider).cached == null) return;
+    if (state.hasLoadedOnce || state.isLoading) return;
+    unawaited(ref.read(notificationsProvider.notifier).load());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(sessionProvider, (previous, next) {
+      if (next.value != null) _loadIfAuthenticated();
+    });
+    final unread = ref.watch(unreadNotificationCountProvider);
+    final label = unread == 0
+        ? 'Bildirimler'
+        : 'Bildirimler, $unread okunmamış';
+    return _StripCircle(
+      semanticLabel: label,
+      onTap: () => _gatedOpen(context, ref),
+      badge: unread == 0
+          ? null
+          : Positioned(right: 2, top: 1, child: _UnreadBadge(count: unread)),
+      child: const Icon(
+        Icons.notifications_outlined,
+        size: 20,
+        color: AppColors.ink,
+      ),
+    );
+  }
+
+  void _gatedOpen(BuildContext context, WidgetRef ref) {
     unawaited(
       AuthGate.require(
         context,
@@ -877,6 +983,278 @@ class _NotificationsButton extends ConsumerWidget {
         contextText: 'Bildirimlerini görmek için giriş yap',
         intent: AnalyticsAuthIntent.profile,
         onAuthenticated: () => context.push('/notifications'),
+      ),
+    );
+  }
+}
+
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = count > unreadBadgeCap ? '$unreadBadgeCap+' : '$count';
+    return Container(
+      constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        shape: BoxShape.rectangle,
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        border: Border.all(color: AppColors.bgElevated, width: 2),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 9.5,
+          height: 1.1,
+          fontWeight: FontWeight.w800,
+          color: AppColors.primaryInk,
+        ),
+      ),
+    );
+  }
+}
+
+/// The account entry point the retired profil tab used to be. Shows the
+/// signed-in account's initials, per the approved design; a guest — or an
+/// account whose profile has not loaded yet — gets the neutral glyph rather
+/// than invented initials.
+class _AccountAvatarButton extends ConsumerStatefulWidget {
+  const _AccountAvatarButton();
+
+  @override
+  ConsumerState<_AccountAvatarButton> createState() =>
+      _AccountAvatarButtonState();
+}
+
+class _AccountAvatarButtonState extends ConsumerState<_AccountAvatarButton> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_loadIfAuthenticated);
+  }
+
+  void _loadIfAuthenticated() {
+    if (!mounted) return;
+    final state = ref.read(profileProvider);
+    if (ref.read(sessionIdentityServiceProvider).cached == null) return;
+    if (state.hasLoadedOnce || state.isLoading) return;
+    unawaited(ref.read(profileProvider.notifier).load());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(sessionProvider, (previous, next) {
+      if (next.value != null) _loadIfAuthenticated();
+    });
+    final displayName = ref.watch(
+      profileProvider.select((s) => s.profile?.displayName),
+    );
+    final initials = accountInitials(displayName);
+    return _StripCircle(
+      semanticLabel: displayName == null ? 'Hesabım' : 'Hesabım, $displayName',
+      onTap: () => context.push('/profile'),
+      child: initials == null
+          ? const Icon(Icons.person_outline, size: 20, color: AppColors.ink)
+          : Text(
+              initials,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: AppColors.muted,
+              ),
+            ),
+    );
+  }
+}
+
+/// At most two initials from a display name, upper-cased in turkish (where
+/// "i" upper-cases to "İ", not "I"). Null for an absent or blank name — the
+/// avatar shows its glyph rather than a guess.
+///
+/// Public and file-level so it can be tested directly; the widget it serves
+/// is private.
+String? accountInitials(String? displayName) {
+  if (displayName == null) return null;
+  final parts = displayName
+      .split(RegExp(r'\s+'))
+      .where((p) => p.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) return null;
+  final letters = parts.length == 1
+      ? [parts.first.characters.first]
+      : [parts.first.characters.first, parts.last.characters.first];
+  return _upperTr(letters.join());
+}
+
+/// Dart's own `toUpperCase` is locale-independent, so it turns "irem" into
+/// "Irem" — the wrong letter in the language this app is written in. The
+/// two dotted/dotless pairs are mapped first; everything else follows the
+/// default rule.
+String _upperTr(String value) {
+  return value.replaceAll('i', 'İ').replaceAll('ı', 'I').toUpperCase();
+}
+
+/// The approved design's help strip: how many cats in view are waiting,
+/// stated rather than implied. Tapping it keeps the shipped filter
+/// behaviour (prototype/app.js's `mapHelpFilter`) — hiding every
+/// non-alerted marker, a pure client-side view over the cats already
+/// fetched for this viewport.
+class _HelpStrip extends StatelessWidget {
+  const _HelpStrip({
+    required this.count,
+    required this.isOn,
+    required this.onTap,
+  });
+
+  final int count;
+  final bool isOn;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = '$count kedi yardım bekliyor';
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      toggled: isOn,
+      label: label,
+      onTap: onTap,
+      child: PressResponse(
+        child: Material(
+          color: isOn ? AppColors.help : AppColors.helpSoft,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: kTapMin),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s3 + 1,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // A dot in the help colour, not an alert glyph: the strip
+                  // is a count, and a warning triangle beside a number reads
+                  // as the number itself being wrong.
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isOn ? AppColors.helpInk : AppColors.help,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.s2 - 1),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: isOn ? AppColors.helpInk : AppColors.helpStrong,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Recentre on the user's own position (approved design artboard 01). The
+/// map had no such control at all: `myLocationButtonEnabled` is off, so
+/// once the camera moved there was no way back to yourself.
+class _LocateButton extends StatelessWidget {
+  const _LocateButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Konumuma dön',
+      child: PressResponse(
+        child: Material(
+          color: AppColors.bgElevated,
+          shape: const CircleBorder(),
+          elevation: 2,
+          shadowColor: const Color(0x1A2A1F1B),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            child: const SizedBox(
+              width: kTapMin,
+              height: kTapMin,
+              child: Icon(Icons.my_location, size: 19, color: AppColors.ink),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The app's one primary action, centred at the bottom of the map
+/// (approved design artboard 01). It was a bare circular fab docked in the
+/// bottom bar; with the bar gone it carries its own label, which is what
+/// the design asks for and what makes an unlabelled "+" over a map
+/// unnecessary.
+class _AddCatPill extends StatelessWidget {
+  const _AddCatPill({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Kedi ekle',
+      child: PressResponse(
+        child: Material(
+          color: AppColors.primary,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          elevation: 4,
+          shadowColor: const Color(0x66A44732),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: _addCatPillHeight),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s6 + 2,
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add, size: 19, color: AppColors.primaryInk),
+                  SizedBox(width: AppSpacing.s2 + 1),
+                  Text(
+                    'kedi ekle',
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primaryInk,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
