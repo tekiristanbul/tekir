@@ -17,6 +17,7 @@ define the role of the map in helping people find and help Istanbul street cats.
 - selecting a cat zooms in far enough for it to be drawn as its own face — never further out than the user already was — brings it to rest above the sheet describing it, marks it with a slow ring and a single pulse, and quiets every other marker.
 - a cat waiting for help pulses too, on its own and at its own slower rhythm, wherever it is drawn as its own face. pulse is reserved for exactly these two things and nothing else in the product uses it.
 - one mark at a time: where that pulse is running, the marker itself is drawn plain — the pulse is what says the cat needs help. where it cannot run, because the platform asks for reduced motion or because the cat is a silhouette or a dot at that zoom, the marker carries the ring and the badge instead. a cat waiting for help is never unmarked, and is never marked twice.
+- selecting a cat that is waiting for help never stops it waiting: both marks run at once, at their own rhythms, for as long as the selection lasts.
 - tapping a cat opens a detail page showing identifying information, help needs, media, and updates.
 - map-level freshness information is compact and uses these mvp states:
   - `today`: the latest update is less than 24 hours old.

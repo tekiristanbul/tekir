@@ -16,7 +16,7 @@ library;
 
 import 'dart:math' as math;
 
-import 'package:flutter/painting.dart' show EdgeInsets, Offset, Size;
+import 'package:flutter/painting.dart' show Offset, Size;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 /// Side of the world square, in pixels, at zoom 0. Google's own tile size.
@@ -41,23 +41,19 @@ Offset worldPixel(double lat, double lng, double zoom) {
 /// Where a coordinate sits inside a viewport, in the map widget's own
 /// logical pixels, with (0, 0) at the widget's top-left.
 ///
+/// The camera's target is always the widget's own centre. The sdk's
+/// `padding` would move it, but that setting is a no-op on the web target,
+/// so this map never uses it — it shifts the camera itself instead, which
+/// behaves the same everywhere (see [cameraTargetPlacing]).
+///
 /// Returns a point outside [size] for a coordinate off screen — callers
 /// that care (the halo) check for themselves rather than being handed a
 /// clamped answer that would silently pin a marker to an edge it is not at.
-///
-/// [padding] must be whatever `GoogleMap.padding` was given. The sdk
-/// centres the camera's target in the region the padding leaves, not in
-/// the widget — so while a sheet covers the bottom third of the map, the
-/// target sits a sixth of the screen higher than the widget's own middle.
-/// Ignoring it put every projected ring that far below the marker it
-/// belonged to, which is behind the sheet: the mark vanished at exactly
-/// the moment the sheet opened.
 Offset screenOffsetOf(
   LatLng position, {
   required LatLng cameraTarget,
   required double zoom,
   required Size size,
-  EdgeInsets padding = EdgeInsets.zero,
 }) {
   final point = worldPixel(position.latitude, position.longitude, zoom);
   final centre = worldPixel(
@@ -65,12 +61,51 @@ Offset screenOffsetOf(
     cameraTarget.longitude,
     zoom,
   );
-  final target = Offset(
-    padding.left + (size.width - padding.left - padding.right) / 2,
-    padding.top + (size.height - padding.top - padding.bottom) / 2,
-  );
   return Offset(
-    target.dx + (point.dx - centre.dx),
-    target.dy + (point.dy - centre.dy),
+    size.width / 2 + (point.dx - centre.dx),
+    size.height / 2 + (point.dy - centre.dy),
+  );
+}
+
+/// The inverse of [worldPixel]: which coordinate a point on the world
+/// square is.
+LatLng latLngOfWorldPixel(Offset point, double zoom) {
+  final scale = worldTileSize * math.pow(2, zoom);
+  final lng = point.dx / scale * 360 - 180;
+  // Undo the mercator fold. tanh is the closed form of the (e^k - 1) /
+  // (e^k + 1) this would otherwise be written as.
+  final k = (0.5 - point.dy / scale) * 4 * math.pi;
+  final lat = math.asin(_tanh(k / 2)) * 180 / math.pi;
+  return LatLng(lat, lng);
+}
+
+double _tanh(double x) {
+  final e = math.exp(2 * x);
+  return (e - 1) / (e + 1);
+}
+
+/// The camera target that puts [position] at [screenPoint] in a viewport of
+/// [size], at [zoom].
+///
+/// This is how the map lifts a selected cat clear of the sheet about to
+/// cover the bottom of the screen. `GoogleMap.padding` is the sdk's own
+/// answer to the same question and reads better — but the web target
+/// ignores it, so the marker stayed where it was while everything
+/// projected against that padding moved. Shifting the camera is arithmetic
+/// this side of the platform boundary, and behaves identically on all
+/// three.
+LatLng cameraTargetPlacing(
+  LatLng position, {
+  required Offset screenPoint,
+  required double zoom,
+  required Size size,
+}) {
+  final point = worldPixel(position.latitude, position.longitude, zoom);
+  return latLngOfWorldPixel(
+    Offset(
+      point.dx + (size.width / 2 - screenPoint.dx),
+      point.dy + (size.height / 2 - screenPoint.dy),
+    ),
+    zoom,
   );
 }

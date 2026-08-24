@@ -129,10 +129,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
   /// The viewport the halo is projected into.
   Size _mapSize = Size.zero;
 
-  /// What `GoogleMap.padding` currently is. The sdk centres the camera's
-  /// target in the region this leaves, so the projection has to know it.
-  EdgeInsets _mapPadding = EdgeInsets.zero;
-
   /// Zoom the marker set was last resolved at. Resolution changes on
   /// settle, not per frame: rebuilding a screenful of bitmaps on every step
   /// of a pinch is exactly the cost this map has always avoided.
@@ -559,8 +555,21 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // shown a dot answers the tap with the same mark that prompted it.
     final zoom = math.max(await controller.getZoomLevel(), avatarTierMinZoom);
     if (!mounted) return;
+    final target = _mapSize.isEmpty
+        ? LatLng(cat.lat, cat.lng)
+        : cameraTargetPlacing(
+            LatLng(cat.lat, cat.lng),
+            screenPoint: Offset(
+              _mapSize.width / 2,
+              // The middle of what the sheet leaves, which is where the
+              // approved design rests a selected cat.
+              _mapSize.height * (1 - _sheetHeightFraction) / 2,
+            ),
+            zoom: zoom,
+            size: _mapSize,
+          );
     await controller.animateCamera(
-      CameraUpdate.newLatLngZoom(LatLng(cat.lat, cat.lng), zoom),
+      CameraUpdate.newLatLngZoom(target, zoom),
       // Reduced motion arrives in the same frame: the camera still moves —
       // the cat has to end up above the sheet either way — it just does not
       // travel there.
@@ -701,7 +710,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
       cameraTarget: camera.target,
       zoom: camera.zoom,
       size: _mapSize,
-      padding: _mapPadding,
     );
     const slack = _selectionHaloRadius * 2;
     if (offset.dx < -slack ||
@@ -982,17 +990,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
       zoom: isFallback ? istanbulFallbackZoom : _initialZoom,
     );
     _camera ??= initialCamera;
-    // Recorded, not recomputed at projection time: the halo projects during
-    // a camera frame, which is not a layout pass — and it has to use the
-    // very padding the sdk is centring against, or every ring lands below
-    // the marker it belongs to.
-    _mapPadding = EdgeInsets.only(
-      bottom: selected == null ? 0 : _mapSize.height * _sheetHeightFraction,
-    );
     final selectedCentre = _haloCentre(selected);
+    // The selected cat keeps its own help pulse. Suppressing it meant that
+    // tapping a cat waiting for help stopped the very thing that made it
+    // worth tapping, at the moment the sheet about it opened. The approved
+    // design's own selected marker carries both rings at once.
     final helpCentres = <Offset>[
-      for (final cat in _helpHaloCats)
-        if (cat.id != selected?.id) ?_haloCentre(cat),
+      for (final cat in _helpHaloCats) ?_haloCentre(cat),
     ];
 
     return LayoutBuilder(
@@ -1031,7 +1035,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
               // idea of "centre" then excludes the covered band, and
               // centring on the cat puts it above the sheet rather than
               // behind it.
-              padding: _mapPadding,
               markers: _markers,
               onMapCreated: _onMapCreated,
               onCameraIdle: _onCameraIdle,

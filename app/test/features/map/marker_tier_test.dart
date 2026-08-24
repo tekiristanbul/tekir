@@ -293,47 +293,62 @@ void main() {
       expect(east.dx, greaterThan(200));
     });
 
-    // The sdk centres the camera's target in the region the padding leaves,
-    // not in the widget. Ignoring that put every projected ring a sixth of
-    // the screen below the marker it belonged to — behind the sheet that
-    // had just opened, which is exactly when the mark disappeared.
-    test('the target follows the padding, not the widget centre', () {
-      const target = LatLng(41.02, 28.97);
+    // `GoogleMap.padding` is the sdk's own way to lift a selected cat clear
+    // of the sheet, and it is a no-op on the web target: the marker stayed
+    // put while everything projected against that padding moved. The map
+    // shifts the camera itself instead, which is arithmetic this side of
+    // the platform boundary.
+    test('a camera target can place a cat anywhere on screen', () {
+      const cat = LatLng(41.02, 28.97);
       const size = Size(400, 900);
+      // Two thirds up the screen: the middle of what a bottom sheet leaves.
+      const wanted = Offset(200, 300);
 
-      final unpadded = screenOffsetOf(
-        target,
-        cameraTarget: target,
-        zoom: 16,
+      final target = cameraTargetPlacing(
+        cat,
+        screenPoint: wanted,
+        zoom: 17,
         size: size,
       );
-      final padded = screenOffsetOf(
-        target,
+      final landed = screenOffsetOf(
+        cat,
         cameraTarget: target,
-        zoom: 16,
+        zoom: 17,
         size: size,
-        padding: const EdgeInsets.only(bottom: 300),
       );
 
-      expect(unpadded.dy, closeTo(450, 0.001));
-      // Centre of the 600px the padding leaves.
-      expect(padded.dy, closeTo(300, 0.001));
-      expect(padded.dx, closeTo(unpadded.dx, 0.001));
+      expect(landed.dx, closeTo(wanted.dx, 0.5));
+      expect(landed.dy, closeTo(wanted.dy, 0.5));
     });
 
-    test('padding on every side moves the target accordingly', () {
-      const target = LatLng(41.02, 28.97);
+    test('asking for the centre leaves the camera on the cat', () {
+      const cat = LatLng(41.02, 28.97);
+      const size = Size(400, 900);
 
-      final offset = screenOffsetOf(
-        target,
-        cameraTarget: target,
-        zoom: 16,
-        size: const Size(400, 800),
-        padding: const EdgeInsets.fromLTRB(40, 20, 0, 100),
+      final target = cameraTargetPlacing(
+        cat,
+        screenPoint: const Offset(200, 450),
+        zoom: 17,
+        size: size,
       );
 
-      expect(offset.dx, closeTo(40 + (400 - 40) / 2, 0.001));
-      expect(offset.dy, closeTo(20 + (800 - 20 - 100) / 2, 0.001));
+      expect(target.latitude, closeTo(cat.latitude, 0.000001));
+      expect(target.longitude, closeTo(cat.longitude, 0.000001));
+    });
+
+    test('world pixels round-trip back to their coordinate', () {
+      for (final point in [
+        const LatLng(41.02, 28.97),
+        const LatLng(40.80, 28.35),
+        const LatLng(41.40, 29.55),
+      ]) {
+        final back = latLngOfWorldPixel(
+          worldPixel(point.latitude, point.longitude, 17),
+          17,
+        );
+        expect(back.latitude, closeTo(point.latitude, 0.000001));
+        expect(back.longitude, closeTo(point.longitude, 0.000001));
+      }
     });
 
     test('one zoom step doubles the distance from the centre', () {
