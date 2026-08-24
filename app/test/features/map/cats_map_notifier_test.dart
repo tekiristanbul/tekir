@@ -44,11 +44,21 @@ class _ControllableCatsApi implements CatsApi {
     completers.removeAt(0).complete(markers);
   }
 
+  void fail(LatLngBounds bounds, Object error) {
+    final completers = _pending[bounds];
+    if (completers == null || completers.isEmpty) {
+      throw StateError('no pending request for $bounds');
+    }
+    completers.removeAt(0).completeError(error);
+  }
+
   @override
   Future<List<CatMarker>> fetchInBounds(LatLngBounds bounds) => _await(bounds);
 }
 
 void main() {
+  group('the selection survives a refetch', _selectionSurvivesRefetchTests);
+
   test('a slower stale request never overwrites a newer one', () async {
     final api = _ControllableCatsApi();
     final container = ProviderContainer(
@@ -275,5 +285,89 @@ void main() {
     expect(state.markers, isEmpty);
     expect(state.selectedMarker, isNull);
     expect(state.hasLoadedOnce, isFalse);
+  });
+}
+
+// A refetch used to rebuild CatsMapState by hand and drop the selection.
+// Selecting a cat moves the camera, the camera settling refetches the
+// viewport, and the refetch landing deselected the cat — a second after the
+// tap, with its sheet still open about it.
+void _selectionSurvivesRefetchTests() {
+  const cat = CatMarker(
+    id: 'cat-1',
+    name: 'tekir',
+    primaryPhoto: '',
+    lat: 41.0,
+    lng: 29.0,
+  );
+  final bounds = LatLngBounds(
+    southwest: const LatLng(40.9, 28.9),
+    northeast: const LatLng(41.1, 29.1),
+  );
+
+  test('a viewport refetch leaves the selected cat selected', () async {
+    final api = _ControllableCatsApi();
+    final container = ProviderContainer(
+      overrides: [catsApiProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+    final notifier = container.read(catsMapProvider.notifier);
+
+    notifier.selectCat(cat);
+    final pending = notifier.fetchForBounds(bounds);
+    api.resolve(bounds, const [cat]);
+    await pending;
+
+    expect(container.read(catsMapProvider).selectedMarker?.id, 'cat-1');
+  });
+
+  test(
+    'it stays selected even when it falls out of the new viewport',
+    () async {
+      final api = _ControllableCatsApi();
+      final container = ProviderContainer(
+        overrides: [catsApiProvider.overrideWithValue(api)],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(catsMapProvider.notifier);
+
+      notifier.selectCat(cat);
+      final pending = notifier.fetchForBounds(bounds);
+      api.resolve(bounds, const []);
+      await pending;
+
+      // The sheet about this cat is still open; taking the selection away
+      // under it would be the map contradicting the screen.
+      expect(container.read(catsMapProvider).selectedMarker?.id, 'cat-1');
+    },
+  );
+
+  test('a failed refetch leaves it selected too', () async {
+    final api = _ControllableCatsApi();
+    final container = ProviderContainer(
+      overrides: [catsApiProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+    final notifier = container.read(catsMapProvider.notifier);
+
+    notifier.selectCat(cat);
+    final pending = notifier.fetchForBounds(bounds);
+    api.fail(bounds, Exception('offline'));
+    await pending;
+
+    expect(container.read(catsMapProvider).selectedMarker?.id, 'cat-1');
+  });
+
+  test('clearing the selection is still the only thing that clears it', () {
+    final container = ProviderContainer(
+      overrides: [catsApiProvider.overrideWithValue(_ControllableCatsApi())],
+    );
+    addTearDown(container.dispose);
+    final notifier = container.read(catsMapProvider.notifier);
+
+    notifier.selectCat(cat);
+    notifier.clearSelection();
+
+    expect(container.read(catsMapProvider).selectedMarker, isNull);
   });
 }
