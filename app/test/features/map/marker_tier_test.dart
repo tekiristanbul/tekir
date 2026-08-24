@@ -1,9 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import 'package:app/core/geo/istanbul_bounds.dart';
 import 'package:app/features/map/data/cat_marker.dart';
+import 'package:app/features/map/data/map_style.dart';
 import 'package:app/features/map/data/marker_tier.dart';
 import 'package:app/features/map/data/web_mercator.dart';
 
@@ -27,6 +30,8 @@ CatMarker _cat(
 );
 
 void main() {
+  group('basemap style', _mapStyleTests);
+
   group('tierForZoom', () {
     test('follows the approved design thresholds', () {
       expect(tierForZoom(20), MarkerTier.avatar);
@@ -303,5 +308,44 @@ void main() {
       expect(far.dx - 200, closeTo((near.dx - 200) * 2, 0.001));
       expect(far.dy - 400, closeTo((near.dy - 400) * 2, 0.001));
     });
+  });
+}
+
+// issue #285: the map's own ground. A malformed style string is accepted
+// silently by the sdk and simply does nothing, so the one thing worth
+// asserting here is that it is a well-formed document carrying the design's
+// colours rather than google's defaults.
+void _mapStyleTests() {
+  test('is valid json', () {
+    expect(() => jsonDecode(catsOfIstanbulMapStyle), returnsNormally);
+    expect(jsonDecode(catsOfIstanbulMapStyle), isA<List<dynamic>>());
+  });
+
+  test('paints the ground, roads, parks and water in tekir colours', () {
+    // The approved design's own tokens: map, road, park, water.
+    for (final colour in ['#ece2d1', '#e2d7c5', '#dde0c0', '#cdd9d0']) {
+      expect(
+        catsOfIstanbulMapStyle,
+        contains(colour),
+        reason: '$colour is missing from the basemap style',
+      );
+    }
+  });
+
+  test('keeps the map quiet: no poi, transit or icon clutter', () {
+    final rules = (jsonDecode(catsOfIstanbulMapStyle) as List<dynamic>)
+        .cast<Map<String, dynamic>>();
+
+    bool hidden(String feature) => rules.any(
+      (r) =>
+          r['featureType'] == feature &&
+          r['elementType'] == null &&
+          (r['stylers'] as List<dynamic>).any(
+            (s) => (s as Map<String, dynamic>)['visibility'] == 'off',
+          ),
+    );
+
+    expect(hidden('poi'), isTrue);
+    expect(hidden('transit'), isTrue);
   });
 }

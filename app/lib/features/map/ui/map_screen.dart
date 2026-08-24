@@ -54,9 +54,19 @@ const _selectionCameraDuration = Duration(milliseconds: 600);
 // reach.
 const _sheetHeightFraction = 1 / 3;
 
-// Radius of the selected cat's halo, in logical pixels — comfortably
-// outside the selected avatar marker it surrounds.
-const _selectionHaloRadius = 43.0;
+// Every mark on this map is a disc centred on the cat's own coordinate, not
+// a teardrop pin resting on it, so it is anchored by its middle. The sdk's
+// default (0.5, 1.0) puts the bitmap's *bottom* on the point — which floated
+// each pin half its height above where the cat actually is, and left the
+// selection halo, drawn at the real coordinate, sitting visibly below the
+// marker it belongs to.
+const _markerAnchor = Offset(0.5, 0.5);
+
+// The selected cat's halo sits just outside the selected avatar it
+// surrounds, derived from that marker's own size rather than guessed — the
+// two are the same object seen from two layers.
+const _selectionHaloRadius =
+    MarkerBitmapBuilder.selectedAvatarSize / 2 + AppSpacing.s2;
 
 // What an unselected marker fades to while another cat is selected
 // (approved design, artboard 02).
@@ -280,6 +290,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         position: LatLng(cluster.lat, cluster.lng),
         icon: icon,
         alpha: dimUnselected ? _unselectedMarkerAlpha : 1.0,
+        anchor: _markerAnchor,
         zIndexInt: latitudeZIndex(cluster.lat),
         onTap: () => unawaited(_onClusterTap(cluster)),
       ),
@@ -391,6 +402,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       position: position,
       icon: icon,
       alpha: alpha,
+      anchor: _markerAnchor,
       // The selected pin is always on top; everything else stacks by
       // latitude, southern pins over northern ones, which is what a map
       // reader expects and — more to the point — is stable, so the same cat
@@ -463,8 +475,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
   Future<void> _centreSelected(CatMarker cat) async {
     final controller = _controller;
     if (controller == null) return;
+    // Close enough that the cat is its own face, never further out than the
+    // user already was. Selecting a cat from a city-wide view and being
+    // shown a dot answers the tap with the same mark that prompted it.
+    final zoom = math.max(await controller.getZoomLevel(), avatarTierMinZoom);
+    if (!mounted) return;
     await controller.animateCamera(
-      CameraUpdate.newLatLng(LatLng(cat.lat, cat.lng)),
+      CameraUpdate.newLatLngZoom(LatLng(cat.lat, cat.lng), zoom),
       // Reduced motion arrives in the same frame: the camera still moves —
       // the cat has to end up above the sheet either way — it just does not
       // travel there.

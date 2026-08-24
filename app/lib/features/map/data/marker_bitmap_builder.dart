@@ -35,8 +35,10 @@ class MarkerBitmapBuilder {
   static const _avatarRing = 2.5;
 
   /// Keeps the shipped proportion between a resting and a selected pin, so
-  /// a selected cat still reads as about a third larger.
-  static const _selectedAvatarSize = 70.0;
+  /// a selected cat still reads as about a third larger. Public because the
+  /// selection halo is drawn as a flutter layer over the map and has to
+  /// surround exactly this, not a number that happens to look close.
+  static const selectedAvatarSize = 70.0;
 
   /// The approved design's other two resolutions.
   static const _silhouetteSize = 30.0;
@@ -146,7 +148,7 @@ class MarkerBitmapBuilder {
     required bool needsHelp,
     required bool selected,
   }) async {
-    final displaySize = selected ? _selectedAvatarSize : _avatarSize;
+    final displaySize = selected ? selectedAvatarSize : _avatarSize;
     final canvasSize = displaySize;
     final px = (canvasSize * _renderScale).round();
     final recorder = ui.PictureRecorder();

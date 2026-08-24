@@ -51,28 +51,34 @@ class _SelectionHaloState extends State<SelectionHalo>
     duration: SelectionHalo.pulsePeriod,
   );
 
-  bool _running = false;
+  bool _reduced = false;
 
+  /// Driven from here and nowhere else.
+  ///
+  /// This used to be re-decided in `build` as well, which runs on every
+  /// camera frame while the halo tracks its cat — and any rebuild that
+  /// disagreed with the flag it was guarded by stopped the controllers.
+  /// The ring turned once and then sat still. `didChangeDependencies` runs
+  /// exactly when the motion preference can actually have changed, which is
+  /// the only time this decision is worth making.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _syncToMotionPreference(TekirMotion.of(context).reduced);
-  }
-
-  void _syncToMotionPreference(bool reduced) {
-    if (reduced == !_running) return;
-    _running = !reduced;
-    if (_running) {
-      _rotation.repeat();
-      _pulse.repeat();
-    } else {
+    _reduced = TekirMotion.of(context).reduced;
+    if (_reduced) {
       // Held at rest rather than stopped mid-turn, so the ring reads as a
-      // deliberate mark instead of an animation someone paused.
-      _rotation.stop();
-      _rotation.value = 0;
-      _pulse.stop();
-      _pulse.value = 0;
+      // deliberate mark instead of an animation someone paused — and so the
+      // tree settles, which a repeating controller never lets it do.
+      _rotation
+        ..stop()
+        ..value = 0;
+      _pulse
+        ..stop()
+        ..value = 0;
+      return;
     }
+    if (!_rotation.isAnimating) _rotation.repeat();
+    if (!_pulse.isAnimating) _pulse.repeat();
   }
 
   @override
@@ -84,8 +90,6 @@ class _SelectionHaloState extends State<SelectionHalo>
 
   @override
   Widget build(BuildContext context) {
-    final reduced = TekirMotion.of(context).reduced;
-    _syncToMotionPreference(reduced);
     // Room for the pulse at its widest, which travels past the ring.
     final extent = widget.radius * _HaloPainter.maxPulseScale;
     return Positioned(
@@ -100,9 +104,11 @@ class _SelectionHaloState extends State<SelectionHalo>
             builder: (context, _) => CustomPaint(
               painter: _HaloPainter(
                 radius: widget.radius,
-                turn: _rotation.value,
-                pulse: _pulse.value,
-                animating: _running,
+                // Held at rest under reduced motion rather than stopped
+                // mid-turn, so the ring reads as a deliberate mark instead
+                // of an animation someone paused.
+                turn: _reduced ? 0 : _rotation.value,
+                pulse: _reduced ? null : _pulse.value,
               ),
             ),
           ),
@@ -117,7 +123,6 @@ class _HaloPainter extends CustomPainter {
     required this.radius,
     required this.turn,
     required this.pulse,
-    required this.animating,
   });
 
   /// How far past the ring one pulse travels before it is gone.
@@ -125,18 +130,20 @@ class _HaloPainter extends CustomPainter {
 
   final double radius;
   final double turn;
-  final double pulse;
-  final bool animating;
+
+  /// Null under reduced motion: the ring is drawn, the pulse is not.
+  final double? pulse;
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
 
-    if (animating) {
+    final progress = pulse;
+    if (progress != null) {
       // The pulse fades as it grows, so it reads as something leaving the
       // cat rather than a second ring arriving.
-      final scale = 1 + (maxPulseScale - 1) * pulse;
-      final opacity = (1 - pulse) * 0.45;
+      final scale = 1 + (maxPulseScale - 1) * progress;
+      final opacity = (1 - progress) * 0.45;
       if (opacity > 0) {
         canvas.drawCircle(
           center,
@@ -177,8 +184,5 @@ class _HaloPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_HaloPainter old) =>
-      old.turn != turn ||
-      old.pulse != pulse ||
-      old.radius != radius ||
-      old.animating != animating;
+      old.turn != turn || old.pulse != pulse || old.radius != radius;
 }

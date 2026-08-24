@@ -36,6 +36,38 @@ void main() {
     expect(before!.shouldRepaint(after!), isTrue);
   });
 
+  testWidgets('it keeps turning across rebuilds that move it', (tester) async {
+    // The halo is rebuilt on every frame of a camera movement, with a new
+    // centre each time. It used to re-decide whether to animate on every one
+    // of those rebuilds, and stopped: the ring turned once and sat still.
+    await _pumpHalo(tester);
+
+    var last = tester.widget<CustomPaint>(find.byType(CustomPaint)).painter!;
+    for (var i = 1; i <= 12; i++) {
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(),
+          child: Directionality(
+            textDirection: TextDirection.ltr,
+            child: Stack(
+              children: [
+                SelectionHalo(center: Offset(200 + i * 3, 400), radius: 43),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      final now = tester.widget<CustomPaint>(find.byType(CustomPaint)).painter!;
+      expect(
+        last.shouldRepaint(now),
+        isTrue,
+        reason: 'the halo stopped animating after rebuild $i',
+      );
+      last = now;
+    }
+  });
+
   testWidgets('reduced motion holds it still rather than removing it', (
     tester,
   ) async {
