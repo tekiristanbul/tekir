@@ -11,10 +11,10 @@ import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/discover/data/discover_api.dart';
 import 'package:app/features/discover/data/discover_cat.dart';
 import 'package:app/features/discover/data/discover_location_service.dart';
-import 'package:app/features/discover/ui/discover_screen.dart';
+import 'package:app/features/discover/ui/cat_search_panel.dart';
+import 'package:app/features/map/data/cat_marker.dart';
 import 'package:app/features/discover/ui/discover_skeleton.dart';
 import 'package:app/features/follow/data/follows_api.dart';
-import 'package:app/features/map/data/cat_marker.dart';
 
 const _session = SessionIdentity(
   accessToken: 'at',
@@ -105,6 +105,7 @@ class _FakeDiscoverApi extends DiscoverApi {
     required DiscoverFilter filter,
     required double lat,
     required double lng,
+    String? query,
     String? cursor,
   }) async {
     calls++;
@@ -115,7 +116,15 @@ class _FakeDiscoverApi extends DiscoverApi {
   }
 }
 
-Future<void> _pump(
+/// What a test needs to know about a pushed panel: the cat it handed back,
+/// if any. The panel selects a cat by popping with it — it never navigates —
+/// so this is the whole of its output.
+class _PanelHarness {
+  CatMarker? picked;
+  bool closed = false;
+}
+
+Future<_PanelHarness> _pump(
   WidgetTester tester, {
   required SessionIdentity? session,
   _FakeFollowsApi? followsApi,
@@ -123,9 +132,26 @@ Future<void> _pump(
   _FakeDiscoverApi? discoverApi,
   double textScale = 1.0,
 }) async {
+  final harness = _PanelHarness();
+  // The panel is pushed over the map, never mounted as a root route: it
+  // hands its result back by popping, which is only meaningful with
+  // something underneath it.
   final router = GoRouter(
     routes: [
-      GoRoute(path: '/', builder: (context, state) => const DiscoverScreen()),
+      GoRoute(
+        path: '/',
+        builder: (context, state) => Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                harness.picked = await CatSearchPanel.push(context);
+                harness.closed = true;
+              },
+              child: const Text('open search'),
+            ),
+          ),
+        ),
+      ),
       GoRoute(
         path: '/login',
         builder: (context, state) => const Scaffold(body: Text('login screen')),
@@ -166,19 +192,24 @@ Future<void> _pump(
     ),
   );
   await tester.pumpAndSettle();
+  await tester.tap(find.text('open search'));
+  await tester.pumpAndSettle();
+  return harness;
 }
 
 Future<void> _selectFollowingTab(WidgetTester tester) async {
-  await tester.tap(find.text('Takip ettiklerim'));
+  await tester.tap(find.textContaining('takip'));
   await tester.pumpAndSettle();
 }
 
 Future<void> _selectNeedsHelpTab(WidgetTester tester) async {
-  await tester.tap(find.text('Yardım gerekiyor'));
+  await tester.tap(find.textContaining('yardım').first);
   await tester.pumpAndSettle();
 }
 
 void main() {
+  group('search field alignment', _fieldAlignmentTests);
+
   group('nearby tab (default)', () {
     testWidgets(
       'initial read shows nothing before 400 ms, then the list skeleton',
@@ -188,7 +219,7 @@ void main() {
           routes: [
             GoRoute(
               path: '/',
-              builder: (context, state) => const DiscoverScreen(),
+              builder: (context, state) => const CatSearchPanel(),
             ),
           ],
         );
@@ -241,12 +272,14 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsNothing);
     });
 
-    testWidgets('lists nearby cats with distance and navigates to detail', (
+    testWidgets('lists nearby cats with distance and hands one back on tap', (
       tester,
     ) async {
       final api = _FakeDiscoverApi()
         ..nextNearby = const [
           DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
             id: 'cat-1',
             name: 'Tekir',
             primaryPhoto: '',
@@ -254,7 +287,7 @@ void main() {
             distanceMeters: 42,
           ),
         ];
-      await _pump(tester, session: null, discoverApi: api);
+      final harness = await _pump(tester, session: null, discoverApi: api);
 
       expect(find.text('Tekir'), findsOneWidget);
       expect(find.text('40 m'), findsOneWidget);
@@ -262,7 +295,12 @@ void main() {
       await tester.tap(find.text('Tekir'));
       await tester.pumpAndSettle();
 
-      expect(find.text('cat detail cat-1'), findsOneWidget);
+      // The panel selects on the map rather than navigating: it closes and
+      // returns the cat, coordinates included.
+      expect(find.byType(CatSearchPanel), findsNothing);
+      expect(harness.picked?.id, 'cat-1');
+      expect(harness.picked?.lat, 41.0);
+      expect(harness.picked?.lng, 29.0);
     });
 
     testWidgets(
@@ -271,6 +309,8 @@ void main() {
         final api = _FakeDiscoverApi()
           ..nextNearby = [
             DiscoverCat(
+              lat: 41.0,
+              lng: 29.0,
               id: 'cat-1',
               name: 'Boncuk',
               primaryPhoto: '',
@@ -283,7 +323,10 @@ void main() {
           ];
         await _pump(tester, session: null, discoverApi: api);
 
-        expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+        // Help is carried by the avatar badge and the note line, never by
+        // colour alone.
+        expect(find.byIcon(Icons.priority_high), findsOneWidget);
+        expect(find.textContaining('yardım gerekiyor'), findsOneWidget);
         expect(find.text('900 m'), findsOneWidget);
       },
     );
@@ -308,7 +351,13 @@ void main() {
 
       api.nextError = null;
       api.nextNearby = const [
-        DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 10),
+        DiscoverCat(
+          lat: 41.0,
+          lng: 29.0,
+          id: 'cat-1',
+          primaryPhoto: '',
+          distanceMeters: 10,
+        ),
       ];
       await tester.tap(find.text('Tekrar dene'));
       await tester.pumpAndSettle();
@@ -327,6 +376,8 @@ void main() {
       final api = _FakeDiscoverApi()
         ..nextNearby = const [
           DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
             id: 'a',
             name: 'Tekir',
             primaryPhoto: '',
@@ -362,6 +413,8 @@ void main() {
       final api = _FakeDiscoverApi()
         ..nextNearby = const [
           DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
             id: 'a',
             name: 'Tekir',
             primaryPhoto: '',
@@ -390,6 +443,8 @@ void main() {
         final api = _FakeDiscoverApi()
           ..nextNearby = const [
             DiscoverCat(
+              lat: 41.0,
+              lng: 29.0,
               id: 'a',
               name: 'Tekir',
               primaryPhoto: '',
@@ -415,6 +470,8 @@ void main() {
       final api = _FakeDiscoverApi()
         ..nextNearby = const [
           DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
             id: 'a',
             name: 'Tekir',
             primaryPhoto: '',
@@ -469,6 +526,8 @@ void main() {
         final firstPage = List.generate(
           20,
           (i) => DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
             id: 'cat-$i',
             name: 'cat-$i',
             primaryPhoto: '',
@@ -477,6 +536,8 @@ void main() {
         );
         final secondPage = [
           DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
             id: 'cat-last',
             name: 'cat-last',
             primaryPhoto: '',
@@ -496,7 +557,7 @@ void main() {
 
         expect(find.text('cat-last'), findsNothing);
 
-        await tester.drag(find.byType(ListView), const Offset(0, -6000));
+        await tester.drag(find.byType(ListView).last, const Offset(0, -6000));
         await tester.pumpAndSettle();
 
         expect(find.text('cat-last'), findsOneWidget);
@@ -510,6 +571,8 @@ void main() {
       final api = _FakeDiscoverApi()
         ..nextNeedsHelp = [
           DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
             id: 'cat-1',
             name: 'Pamuk',
             primaryPhoto: '',
@@ -524,7 +587,7 @@ void main() {
       await _selectNeedsHelpTab(tester);
 
       expect(find.text('Pamuk'), findsOneWidget);
-      expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.priority_high), findsOneWidget);
     });
 
     testWidgets('empty result shows the needs-help empty state', (
@@ -569,7 +632,7 @@ void main() {
           routes: [
             GoRoute(
               path: '/',
-              builder: (context, state) => const DiscoverScreen(),
+              builder: (context, state) => const CatSearchPanel(),
             ),
           ],
         );
@@ -595,7 +658,7 @@ void main() {
         expect(api.calls, 0);
 
         final container = ProviderScope.containerOf(
-          tester.element(find.byType(DiscoverScreen)),
+          tester.element(find.byType(CatSearchPanel)),
         );
         await container.read(sessionProvider.notifier).save(_session);
         await tester.pumpAndSettle();
@@ -621,7 +684,7 @@ void main() {
         )..pending = Completer<void>();
         await _pump(tester, session: _session, followsApi: api);
 
-        await tester.tap(find.text('Takip ettiklerim'));
+        await tester.tap(find.textContaining('takip'));
         await tester.pump();
         expect(find.byType(DiscoverListSkeleton), findsNothing);
         expect(find.byType(CircularProgressIndicator), findsNothing);
@@ -653,8 +716,8 @@ void main() {
       );
       // The filter row stays visible and tappable: the emptiness reads as
       // a filter result, not an empty app.
-      expect(find.text('Takip ettiklerim'), findsOneWidget);
-      expect(find.text('Yakınımda'), findsOneWidget);
+      expect(find.text('takip · 0'), findsOneWidget);
+      expect(find.text('yakındakiler'), findsOneWidget);
     });
 
     testWidgets('the empty state\'s quiet action jumps to the nearby tab', (
@@ -685,7 +748,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('lists followed cats and navigates to the cat detail on tap', (
+    testWidgets('lists followed cats and hands one back on tap', (
       tester,
     ) async {
       final api = _FakeFollowsApi(
@@ -700,7 +763,7 @@ void main() {
           ),
         ],
       );
-      await _pump(tester, session: _session, followsApi: api);
+      final harness = await _pump(tester, session: _session, followsApi: api);
       await _selectFollowingTab(tester);
 
       expect(find.text('Tekir'), findsOneWidget);
@@ -708,7 +771,12 @@ void main() {
       await tester.tap(find.text('Tekir'));
       await tester.pumpAndSettle();
 
-      expect(find.text('cat detail cat-1'), findsOneWidget);
+      // The panel selects on the map rather than navigating: it closes and
+      // returns the cat, coordinates included.
+      expect(find.byType(CatSearchPanel), findsNothing);
+      expect(harness.picked?.id, 'cat-1');
+      expect(harness.picked?.lat, 41.0);
+      expect(harness.picked?.lng, 29.0);
     });
 
     testWidgets('a fetch failure shows a retry state, and retry re-fetches', (
@@ -747,6 +815,8 @@ void main() {
     final discoverApi = _FakeDiscoverApi()
       ..nextNearby = const [
         DiscoverCat(
+          lat: 41.0,
+          lng: 29.0,
           id: 'cat-1',
           name: 'Tekir',
           primaryPhoto: '',
@@ -776,7 +846,7 @@ void main() {
     expect(find.text('Boncuk'), findsOneWidget);
     expect(find.text('Tekir'), findsNothing);
 
-    await tester.tap(find.text('Yakınımda'));
+    await tester.tap(find.textContaining('yakındakiler'));
     await tester.pumpAndSettle();
     expect(find.text('Tekir'), findsOneWidget);
     // nearby wasn't refetched a second time when returning to its tab.
@@ -796,8 +866,50 @@ class _BlockingDiscoverApi extends DiscoverApi {
     required DiscoverFilter filter,
     required double lat,
     required double lng,
+    String? query,
     String? cursor,
   }) {
     return completer.future;
   }
+}
+
+// The pill's text sat low at rest and jumped up the moment a cursor
+// appeared, because the decorator kept its own vertical padding and split
+// it unevenly.
+void _fieldAlignmentTests() {
+  Rect textRect(WidgetTester tester) =>
+      tester.getRect(find.byType(EditableText));
+
+  Rect fieldBox(WidgetTester tester) => tester.getRect(find.byType(TextField));
+
+  testWidgets('the field is centred in the pill, focused or not', (
+    tester,
+  ) async {
+    await _pump(tester, session: null, discoverApi: _FakeDiscoverApi());
+    // The field autofocuses, so this is the focused state; the resting one
+    // is covered by the field keeping its size and padding either way.
+
+    final box = fieldBox(tester);
+    final text = textRect(tester);
+    final above = text.top - box.top;
+    final below = box.bottom - text.bottom;
+
+    expect(
+      above,
+      closeTo(below, 1.0),
+      reason:
+          'text sits ${above}px from the top and ${below}px from the bottom '
+          'of a ${box.height}px field',
+    );
+  });
+
+  testWidgets('typing never moves it', (tester) async {
+    await _pump(tester, session: null, discoverApi: _FakeDiscoverApi());
+
+    final before = textRect(tester);
+    await tester.enterText(find.byType(TextField), 'boncuk');
+    await tester.pumpAndSettle();
+
+    expect(textRect(tester).top, closeTo(before.top, 0.5));
+  });
 }

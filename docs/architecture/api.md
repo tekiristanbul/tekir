@@ -45,9 +45,9 @@ Device-to-account linking (otp/verify) resolves-or-creates exactly one account p
 ```
 GET  /v1/cats?bbox=...                                    → [{ id, name, primary_photo, area{lat,lng}, area_label|null, active_alert|null, last_update_at }]
 GET  /v1/cats/nearby?lat&lng&radius=50                     → [{ id, primary_photo, name }]   (implemented — issue #70; the add-cat flow's non-blocking duplicate check)
-GET  /v1/cats/discover?lat&lng&filter=nearby|needs_help&cursor=&limit=
-                                              → 200 { items: [{ id, name, primary_photo, area_label|null, distance_meters, active_alert|null, last_update_at }], next_cursor|null }
-                                              (implemented — issue #82; the keşfet screen's two location-aware surfaces)
+GET  /v1/cats/discover?lat&lng&filter=nearby|needs_help&q=&cursor=&limit=
+                                              → 200 { items: [{ id, name, primary_photo, area{lat,lng}, area_label|null, distance_meters, active_alert|null, last_update_at }], next_cursor|null }
+                                              (implemented — issue #82; q and area added by issue #284)
 GET  /v1/cats/{cat_id}                                     (optional Bearer)   → { id, name, area{lat,lng}, area_label|null, primary_photo|null, created_at, last_update_at|null, active_alert|null, media_count, is_owner }
 GET  /v1/cats/{cat_id}/media                                → [{ id, url, is_cover, created_at }]   (implemented — issue #121; the "medya" archive tab; also carries media_content_type and media_muted, issue #194)
 PATCH /v1/cats/{cat_id}  (Bearer required)  { name }   → 200 { cat }
@@ -81,7 +81,11 @@ issue #236 renames this concept in the product, not on the wire: what the user s
 
 pagination is cursor-based, matching `GET /v1/cats/{cat_id}/updates`'s own convention exactly — `limit` defaults to 20, capped at 50, `cursor` is the opaque `next_cursor` from a previous page or absent for the first one, and `next_cursor` is `null` once the last page has been served. the keyset itself is `(distance_meters, id)` rather than a timestamp, since this list is ordered by a value postgis computes at request time, not a stored column — `id` is an arbitrary but deterministic tie-breaker for the (rare, but real) case of two cats sitting at the exact same distance. distance is always computed and ordered server-side via postgis (`st_distance`/`st_dwithin`'s own geography type, see [[db]]) — a client-computed distance or a client's own notion of "still active" is never trusted for either the ordering or the needs_help filter.
 
-`distance_meters` is this endpoint's one field the map/follows cat-summary shape (`catMarkerResponse`) doesn't otherwise carry; `area`/`area{lat,lng}` is deliberately absent from this response — this is a distance-ordered list, not a viewport, and selecting an entry opens the existing cat-detail flow, which already fetches its own coordinates. every other field (`id`, `name`, `primary_photo`, `area_label`, `active_alert`, `last_update_at`) means exactly what it means on `GET /v1/cats?bbox=...`/`GET /v1/me/follows`.
+`distance_meters` is this endpoint's one field the map/follows cat-summary shape (`catMarkerResponse`) doesn't otherwise carry. every other field (`id`, `name`, `primary_photo`, `area{lat,lng}`, `area_label`, `active_alert`, `last_update_at`) means exactly what it means on `GET /v1/cats?bbox=...`/`GET /v1/me/follows`.
+
+`area{lat,lng}` (issue #284) was deliberately absent until 0.5, on the reasoning that a distance-ordered list is not a viewport and a client needing coordinates would open cat detail, which fetches its own. that reasoning stopped holding when the keşfet screen became the map's search panel ([[map]], [[discovery]]): picking a result now selects that cat **on the map**, which needs its position in the same response — a second round trip would sit visibly between the tap and the camera moving. the field is additive, so a 0.4 client that never reads it is unaffected.
+
+`q` (issue #284) searches the cat's own **name** — never a neighbourhood, street or address, which stay out of scope ([[discovery]]). it is optional and combines with `filter`, keeping the same distance ordering and cursor pagination; absent or whitespace-only means no name predicate at all, so an unfiltered read is byte-identical to what it was before search existed. matching is case-insensitive substring (`ilike`), with `%`, `_` and `\` escaped so a literal one is searched for rather than interpreted. a query longer than 60 characters is `400 { error: "invalid name query" }` — a cat name is short, and an unbounded string in a `LIKE` pattern is not a search anyone typed. a cat with no name can never match a name query.
 
 followed cats' own read path is unaffected by this issue: `GET /v1/me/follows` (see "follows / notifications" below) already answers its account-scoped list in one query with the same lateral-join shape `GET /v1/cats/discover`'s own queries use — issue #82 confirmed no N+1 there and made no changes to it.
 

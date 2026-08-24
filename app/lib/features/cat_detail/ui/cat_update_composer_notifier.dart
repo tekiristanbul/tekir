@@ -8,6 +8,8 @@ import '../../../core/analytics/analytics.dart';
 import '../../../core/identity/device_identity.dart';
 import '../../../core/identity/session_identity.dart';
 import '../../../core/states/optimistic_inline_row.dart';
+import '../../map/ui/cats_map_notifier.dart';
+import '../data/cat_detail.dart';
 import '../data/cat_detail_api.dart';
 import 'cat_detail_notifier.dart';
 import '../../../core/images/upload_budget.dart';
@@ -425,9 +427,13 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
     _generation++;
   }
 
-  /// Submits the current selection, help mark, and draft comment from the
-  /// composition sheet. Returns true on success; on failure, [state.error]
-  /// carries the mapped, turkish-ready failure for the caller to read via
+  /// Submits the current selection, help mark, and draft comment from
+  /// whichever surface is composing — the cat-detail sheet or the map's
+  /// quick-update one. Both write the same update through the same
+  /// endpoint, into the same history.
+  ///
+  /// Returns true on success; on failure, [state.error] carries the mapped,
+  /// turkish-ready failure for the caller to read via
   /// [updateSubmitErrorMessageTr] — and the draft (including the optional
   /// help note) survives untouched for a retry.
   Future<bool> submit() {
@@ -518,6 +524,24 @@ class CatUpdateComposerNotifier extends Notifier<CatUpdateComposerState> {
             mediaId: mediaId,
           );
       ref.read(catDetailProvider(catId).notifier).prependUpdate(entry);
+      // The map holds its own already-fetched markers and fetches nothing
+      // in build(), so it is patched in place rather than invalidated —
+      // the same reason renameCat/removeCat exist (issue #230). Without
+      // this, a cat updated from the map's own quick sheet would show its
+      // old freshness (and no help ring) until the next viewport read.
+      ref
+          .read(catsMapProvider.notifier)
+          .applyUpdate(
+            catId,
+            lastUpdateAt: entry.createdAt,
+            activeAlert: entry.needsHelp && entry.needsHelpExpiresAt != null
+                ? ActiveAlert(
+                    createdAt: entry.createdAt,
+                    expiresAt: entry.needsHelpExpiresAt!,
+                    comment: entry.comment,
+                  )
+                : null,
+          );
       // A combined update emits both events (docs/product/alerts.md,
       // decision 6): ordinary_update_created when at least one status is
       // present, needs_help_created (parameterless since #101) when the

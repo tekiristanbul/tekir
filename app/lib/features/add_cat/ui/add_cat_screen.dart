@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../../../core/geo/istanbul_bounds.dart';
+import '../../map/data/map_style.dart';
 import '../../../core/states/photo_upload_progress.dart';
 import '../../../core/states/submitting_button.dart';
 import '../../../core/states/inline_spinner.dart';
@@ -137,6 +138,12 @@ class _LocationStepState extends ConsumerState<_LocationStep> {
                         target: center,
                         zoom: _initialZoom,
                       ),
+                      // The same ground the main map draws (issue #285).
+                      // This picker had no style at all, so placing a cat
+                      // happened on google's default palette and the cat
+                      // then appeared on tekir's — the same street, twice,
+                      // in two different cities.
+                      style: catsOfIstanbulMapStyle,
                       cameraTargetBounds: CameraTargetBounds(istanbulBounds),
                       minMaxZoomPreference: const MinMaxZoomPreference(
                         istanbulMinZoom,
@@ -373,84 +380,109 @@ class _DetailsStep extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: AppSpacing.s2),
-          InkWell(
-            onTap: () => _choosePhotoSource(context, ref),
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.lg),
-              // The design's `.photo-well`: a dashed line-strong outline
-              // around the whole well, in both its empty and filled state.
-              child: CustomPaint(
-                foregroundPainter: const _DashedBorderPainter(
-                  color: AppColors.lineStrong,
-                  radius: AppRadius.lg,
-                ),
-                child: Container(
-                  height: 150,
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceAlt,
-                    borderRadius: BorderRadius.circular(AppRadius.lg),
-                  ),
-                  alignment: Alignment.center,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (state.photoBytes == null)
-                        const Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.camera_alt,
-                                size: 26,
-                                color: AppColors.muted,
+          // A circle, not a wide well (issue #287). Since issue #236 a
+          // cat's one canonical image is a round profile photo — the wide
+          // cover surface is gone from the product. Choosing that photo
+          // inside a cover-shaped well showed a crop the cat will never be
+          // seen in, and every other surface then round-cropped it: the
+          // framing the user approved was not the framing they got.
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Semantics(
+                  button: true,
+                  label: 'Fotoğraf ekle',
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: () => _choosePhotoSource(context, ref),
+                      child: SizedBox(
+                        width: _profilePhotoDiameter,
+                        height: _profilePhotoDiameter,
+                        child: CustomPaint(
+                          // The design's `.photo-well` dashed outline,
+                          // following the shape the photo actually becomes.
+                          foregroundPainter: const _DashedBorderPainter.circle(
+                            color: AppColors.lineStrong,
+                          ),
+                          child: ClipOval(
+                            child: DecoratedBox(
+                              decoration: const BoxDecoration(
+                                color: AppColors.surfaceAlt,
+                                shape: BoxShape.circle,
                               ),
-                              SizedBox(height: AppSpacing.s2),
-                              Text(
-                                'Fotoğraf ekle',
-                                style: TextStyle(color: AppColors.muted),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  if (state.photoBytes == null)
+                                    const Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.camera_alt,
+                                            size: 26,
+                                            color: AppColors.muted,
+                                          ),
+                                          SizedBox(height: AppSpacing.s2),
+                                          Text(
+                                            'Fotoğraf ekle',
+                                            style: TextStyle(
+                                              color: AppColors.muted,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  else ...[
+                                    Image.memory(
+                                      state.photoBytes!,
+                                      fit: BoxFit.cover,
+                                    ),
+                                    // The only percentage anywhere in the
+                                    // app (docs/design/app-states.md): the
+                                    // photo leaving the device.
+                                    if (state.saving &&
+                                        state.uploadProgress != null)
+                                      PhotoUploadProgress(
+                                        progress: state.uploadProgress!,
+                                        // The photo has fully left the
+                                        // device — the same request is now
+                                        // waiting on the server's remaining
+                                        // work, including issue #241's
+                                        // pre-publication content check. No
+                                        // new request, no polling: a truer
+                                        // label for the tail of this one.
+                                        checking: state.uploadProgress! >= 1.0,
+                                      ),
+                                  ],
+                                ],
                               ),
-                            ],
+                            ),
                           ),
-                        )
-                      else ...[
-                        Image.memory(state.photoBytes!, fit: BoxFit.cover),
-                        // The only percentage anywhere in the app
-                        // (docs/design/app-states.md): the photo leaving
-                        // the device.
-                        if (state.saving && state.uploadProgress != null)
-                          PhotoUploadProgress(
-                            progress: state.uploadProgress!,
-                            // The photo has fully left the device — the
-                            // same request is now waiting on the server's
-                            // own remaining work, including issue #241's
-                            // pre-publication content check. No new
-                            // request, no polling: just a truer label for
-                            // the tail of this one (see PhotoUploadProgress's
-                            // own doc).
-                            checking: state.uploadProgress! >= 1.0,
-                          ),
-                        if (!state.saving && state.error == AddCatError.network)
-                          const Positioned(
-                            left: AppSpacing.s3,
-                            bottom: AppSpacing.s3,
-                            child: _UploadFailedBadge(),
-                          ),
-                      ],
-                      // The design's `.required-tag`: pinned to the well
-                      // itself, regardless of whether a photo is picked
-                      // yet — not just the field label's own "(zorunlu)".
-                      // Top-left, not bottom-left: the upload-failed badge
-                      // also anchors bottom-left and would overlap it.
-                      const Positioned(
-                        left: AppSpacing.s2,
-                        top: AppSpacing.s2,
-                        child: _RequiredTag(),
+                        ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
+                const SizedBox(height: AppSpacing.s3),
+                // Under the circle rather than pinned inside it: a circle
+                // has no corner to pin to, and both of these were anchored
+                // to the same one before.
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const _RequiredTag(),
+                    if (!state.saving &&
+                        state.error == AddCatError.network) ...[
+                      const SizedBox(width: AppSpacing.s2),
+                      const _UploadFailedBadge(),
+                    ],
+                  ],
+                ),
+              ],
             ),
           ),
           const SizedBox(height: AppSpacing.s5),
@@ -745,25 +777,42 @@ class _RequiredTag extends StatelessWidget {
   }
 }
 
+/// The picked photo is shown at the size and shape it becomes: the same
+/// circle cat detail's own profile header uses (issue #236/#287).
+const _profilePhotoDiameter = 132.0;
+
 /// Draws the design's dashed outline (`.photo-well`'s `border:1.5px dashed`)
-/// around a rounded rectangle — Flutter has no built-in dashed
-/// `BoxDecoration` border, so this paints one directly.
+/// — Flutter has no built-in dashed `BoxDecoration` border, so this paints
+/// one directly, around a rounded rectangle or a circle.
 class _DashedBorderPainter extends CustomPainter {
   const _DashedBorderPainter({required this.color, required this.radius});
 
+  /// The same outline around a circle — the shape a cat's profile photo
+  /// actually takes.
+  const _DashedBorderPainter.circle({required this.color}) : radius = null;
+
   final Color color;
-  final double radius;
+
+  /// Null draws a circle inscribed in the painter's own box.
+  final double? radius;
 
   static const _dashWidth = 5.0;
   static const _dashGap = 4.0;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rrect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(0.75, 0.75, size.width - 1.5, size.height - 1.5),
-      Radius.circular(radius),
+    final inset = Rect.fromLTWH(
+      0.75,
+      0.75,
+      size.width - 1.5,
+      size.height - 1.5,
     );
-    final path = Path()..addRRect(rrect);
+    final corner = radius;
+    final path = corner == null
+        ? (Path()..addOval(inset))
+        : (Path()..addRRect(
+            RRect.fromRectAndRadius(inset, Radius.circular(corner)),
+          ));
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke

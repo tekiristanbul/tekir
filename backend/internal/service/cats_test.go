@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -2264,7 +2265,7 @@ const (
 func TestCatsService_ListDiscover_InvalidFilter(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	_, err := svc.ListDiscover(context.Background(), "popular", galataLat, galataLng, "", 0, "")
+	_, err := svc.ListDiscover(context.Background(), "popular", galataLat, galataLng, "", "", 0, "")
 	if !errors.Is(err, ErrInvalidDiscoverFilter) {
 		t.Fatalf("expected ErrInvalidDiscoverFilter, got %v", err)
 	}
@@ -2274,7 +2275,7 @@ func TestCatsService_ListDiscover_InvalidArea(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
 	// well outside istanbulBounds (e.g. ankara).
-	_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, 39.93, 32.85, "", 0, "")
+	_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, 39.93, 32.85, "", "", 0, "")
 	if !errors.Is(err, ErrInvalidArea) {
 		t.Fatalf("expected ErrInvalidArea, got %v", err)
 	}
@@ -2284,7 +2285,7 @@ func TestCatsService_ListDiscover_InvalidLimit(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
 	for _, limit := range []int{-1, maxDiscoverLimit + 1} {
-		if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", limit, ""); !errors.Is(err, ErrInvalidLimit) {
+		if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", "", limit, ""); !errors.Is(err, ErrInvalidLimit) {
 			t.Errorf("limit %d: expected ErrInvalidLimit, got %v", limit, err)
 		}
 	}
@@ -2293,7 +2294,7 @@ func TestCatsService_ListDiscover_InvalidLimit(t *testing.T) {
 func TestCatsService_ListDiscover_InvalidCursor(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "not-base64!!", 0, "")
+	_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", "not-base64!!", 0, "")
 	if !errors.Is(err, ErrInvalidCursor) {
 		t.Fatalf("expected ErrInvalidCursor, got %v", err)
 	}
@@ -2315,7 +2316,7 @@ func TestCatsService_ListDiscover_Nearby_PaginatesAndEncodesCursor(t *testing.T)
 		},
 	})
 
-	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 2, "")
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", "", 2, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2356,7 +2357,7 @@ func TestCatsService_ListDiscover_Nearby_PaginatesAndEncodesCursor(t *testing.T)
 	// postgres's job, exercised by the repository integration test, not
 	// this fake, which always returns the same fixed rows regardless of
 	// what it was asked for.
-	if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, page.NextCursor, 2, ""); err != nil {
+	if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", page.NextCursor, 2, ""); err != nil {
 		t.Fatalf("expected no error on second page, got %v", err)
 	}
 	if !captured.AfterDistanceM.Valid || captured.AfterDistanceM.Float64 != 120 {
@@ -2374,7 +2375,7 @@ func TestCatsService_ListDiscover_Nearby_NoNextPageWhenExactlyLimitRows(t *testi
 		},
 	})
 
-	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 5, "")
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", "", 5, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2402,7 +2403,7 @@ func TestCatsService_ListDiscover_NeedsHelp_PassesClockAsNow(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return fixedNow }))
 
-	page, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "", 0, "")
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "", "", 0, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2444,7 +2445,7 @@ func TestCatsService_ListDiscover_NeedsHelp_ExactExpiryBoundary(t *testing.T) {
 		},
 	}, WithClock(func() time.Time { return fixedNow }))
 
-	page, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "", 0, "")
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "", "", 0, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2456,7 +2457,7 @@ func TestCatsService_ListDiscover_NeedsHelp_ExactExpiryBoundary(t *testing.T) {
 func TestCatsService_ListDiscover_EmptyResult(t *testing.T) {
 	svc := NewCatsService(fakeCatsLister{})
 
-	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", 0, "")
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", "", 0, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -2743,4 +2744,101 @@ func TestCatsService_CorrectOwnUpdate_Moderation(t *testing.T) {
 			t.Error("expected CorrectOwnUpdate never called for a rejected comment edit")
 		}
 	})
+}
+
+// issue #284: GET /v1/cats/discover's name search. The query reaches the
+// database as a trimmed, LIKE-escaped pattern, an absent or whitespace-only
+// query is not a filter at all, and an implausibly long one is rejected
+// before it becomes a pattern.
+func TestCatsService_ListDiscover_NameQuery(t *testing.T) {
+	t.Run("trims and passes the query through", func(t *testing.T) {
+		var captured repository.ListCatsByDistanceParams
+		svc := NewCatsService(fakeCatsLister{capturedDistance: &captured})
+
+		if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "  boncuk  ", "", 0, ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !captured.NameQuery.Valid || captured.NameQuery.String != "boncuk" {
+			t.Errorf("unexpected name query: %+v", captured.NameQuery)
+		}
+	})
+
+	t.Run("an absent query is not a filter", func(t *testing.T) {
+		for _, raw := range []string{"", "   "} {
+			var captured repository.ListCatsByDistanceParams
+			svc := NewCatsService(fakeCatsLister{capturedDistance: &captured})
+
+			if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, raw, "", 0, ""); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if captured.NameQuery.Valid {
+				t.Errorf("%q: expected no name filter, got %+v", raw, captured.NameQuery)
+			}
+		}
+	})
+
+	t.Run("escapes like metacharacters", func(t *testing.T) {
+		var captured repository.ListCatsByDistanceParams
+		svc := NewCatsService(fakeCatsLister{capturedDistance: &captured})
+
+		if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, `100%_a\b`, "", 0, ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if captured.NameQuery.String != `100\%\_a\\b` {
+			t.Errorf("unescaped pattern reached the query: %q", captured.NameQuery.String)
+		}
+	})
+
+	t.Run("applies to the needs-help filter too", func(t *testing.T) {
+		var captured repository.ListActiveNeedsHelpCatsByDistanceParams
+		svc := NewCatsService(fakeCatsLister{capturedNeedsHelpDistance: &captured})
+
+		if _, err := svc.ListDiscover(context.Background(), discoverFilterNeedsHelp, galataLat, galataLng, "boncuk", "", 0, ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !captured.NameQuery.Valid || captured.NameQuery.String != "boncuk" {
+			t.Errorf("unexpected name query: %+v", captured.NameQuery)
+		}
+	})
+
+	t.Run("rejects an implausibly long query", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{})
+		long := strings.Repeat("ş", maxDiscoverNameQueryLength+1)
+
+		_, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, long, "", 0, "")
+		if !errors.Is(err, ErrInvalidNameQuery) {
+			t.Fatalf("expected ErrInvalidNameQuery, got %v", err)
+		}
+	})
+
+	t.Run("counts the cap in runes, not bytes", func(t *testing.T) {
+		svc := NewCatsService(fakeCatsLister{})
+		atCap := strings.Repeat("ş", maxDiscoverNameQueryLength)
+
+		if _, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, atCap, "", 0, ""); err != nil {
+			t.Fatalf("a query exactly at the cap must be accepted, got %v", err)
+		}
+	})
+}
+
+// issue #284: a discover row now carries the cat's own coordinates, so
+// picking a search result can select it on the map without a second read.
+func TestCatsService_ListDiscover_CarriesCoordinates(t *testing.T) {
+	id := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	svc := NewCatsService(fakeCatsLister{
+		distanceRows: []repository.ListCatsByDistanceRow{
+			{ID: id, Name: pgtype.Text{String: "tekir", Valid: true}, CatLat: 41.0256, CatLng: 28.9744, DistanceM: 12},
+		},
+	})
+
+	page, err := svc.ListDiscover(context.Background(), discoverFilterNearby, galataLat, galataLng, "", "", 0, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(page.Items))
+	}
+	if page.Items[0].Lat != 41.0256 || page.Items[0].Lng != 28.9744 {
+		t.Errorf("unexpected coordinates: %v, %v", page.Items[0].Lat, page.Items[0].Lng)
+	}
 }

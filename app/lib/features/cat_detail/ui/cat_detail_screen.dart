@@ -297,33 +297,40 @@ class _ProfileHeader extends StatelessWidget {
           // than left to the default, because the two ends are different
           // shapes: without it the photo would carry the sheet's rounded
           // square the whole way and snap to a circle on arrival.
-          Hero(
-            tag: catPhotoHeroTag(detail.id),
-            flightShuttleBuilder: (_, animation, direction, _, _) =>
-                _CatPhotoFlight(
-                  animation: animation,
-                  direction: direction,
-                  photo: photo,
-                ),
-            child: GestureDetector(
-              onTap: photo == null
-                  ? null
-                  : () => _openFullScreen(context, photo),
-              child: ClipOval(
-                child: SizedBox(
-                  width: _diameter,
-                  height: _diameter,
-                  child: photo == null
-                      ? const _HeroPlaceholder()
-                      : CachedNetworkImage(
-                          imageUrl: photo,
-                          fit: BoxFit.cover,
-                          memCacheWidth: decodeWidthFor(context, _diameter),
-                          placeholder: (context, _) =>
-                              const _HeroPlaceholder(loading: true),
-                          errorWidget: (context, _, _) =>
-                              const _HeroPlaceholder(),
-                        ),
+          _HelpRing(
+            // The same signal the map's marker carries, so arriving here
+            // from a tapped help pin reads as one continuous thing rather
+            // than as the state being restated in a different language.
+            active: detail.activeAlert != null,
+            diameter: _diameter,
+            child: Hero(
+              tag: catPhotoHeroTag(detail.id),
+              flightShuttleBuilder: (_, animation, direction, _, _) =>
+                  _CatPhotoFlight(
+                    animation: animation,
+                    direction: direction,
+                    photo: photo,
+                  ),
+              child: GestureDetector(
+                onTap: photo == null
+                    ? null
+                    : () => _openFullScreen(context, photo),
+                child: ClipOval(
+                  child: SizedBox(
+                    width: _diameter,
+                    height: _diameter,
+                    child: photo == null
+                        ? const _HeroPlaceholder()
+                        : CachedNetworkImage(
+                            imageUrl: photo,
+                            fit: BoxFit.cover,
+                            memCacheWidth: decodeWidthFor(context, _diameter),
+                            placeholder: (context, _) =>
+                                const _HeroPlaceholder(loading: true),
+                            errorWidget: (context, _, _) =>
+                                const _HeroPlaceholder(),
+                          ),
+                  ),
                 ),
               ),
             ),
@@ -351,6 +358,150 @@ class _ProfileHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Identifies the help mark drawn around the cat's profile photo.
+///
+/// Public because the widget that draws it is not: the mark is decoration
+/// (the state it signals is in text below it), so it carries no semantics
+/// of its own, and a test asserting that it is drawn — or held still under
+/// reduced motion — has nothing else to hold onto.
+const helpRingKey = ValueKey<String>('cat-detail-help-ring');
+
+/// The help mark, on the cat's own face (issue #287, approved design
+/// artboard 05).
+///
+/// A ring in the help colour, pulsing outward, around the profile photo —
+/// the same signal the map's marker carries, so the transition from a
+/// tapped help pin to this screen reads as one continuous thing.
+///
+/// Decoration only, and deliberately: the help state, its note and its
+/// remaining time are all in text a few lines below. That is what lets
+/// reduced motion hold the ring still — and hold it *still*, not remove
+/// it: the mark stays, only its travel goes. Pulse is used for exactly two
+/// things in this app, help and map selection, and nothing else.
+class _HelpRing extends StatefulWidget {
+  const _HelpRing({
+    required this.active,
+    required this.diameter,
+    required this.child,
+  });
+
+  final bool active;
+  final double diameter;
+  final Widget child;
+
+  /// One pulse leaving the cat. Slower than the map's selection pulse, so
+  /// the two never read as the same event.
+  static const period = Duration(milliseconds: 2600);
+
+  /// How far past the ring one pulse travels before it is gone.
+  static const _maxScale = 1.18;
+
+  @override
+  State<_HelpRing> createState() => _HelpRingState();
+}
+
+class _HelpRingState extends State<_HelpRing>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: _HelpRing.period,
+  );
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  void _sync({required bool running}) {
+    if (running == _pulse.isAnimating) return;
+    if (running) {
+      _pulse.repeat();
+    } else {
+      _pulse.stop();
+      _pulse.value = 0;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.active) {
+      _sync(running: false);
+      return widget.child;
+    }
+    final reduced = TekirMotion.of(context).reduced;
+    _sync(running: !reduced);
+
+    final extent = widget.diameter * _HelpRing._maxScale;
+    return SizedBox(
+      width: extent,
+      height: extent,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          IgnorePointer(
+            child: ExcludeSemantics(
+              child: AnimatedBuilder(
+                animation: _pulse,
+                builder: (context, _) => CustomPaint(
+                  key: helpRingKey,
+                  size: Size.square(extent),
+                  painter: _HelpRingPainter(
+                    radius: widget.diameter / 2 + 4,
+                    pulse: reduced ? null : _pulse.value,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          widget.child,
+        ],
+      ),
+    );
+  }
+}
+
+class _HelpRingPainter extends CustomPainter {
+  const _HelpRingPainter({required this.radius, required this.pulse});
+
+  final double radius;
+
+  /// Null under reduced motion: the ring is drawn, the pulse is not.
+  final double? pulse;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final progress = pulse;
+    if (progress != null) {
+      final scale = 1 + (_HelpRing._maxScale - 1) * progress;
+      final opacity = (1 - progress) * 0.5;
+      if (opacity > 0) {
+        canvas.drawCircle(
+          center,
+          radius * scale,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2
+            ..color = AppColors.help.withValues(alpha: opacity),
+        );
+      }
+    }
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5
+        ..color = AppColors.help,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_HelpRingPainter old) =>
+      old.pulse != pulse || old.radius != radius;
 }
 
 /// The "there is an archive behind this" indicator: a camera glyph plus
@@ -860,61 +1011,71 @@ class _ActiveAlertBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final note = alert.comment;
+    final note = alert.comment?.trim();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.s4,
-        vertical: AppSpacing.s3,
+        vertical: AppSpacing.s3 + 1,
       ),
       decoration: BoxDecoration(
         color: AppColors.helpSoft,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: AppColors.help),
+        borderRadius: BorderRadius.circular(AppRadius.lg - 2),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.warning_amber_rounded,
-            size: 20,
-            color: AppColors.help,
-          ),
-          const SizedBox(width: AppSpacing.s3),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Yardıma ihtiyacı var',
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 1),
+                child: Icon(
+                  Icons.priority_high,
+                  size: 16,
+                  color: AppColors.help,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.s2 - 2),
+              const Expanded(
+                child: Text(
+                  'yardım gerekiyor',
                   style: TextStyle(
                     color: AppColors.helpStrong,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.5,
                   ),
                 ),
-                if (note != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    note,
-                    style: const TextStyle(
-                      color: AppColors.helpStrong,
-                      fontSize: 13,
-                      height: 1.4,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 2),
-                Text(
-                  expiresInTr(alert.expiresAt),
-                  style: const TextStyle(
-                    color: AppColors.helpStrong,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          // When it was raised, and when it ends. Help is a notification
+          // with an expiry, not a state someone closes — there is nothing
+          // to press here, and the window is the server's own, never
+          // recomputed from a client clock.
+          Text(
+            '${relativeTimeTr(alert.createdAt)} · ${expiresInTr(alert.expiresAt)}',
+            style: const TextStyle(
+              color: AppColors.helpStrong,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
             ),
           ),
+          if (note != null && note.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.s2),
+            // The reporter's own words, set apart as a quotation: this is
+            // the one piece of the block that is not the product speaking.
+            Text(
+              '“$note”',
+              style: const TextStyle(
+                fontFamily: 'Fraunces',
+                color: AppColors.helpStrong,
+                fontSize: 14,
+                height: 1.5,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1718,54 +1879,67 @@ class _UpdateBar extends ConsumerWidget {
     final busy = ref.watch(
       catUpdateComposerProvider(catId).select((s) => s.isSubmitting),
     );
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [AppColors.bg, AppColors.bg, Color(0x00F7F1E8)],
-          stops: [0.0, 0.62, 1.0],
+    // A labelled pill in the corner, not a bar across the screen
+    // (approved design artboard 05). The full-width bar was a wall the
+    // timeline ended against; the pill leaves the last entry readable and
+    // still sits over the scroll, reachable from any position.
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.s4,
+          AppSpacing.s3,
+          AppSpacing.s4,
+          AppSpacing.s4,
         ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.s4,
-            AppSpacing.s3,
-            AppSpacing.s4,
-            AppSpacing.s5,
-          ),
-          child: ConstrainedBox(
-            // A minimum, not a fixed height: the label may wrap taller at
-            // large system text scale without overflowing the button.
-            constraints: const BoxConstraints(
-              minWidth: double.infinity,
-              minHeight: kTapMin,
-            ),
-            // Around the button alone, not the bar. Wrapping the bar meant
-            // the gradient — a transparent strip the user can press
-            // straight through to the timeline underneath — scaled the
-            // whole surface, and a submitting button that must not appear
-            // to respond still gave under the finger.
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: Semantics(
+            container: true,
+            excludeSemantics: true,
+            button: true,
+            enabled: !busy,
+            label: 'update ekle',
+            onTap: busy
+                ? null
+                : () => openCatUpdateComposer(context, ref, catId),
             child: PressResponse(
               enabled: !busy,
-              child: ElevatedButton(
-                onPressed: busy
-                    ? null
-                    : () => openCatUpdateComposer(context, ref, catId),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: AppColors.primaryInk,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppRadius.lg),
-                  ),
-                  textStyle: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15.5,
+              child: Material(
+                color: busy ? AppColors.primaryStrong : AppColors.primary,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+                elevation: 4,
+                shadowColor: const Color(0x66A44732),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                  onTap: busy
+                      ? null
+                      : () => openCatUpdateComposer(context, ref, catId),
+                  child: Container(
+                    // A minimum, not a fixed height: the label may wrap
+                    // taller at large system text scale without
+                    // overflowing the pill.
+                    constraints: const BoxConstraints(minHeight: kTapMin + 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.s5,
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.add, size: 17, color: AppColors.primaryInk),
+                        SizedBox(width: 6),
+                        Text(
+                          'update',
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.primaryInk,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                child: const Text('+ update'),
               ),
             ),
           ),
@@ -1893,13 +2067,30 @@ class _NeedsHelpTag extends StatelessWidget {
         color: isActive ? AppColors.helpSoft : AppColors.surfaceAlt,
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
-      child: Text(
-        'yardım gerekiyor',
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: isActive ? AppColors.helpStrong : AppColors.muted,
-        ),
+      // "yardım", not "yardım gerekiyor": the chip records what this
+      // entry was — someone marked the cat as needing help — while the
+      // block above the timeline states the cat's current state. The
+      // approved design (artboard 05) separates the two the same way, and
+      // one string doing both jobs read as the state being repeated once
+      // per historical entry.
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.priority_high,
+            size: 12,
+            color: isActive ? AppColors.help : AppColors.muted,
+          ),
+          const SizedBox(width: 3),
+          Text(
+            'yardım',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: isActive ? AppColors.helpStrong : AppColors.muted,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2002,17 +2193,6 @@ class _TimelineItem extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (update.authorDisplayName?.trim().isNotEmpty ?? false) ...[
-                    Text(
-                      update.authorDisplayName!.trim(),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.ink,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                  ],
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -2064,6 +2244,21 @@ class _TimelineItem extends StatelessWidget {
                         ),
                     ],
                   ),
+                  // Who recorded it, beneath what they recorded (approved
+                  // design artboard 05): the entry leads with the act, not
+                  // with the name. Who, and nothing else — which surface
+                  // they used is recorded but never shown.
+                  if (update.authorDisplayName?.trim().isNotEmpty ?? false) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      update.authorDisplayName!.trim(),
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.faint,
+                      ),
+                    ),
+                  ],
                   if (update.comment != null) ...[
                     // Bound to the entry above it, not floating between
                     // two: this was 4 px from its own chip and 12 px from
