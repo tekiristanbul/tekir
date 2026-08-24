@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -321,13 +322,102 @@ void _mapStyleTests() {
     expect(jsonDecode(catsOfIstanbulMapStyle), isA<List<dynamic>>());
   });
 
-  test('paints the ground, roads, parks and water in tekir colours', () {
-    // The approved design's own tokens: map, road, park, water.
-    for (final colour in ['#ece2d1', '#e2d7c5', '#dde0c0', '#cdd9d0']) {
+  /// Relative luminance, the thing a value ramp is actually made of.
+  double luminance(String hex) {
+    final h = hex.replaceFirst('#', '');
+    double channel(int i) {
+      final c = int.parse(h.substring(i, i + 2), radix: 16) / 255;
+      return c <= 0.03928
+          ? c / 12.92
+          : math.pow((c + 0.055) / 1.055, 2.4).toDouble();
+    }
+
+    return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+  }
+
+  /// The colour a feature's geometry is painted, from the style itself —
+  /// so this reads what the map will actually draw rather than a list of
+  /// hexes copied beside it.
+  String geometryColour(String feature) {
+    final rules = (jsonDecode(catsOfIstanbulMapStyle) as List<dynamic>)
+        .cast<Map<String, dynamic>>();
+    final rule = rules.lastWhere(
+      (r) => r['featureType'] == feature && r['elementType'] == 'geometry',
+      orElse: () => throw StateError('no geometry rule for $feature'),
+    );
+    final styler = (rule['stylers'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .firstWhere((s) => s['color'] != null);
+    return styler['color'] as String;
+  }
+
+  /// The ground: the one rule with no featureType at all.
+  String groundColour() {
+    final rules = (jsonDecode(catsOfIstanbulMapStyle) as List<dynamic>)
+        .cast<Map<String, dynamic>>();
+    final rule = rules.firstWhere(
+      (r) => r['featureType'] == null && r['elementType'] == 'geometry',
+    );
+    final styler = (rule['stylers'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .firstWhere((s) => s['color'] != null);
+    return styler['color'] as String;
+  }
+
+  test('is warm paper, not google grey', () {
+    // Every ground and road tone stays on the design's warm ramp: more red
+    // than blue, never a neutral or cool one.
+    for (final feature in ['road.local', 'road.arterial', 'road.highway']) {
+      final hex = geometryColour(feature).replaceFirst('#', '');
+      final r = int.parse(hex.substring(0, 2), radix: 16);
+      final b = int.parse(hex.substring(4, 6), radix: 16);
+      expect(r, greaterThan(b), reason: '$feature is not a warm tone');
+    }
+  });
+
+  // The first pass at this style put the ground and the roads two steps
+  // apart on one ramp — which the design's own artboard can afford, because
+  // it draws four roads on an empty rectangle. A real istanbul viewport is
+  // mostly road, and at that density it read as one flat dark mass.
+  test('the ground is lighter than every road on it', () {
+    final ground = luminance(groundColour());
+    for (final road in ['road.local', 'road.arterial', 'road.highway']) {
       expect(
-        catsOfIstanbulMapStyle,
-        contains(colour),
-        reason: '$colour is missing from the basemap style',
+        luminance(geometryColour(road)),
+        lessThan(ground),
+        reason: '$road is not darker than the ground',
+      );
+    }
+  });
+
+  test('roads separate from the ground rather than melting into it', () {
+    final ground = luminance(groundColour());
+    final local = luminance(geometryColour('road.local'));
+    // The margin the first pass missed: its ground and road sat 0.06 apart
+    // in luminance, which disappears at street density.
+    expect(
+      ground - local,
+      greaterThan(0.1),
+      reason: 'the quietest road is too close in value to the ground',
+    );
+  });
+
+  test('a main road reads differently from a side street', () {
+    final local = luminance(geometryColour('road.local'));
+    final arterial = luminance(geometryColour('road.arterial'));
+    final highway = luminance(geometryColour('road.highway'));
+
+    expect(arterial, lessThan(local));
+    expect(highway, lessThan(arterial));
+  });
+
+  test('parks and water are their own values, not just their own hues', () {
+    final local = luminance(geometryColour('road.local'));
+    for (final feature in ['poi.park', 'water']) {
+      expect(
+        (luminance(geometryColour(feature)) - local).abs(),
+        greaterThan(0.02),
+        reason: '$feature is separated from a side street by hue alone',
       );
     }
   });
