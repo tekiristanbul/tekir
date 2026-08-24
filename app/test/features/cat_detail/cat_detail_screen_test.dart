@@ -289,6 +289,8 @@ class _ScriptedVideoPlayerPlatform extends VideoPlayerPlatform {
 }
 
 void main() {
+  group('help ring (issue #287)', _helpRingTests);
+
   VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
 
   // The timing contract (docs/design/app-states.md) for an initial read:
@@ -507,9 +509,13 @@ void main() {
         CatDetailState(detail: detail, updates: const [], hasLoadedOnce: true),
       );
 
-      expect(find.text('Yardıma ihtiyacı var'), findsOneWidget);
-      expect(find.text('kabı bomboştu ve halsizdi'), findsOneWidget);
+      expect(find.text('yardım gerekiyor'), findsOneWidget);
+      // The reporter's own words, set apart as a quotation.
+      expect(find.text('“kabı bomboştu ve halsizdi”'), findsOneWidget);
+      // When it was raised and when it ends, on one line — help is a
+      // notification with an expiry, never a state with a close button.
       expect(find.textContaining('sona eriyor'), findsOneWidget);
+      expect(find.textContaining('önce ·'), findsOneWidget);
     },
   );
 
@@ -537,7 +543,7 @@ void main() {
       CatDetailState(detail: detail, updates: const [], hasLoadedOnce: true),
     );
 
-    expect(find.text('Yardıma ihtiyacı var'), findsOneWidget);
+    expect(find.text('yardım gerekiyor'), findsOneWidget);
     expect(find.textContaining('sona eriyor'), findsOneWidget);
   });
 
@@ -553,7 +559,7 @@ void main() {
     // the update sheet), so with no active alert nothing on this screen
     // renders the warning icon at all.
     expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
-    expect(find.text('Yardıma ihtiyacı var'), findsNothing);
+    expect(find.text('yardım gerekiyor'), findsNothing);
   });
 
   testWidgets(
@@ -583,7 +589,7 @@ void main() {
         CatDetailState(detail: _detail, updates: [legacy], hasLoadedOnce: true),
       );
 
-      expect(find.text('yardım gerekiyor'), findsOneWidget);
+      expect(find.text('yardım'), findsOneWidget);
       expect(find.text('suya ihtiyacı var'), findsNothing);
       // the three-stat header's own "su" label is unrelated to the legacy
       // category and legitimately renders (issue #121) — only the leaked
@@ -619,7 +625,7 @@ void main() {
         ),
       );
 
-      expect(find.text('yardım gerekiyor'), findsOneWidget);
+      expect(find.text('yardım'), findsOneWidget);
       expect(find.text('su verildi'), findsOneWidget);
       expect(
         find.text('su bıraktım ama akşam biri daha bakabilir mi?'),
@@ -2163,5 +2169,123 @@ void main() {
         reason: 'missing memCacheWidth on ${image.imageUrl}',
       );
     }
+  });
+}
+
+// issue #287: the cat's own face carries the help mark, so arriving here
+// from a tapped help pin reads as one continuous thing.
+void _helpRingTests() {
+  CatDetail detailWithHelp() {
+    final now = DateTime.now();
+    return CatDetail(
+      id: _catId,
+      name: 'boncuk',
+      lat: 41.0256,
+      lng: 28.9744,
+      areaLabel: null,
+      primaryPhoto: null,
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastUpdateAt: null,
+      activeAlert: ActiveAlert(
+        createdAt: now.subtract(const Duration(hours: 2)),
+        expiresAt: now.add(const Duration(hours: 70)),
+      ),
+    );
+  }
+
+  Future<void> pump(
+    WidgetTester tester,
+    CatDetail detail, {
+    bool reducedMotion = false,
+  }) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          catDetailProvider(_catId).overrideWith(
+            () => _FixedCatDetailNotifier(
+              _catId,
+              CatDetailState(
+                detail: detail,
+                updates: const [],
+                hasLoadedOnce: true,
+              ),
+            ),
+          ),
+          sessionIdentityServiceProvider.overrideWithValue(
+            _GuestSessionIdentityService(),
+          ),
+          catDetailApiProvider.overrideWithValue(_FakeCatMediaApi(const [])),
+        ],
+        child: MediaQuery(
+          data: MediaQueryData(disableAnimations: reducedMotion),
+          child: const MaterialApp(home: CatDetailScreen(catId: _catId)),
+        ),
+      ),
+    );
+    await tester.pump();
+  }
+
+  /// The ring is a keyed CustomPaint layered over the profile photo; its
+  /// painter is handed new values every frame while the pulse runs.
+  CustomPainter? ringPainter(WidgetTester tester) {
+    final found = find.byKey(helpRingKey);
+    if (found.evaluate().isEmpty) return null;
+    return tester.widget<CustomPaint>(found).painter;
+  }
+
+  testWidgets('a cat needing help wears the mark on its own face', (
+    tester,
+  ) async {
+    await pump(tester, detailWithHelp());
+
+    expect(ringPainter(tester), isNotNull);
+  });
+
+  testWidgets('a cat that does not need help wears nothing', (tester) async {
+    await pump(tester, _detail);
+
+    expect(ringPainter(tester), isNull);
+  });
+
+  testWidgets('the mark pulses while the help is active', (tester) async {
+    await pump(tester, detailWithHelp());
+
+    final before = ringPainter(tester)!;
+    await tester.pump(const Duration(milliseconds: 700));
+    final after = ringPainter(tester)!;
+
+    expect(before.shouldRepaint(after), isTrue);
+  });
+
+  testWidgets('reduced motion holds it still rather than removing it', (
+    tester,
+  ) async {
+    await pump(tester, detailWithHelp(), reducedMotion: true);
+
+    final before = ringPainter(tester);
+    // Still drawn: the mark stays, only its travel goes.
+    expect(before, isNotNull);
+
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(before!.shouldRepaint(ringPainter(tester)!), isFalse);
+
+    // And it settles, so it never hangs a test that waits for the tree.
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('the state it marks is readable without it', (tester) async {
+    await pump(tester, detailWithHelp(), reducedMotion: true);
+
+    // The ring is decoration; the block below carries the state, when it
+    // was raised and when it ends, in text.
+    expect(find.text('yardım gerekiyor'), findsOneWidget);
+    expect(find.textContaining('sona eriyor'), findsOneWidget);
+  });
+
+  testWidgets('help expires, it is never resolved by hand', (tester) async {
+    await pump(tester, detailWithHelp(), reducedMotion: true);
+
+    expect(find.text('çözüldü'), findsNothing);
+    expect(find.text('hallettim'), findsNothing);
   });
 }

@@ -338,10 +338,17 @@ Future<void> _pump(
       child: MaterialApp.router(
         theme: AppTheme.light,
         routerConfig: router,
+        // Reduced motion for the whole harness: an active help mark puts a
+        // pulsing ring on the cat's profile photo (issue #287), and that
+        // repeats for as long as the mark is active — a continuous
+        // animation would hang every pumpAndSettle in this file. None of
+        // these tests are about motion; cat_detail_help_test.dart covers
+        // the ring on its own terms.
         builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          data: MediaQuery.of(context).copyWith(
+            textScaler: TextScaler.linear(textScale),
+            disableAnimations: true,
+          ),
           child: child!,
         ),
       ),
@@ -351,7 +358,7 @@ Future<void> _pump(
 }
 
 Future<void> _openComposer(WidgetTester tester) async {
-  await tester.tap(find.widgetWithText(ElevatedButton, '+ update'));
+  await tester.tap(find.bySemanticsLabel('update ekle'));
   await tester.pumpAndSettle();
 }
 
@@ -372,7 +379,7 @@ void main() {
   ) async {
     await _pump(tester, api: _FakeCatDetailApi());
 
-    expect(find.widgetWithText(ElevatedButton, '+ update'), findsOneWidget);
+    expect(find.bySemanticsLabel('update ekle'), findsOneWidget);
     expect(find.text('Gördüm'), findsNothing);
     expect(find.text('Güncelleme ekle'), findsNothing);
   });
@@ -627,7 +634,7 @@ void main() {
       // earlier implementation reset the draft in a post-mount microtask,
       // so this exact frame used to still render the previous open's
       // picked photo before that reset landed on the next frame.
-      await tester.tap(find.widgetWithText(ElevatedButton, '+ update'));
+      await tester.tap(find.bySemanticsLabel('update ekle'));
       await tester.pump();
 
       expect(find.byKey(const Key('removePhotoButton')), findsNothing);
@@ -734,16 +741,18 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
+      final semantics = tester.ensureSemantics();
       expect(
         tester
-            .widget<ElevatedButton>(
-              find.widgetWithText(ElevatedButton, '+ update'),
-            )
-            .onPressed,
-        isNull,
+            .getSemantics(find.bySemanticsLabel('update ekle'))
+            .flagsCollection
+            .isEnabled
+            .toBoolOrNull(),
+        isFalse,
       );
+      semantics.dispose();
       await tester.tap(
-        find.widgetWithText(ElevatedButton, '+ update'),
+        find.bySemanticsLabel('update ekle'),
         warnIfMissed: false,
       );
       await tester.pump();
@@ -970,9 +979,7 @@ void main() {
       'target', (tester) async {
     await _pump(tester, api: _FakeCatDetailApi());
 
-    final ctaSize = tester.getSize(
-      find.widgetWithText(ElevatedButton, '+ update'),
-    );
+    final ctaSize = tester.getSize(find.bySemanticsLabel('update ekle'));
     expect(ctaSize.height, greaterThanOrEqualTo(kTapMin));
 
     await _openComposer(tester);
@@ -991,7 +998,7 @@ void main() {
     (tester) async {
       await _pump(tester, api: _FakeCatDetailApi(), textScale: 2.0);
 
-      expect(find.widgetWithText(ElevatedButton, '+ update'), findsOneWidget);
+      expect(find.bySemanticsLabel('update ekle'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -1175,10 +1182,10 @@ void main() {
         // sheet closed, success feedback shown, one event on the timeline.
         expect(find.byType(CatUpdateSheet), findsNothing);
         expect(find.text('Güncelleme paylaşıldı'), findsOneWidget);
-        expect(find.text('yardım gerekiyor'), findsOneWidget);
+        expect(find.text('yardım'), findsOneWidget);
         // the active state now renders on the profile, note included.
-        expect(find.text('Yardıma ihtiyacı var'), findsOneWidget);
-        expect(find.text('kabı bomboştu'), findsWidgets);
+        expect(find.text('yardım gerekiyor'), findsOneWidget);
+        expect(find.textContaining('kabı bomboştu'), findsWidgets);
       },
     );
 
@@ -1207,7 +1214,7 @@ void main() {
         expect(api.createUpdateCalls, 1);
         expect(api.lastStatuses, ['water_provided']);
         expect(api.lastNeedsHelp, isTrue);
-        expect(find.text('yardım gerekiyor'), findsOneWidget);
+        expect(find.text('yardım'), findsOneWidget);
         expect(find.text('su verildi'), findsOneWidget);
       },
     );
@@ -1419,7 +1426,7 @@ void main() {
         sessionIdentityService: _FakeSessionIdentityService(),
       );
 
-      await tester.tap(find.widgetWithText(ElevatedButton, '+ update'));
+      await tester.tap(find.bySemanticsLabel('update ekle'));
       await tester.pumpAndSettle();
 
       expect(find.text('Güncelleme paylaşmak için giriş yap'), findsOneWidget);
@@ -1443,7 +1450,7 @@ void main() {
         sessionIdentityService: _FakeSessionIdentityService(),
       );
 
-      await tester.tap(find.widgetWithText(ElevatedButton, '+ update'));
+      await tester.tap(find.bySemanticsLabel('update ekle'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Vazgeç'));
       await tester.pumpAndSettle();
@@ -1472,7 +1479,7 @@ void main() {
         authApi: authApi,
       );
 
-      await tester.tap(find.widgetWithText(ElevatedButton, '+ update'));
+      await tester.tap(find.bySemanticsLabel('update ekle'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Giriş yap'));
       await tester.pumpAndSettle();
