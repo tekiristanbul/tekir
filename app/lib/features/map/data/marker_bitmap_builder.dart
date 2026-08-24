@@ -7,70 +7,155 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../../core/theme/app_theme.dart';
+import 'marker_tier.dart';
 
-/// google_maps_flutter markers are images, not arbitrary widgets (unlike
-/// flutter_map), so a cat's photo has to be fetched, cropped into a circle,
-/// and encoded into a [BitmapDescriptor] here. Results are cached per cat,
-/// since the marker set is rebuilt on every fetched cat-list change, not
-/// just once per cat.
+/// google_maps_flutter markers are images, not arbitrary widgets, so every
+/// mark on this map — a cat at each of its three resolutions, and the
+/// bubble standing in for a group of them — is drawn here and encoded into
+/// a [BitmapDescriptor].
 ///
-/// Cluster bubbles are NOT built here, and cannot be: google_maps_flutter's
-/// [ClusterManager] exposes only `clusterManagerId` and `onClusterTap`, so
-/// the bubble is drawn by the native sdk in its own blue. Matching them to
-/// this palette would mean dropping native clustering for a hand-rolled
-/// one — a real change to how the map scales, not a paint job.
+/// Clustering is ours since issue #285. The sdk's own [ClusterManager]
+/// exposes only `clusterManagerId` and `onClusterTap`; the bubble it draws
+/// is native, in its own blue and its own type, and cannot be restyled.
+/// A cluster is therefore just another marker with a bitmap this class
+/// renders, which costs nothing extra and puts the whole map in one visual
+/// language.
+///
+/// Caching matters more than it looks. Every mark is rebuilt whenever the
+/// cat list, the selection or the camera's tier changes, so an uncached
+/// render would redraw a screenful of bitmaps on every settle. Photos are
+/// cached separately from pins, so selecting a cat re-renders one pin
+/// without re-fetching its photo; silhouettes, dots and cluster bubbles
+/// carry no per-cat content at all and are cached once per variant.
 class MarkerBitmapBuilder {
   MarkerBitmapBuilder({Dio? photoClient}) : _photoClient = photoClient ?? Dio();
 
-  // 66pt: the prototype's 44pt was too small to recognise a cat at a glance,
-  // 88pt overlapped its neighbours too readily, and this is the size the
-  // product owner settled on between the two.
-  static const _displaySize = 66.0;
-  // Keeps the prototype's proportion between base and selected (56 vs 40),
-  // so a selected pin still reads as about a third larger.
-  static const _selectedDisplaySize = 87.0;
-  // Was 3.0 to stay crisp on high-dpi screens. At twice the display size the
-  // bitmap is already 176pt across, so 2.0 renders at 176px * 2 = 352px —
-  // still above any current device's pixel density for this size, and it
-  // keeps a screenful of pins from costing four times the memory the 44pt
-  // ones did (each pin is width * height * 4 bytes, held per cat).
+  /// The approved design's avatar marker: 54pt with a 2.5pt paper contour.
+  static const _avatarSize = 54.0;
+  static const _avatarRing = 2.5;
+
+  /// Keeps the shipped proportion between a resting and a selected pin, so
+  /// a selected cat still reads as about a third larger.
+  static const _selectedAvatarSize = 70.0;
+
+  /// The approved design's other two resolutions.
+  static const _silhouetteSize = 30.0;
+  static const _dotSize = 10.0;
+
+  /// Every bitmap is laid out on a canvas at least this wide, with the
+  /// visible mark centred inside it. A marker's tap target is its image, so
+  /// a 10pt dot drawn on a 10pt canvas would be a 10pt tap target — an
+  /// unhittable one. The transparent margin is what keeps every resolution
+  /// at the product's 44pt minimum.
+  static const _minCanvas = kTapMin;
+
+  static const _clusterSize = 46.0;
+
+  /// Was 3.0 to stay crisp on high-dpi screens; 2.0 still renders above any
+  /// current device's pixel density at these sizes and keeps a screenful of
+  /// marks from costing four times the memory.
   static const _renderScale = 2.0;
 
   final Dio _photoClient;
   final _pinCache = <String, Future<BitmapDescriptor>>{};
-  // decoded photo bytes are cached independently of the rendered pin, so
-  // selecting/deselecting a marker (which re-renders the pin at a different
-  // size/ring) never re-fetches the same photo over the network.
   final _photoCache = <String, Future<ui.Image?>>{};
 
+  /// Urls whose image is decoded and in hand. Distinct from [_photoCache],
+  /// which holds pending work too — this is what [hasPhoto] answers from
+  /// without awaiting anything.
+  final _settledPhotos = <String>{};
+
+  /// One cat, at [tier].
+  ///
+  /// [photoUrl] is ignored for anything but [MarkerTier.avatar] — the
+  /// approved design is explicit that no photo request is issued for a cat
+  /// drawn as a dot, and the same holds for a silhouette. The caller is
+  /// still free to pass the url; not fetching it is decided here, in one
+  /// place, rather than at every call site.
   Future<BitmapDescriptor> pin({
     required String cacheKey,
     required String photoUrl,
     required bool needsHelp,
+    required MarkerTier tier,
     bool selected = false,
   }) {
+    // A silhouette and a dot carry nothing of the individual cat, so every
+    // cat at that tier shares one bitmap and one cache entry.
+    final key = switch (tier) {
+      MarkerTier.avatar => 'avatar:$cacheKey:$needsHelp:$selected',
+      MarkerTier.silhouette => 'silhouette:$needsHelp:$selected',
+      MarkerTier.dot => 'dot:$needsHelp:$selected',
+    };
     return _pinCache.putIfAbsent(
-      '$cacheKey:$needsHelp:$selected',
-      () => _renderPin(
-        photoUrl: photoUrl,
-        needsHelp: needsHelp,
-        selected: selected,
-      ),
+      key,
+      () => switch (tier) {
+        MarkerTier.avatar => _renderAvatar(
+          photoUrl: photoUrl,
+          needsHelp: needsHelp,
+          selected: selected,
+        ),
+        MarkerTier.silhouette => _renderSilhouette(needsHelp: needsHelp),
+        MarkerTier.dot => _renderDot(needsHelp: needsHelp),
+      },
     );
   }
 
-  Future<BitmapDescriptor> _renderPin({
+  /// The bubble standing in for a group of cats.
+  ///
+  /// Cached per (count, help) pair rather than per group: two groups of
+  /// four look the same, and a screenful of clusters costs a handful of
+  /// bitmaps rather than one each.
+  Future<BitmapDescriptor> cluster({
+    required int count,
+    required bool containsHelp,
+  }) {
+    return _pinCache.putIfAbsent(
+      'cluster:$count:$containsHelp',
+      () => _renderCluster(count: count, containsHelp: containsHelp),
+    );
+  }
+
+  /// Whether [photoUrl] has already been fetched and decoded.
+  ///
+  /// Synchronous on purpose: the screen has to decide, while building this
+  /// frame's marker set, whether a cat can be drawn as its own face yet or
+  /// has to stand in as a silhouette until the photo lands. An answer that
+  /// only arrived in a future would be an answer for the next frame.
+  ///
+  /// A url that failed to fetch never settles: the cat keeps its silhouette
+  /// rather than flickering to an empty face.
+  bool hasPhoto(String photoUrl) =>
+      photoUrl.isEmpty || _settledPhotos.contains(photoUrl);
+
+  /// Fetches and decodes [photoUrl] without rendering anything, completing
+  /// with true when the cat can now be drawn as its own face.
+  ///
+  /// The approved design draws a cat whose avatar has not arrived as a
+  /// silhouette and fades the face in when it does — no spinner. The screen
+  /// asks for the photo through this and rebuilds when it settles.
+  Future<bool> warmPhoto(String photoUrl) async {
+    if (photoUrl.isEmpty) return false;
+    if (_settledPhotos.contains(photoUrl)) return false;
+    final image = await _decodePhoto(photoUrl);
+    if (image == null) return false;
+    return _settledPhotos.add(photoUrl);
+  }
+
+  Future<BitmapDescriptor> _renderAvatar({
     required String photoUrl,
     required bool needsHelp,
     required bool selected,
   }) async {
-    final displaySize = selected ? _selectedDisplaySize : _displaySize;
-    final px = (displaySize * _renderScale).round();
+    final displaySize = selected ? _selectedAvatarSize : _avatarSize;
+    final canvasSize = displaySize;
+    final px = (canvasSize * _renderScale).round();
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     final center = Offset(px / 2, px / 2);
-    final ringWidth = (needsHelp ? 4.0 : (selected ? 3.0 : 2.0)) * _renderScale;
-    final radius = px / 2 - ringWidth;
+    final ringWidth = _avatarRing * _renderScale;
+    // The help mark's badge sits half outside the face, so the face itself
+    // gives up a little room rather than the badge being clipped.
+    final radius = px / 2 - ringWidth - (needsHelp ? 3 * _renderScale : 0);
 
     final image = await _decodePhoto(photoUrl);
     canvas.save();
@@ -85,34 +170,191 @@ class MarkerBitmapBuilder {
         fit: BoxFit.cover,
       );
     } else {
-      canvas.drawCircle(center, radius, Paint()..color = AppColors.surface);
-      _drawGlyph(canvas, center, Icons.pets, radius);
+      canvas.drawCircle(center, radius, Paint()..color = AppColors.surfaceAlt);
+      _drawGlyph(canvas, center, Icons.pets, radius * 0.9, AppColors.faint);
     }
     canvas.restore();
 
+    // The paper contour is the design's own: the face is cut out of the
+    // map, not stuck on top of it.
     canvas.drawCircle(
       center,
       radius,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = ringWidth
-        ..color = needsHelp
-            ? AppColors.help
-            : (selected ? AppColors.primaryStrong : AppColors.primary),
+        ..color = AppColors.bgElevated,
     );
+    if (needsHelp) {
+      canvas.drawCircle(
+        center,
+        radius + ringWidth,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2 * _renderScale
+          ..color = AppColors.help,
+      );
+      _drawHelpBadge(canvas, center, radius + ringWidth);
+    } else if (selected) {
+      canvas.drawCircle(
+        center,
+        radius + ringWidth,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2 * _renderScale
+          ..color = AppColors.primaryStrong,
+      );
+    }
 
-    return _finish(recorder, px, displaySize);
+    return _finish(recorder, px, canvasSize);
   }
 
-  void _drawGlyph(Canvas canvas, Offset center, IconData icon, double radius) {
+  Future<BitmapDescriptor> _renderSilhouette({required bool needsHelp}) async {
+    const canvasSize = _minCanvas;
+    final px = (canvasSize * _renderScale).round();
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final center = Offset(px / 2, px / 2);
+    final radius = _silhouetteSize / 2 * _renderScale;
+
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()..color = needsHelp ? AppColors.helpSoft : AppColors.surfaceAlt,
+    );
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2 * _renderScale
+        ..color = needsHelp ? AppColors.help : AppColors.bgElevated,
+    );
+    _drawGlyph(
+      canvas,
+      center,
+      Icons.pets,
+      radius,
+      needsHelp ? AppColors.helpStrong : AppColors.faint,
+    );
+    if (needsHelp) _drawHelpBadge(canvas, center, radius);
+
+    return _finish(recorder, px, canvasSize);
+  }
+
+  Future<BitmapDescriptor> _renderDot({required bool needsHelp}) async {
+    const canvasSize = _minCanvas;
+    final px = (canvasSize * _renderScale).round();
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final center = Offset(px / 2, px / 2);
+    final radius = _dotSize / 2 * _renderScale;
+
+    // A paper halo under the dot, so it stays legible over a dark road or
+    // a park rather than depending on the basemap being pale.
+    canvas.drawCircle(
+      center,
+      radius + 2.5 * _renderScale,
+      Paint()..color = AppColors.bgElevated.withValues(alpha: 0.95),
+    );
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()..color = needsHelp ? AppColors.help : AppColors.primary,
+    );
+
+    return _finish(recorder, px, canvasSize);
+  }
+
+  Future<BitmapDescriptor> _renderCluster({
+    required int count,
+    required bool containsHelp,
+  }) async {
+    const canvasSize = _clusterSize;
+    final px = (canvasSize * _renderScale).round();
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final center = Offset(px / 2, px / 2);
+    final radius = px / 2 - 3 * _renderScale;
+
+    canvas.drawCircle(center, radius, Paint()..color = AppColors.bgElevated);
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5 * _renderScale
+        // A group holding a cat that needs help says so, so a help mark is
+        // never hidden by the grouping that happens to be in front of it.
+        ..color = containsHelp ? AppColors.help : AppColors.primary,
+    );
+
+    final painter = TextPainter(textDirection: TextDirection.ltr)
+      ..text = TextSpan(
+        text: '$count',
+        style: TextStyle(
+          fontFamily: 'Work Sans',
+          fontSize: 15 * _renderScale,
+          fontWeight: FontWeight.w800,
+          color: containsHelp ? AppColors.helpStrong : AppColors.ink,
+        ),
+      )
+      ..layout();
+    painter.paint(
+      canvas,
+      center - Offset(painter.width / 2, painter.height / 2),
+    );
+    if (containsHelp) _drawHelpBadge(canvas, center, radius);
+
+    return _finish(recorder, px, canvasSize);
+  }
+
+  /// The mark that keeps "needs help" off colour alone: a filled disc with
+  /// an exclamation, pinned to the upper right of whatever it annotates.
+  void _drawHelpBadge(Canvas canvas, Offset center, double radius) {
+    final diagonal = radius * 0.7071;
+    final badgeCenter = center + Offset(diagonal, -diagonal);
+    final badgeRadius = 6.5 * _renderScale;
+    canvas.drawCircle(
+      badgeCenter,
+      badgeRadius + 1.5 * _renderScale,
+      Paint()..color = AppColors.bgElevated,
+    );
+    canvas.drawCircle(
+      badgeCenter,
+      badgeRadius,
+      Paint()..color = AppColors.help,
+    );
+
+    final stroke = Paint()
+      ..color = AppColors.helpInk
+      ..strokeWidth = 1.8 * _renderScale
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      badgeCenter + Offset(0, -badgeRadius * 0.45),
+      badgeCenter + Offset(0, badgeRadius * 0.12),
+      stroke,
+    );
+    canvas.drawPoints(ui.PointMode.points, [
+      badgeCenter + Offset(0, badgeRadius * 0.48),
+    ], stroke);
+  }
+
+  void _drawGlyph(
+    Canvas canvas,
+    Offset center,
+    IconData icon,
+    double size,
+    Color color,
+  ) {
     final painter = TextPainter(textDirection: TextDirection.ltr)
       ..text = TextSpan(
         text: String.fromCharCode(icon.codePoint),
         style: TextStyle(
-          fontSize: radius,
+          fontSize: size,
           fontFamily: icon.fontFamily,
           package: icon.fontPackage,
-          color: AppColors.line,
+          color: color,
         ),
       )
       ..layout();

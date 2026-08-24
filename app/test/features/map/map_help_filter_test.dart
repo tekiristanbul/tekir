@@ -35,6 +35,14 @@ const _healthyCat = CatMarker(
   lng: 28.97440,
 );
 
+// Reduced motion is on for the whole harness. Selecting a cat mounts the
+// selection halo (selection_halo.dart), whose ring turns and pulses for as
+// long as the selection lasts — a continuous animation that would hang
+// every pumpAndSettle below, exactly like state 07's sonar pulse already
+// does. Under reduced motion the halo holds still, which is its own
+// contract and costs these tests nothing: none of them are about motion.
+// selection_halo_test.dart covers the animated case on its own terms.
+
 // One cat needing help is loaded, because the help strip states a count and
 // is absent at zero (issue #284) — an affordance for filtering to nothing
 // is not an affordance. Selection is still driven directly rather than by a
@@ -55,7 +63,10 @@ Widget _harness() {
       ),
       catsMapProvider.overrideWith(_EmptyCatsMapNotifier.new),
     ],
-    child: const MaterialApp(home: MapScreen()),
+    child: const MediaQuery(
+      data: MediaQueryData(disableAnimations: true),
+      child: MaterialApp(home: MapScreen()),
+    ),
   );
 }
 

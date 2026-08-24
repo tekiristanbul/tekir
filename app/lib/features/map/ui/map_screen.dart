@@ -10,6 +10,7 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 import '../../../core/analytics/analytics.dart';
 import '../../../core/geo/istanbul_bounds.dart';
 import '../../../core/motion/press_response.dart';
+import '../../../core/motion/tekir_motion.dart';
 import '../../../core/motion/tekir_haptics.dart';
 import '../../../core/states/fallback_location_note.dart';
 import '../../../core/states/initial_read_gate.dart';
@@ -25,27 +26,41 @@ import '../data/location_service.dart';
 import '../data/map_style.dart';
 import '../data/marker_layout.dart';
 import '../data/marker_bitmap_builder.dart';
+import '../data/marker_tier.dart';
+import '../data/web_mercator.dart';
 import 'cat_preview_sheet.dart';
 import 'cats_map_notifier.dart';
+import 'selection_halo.dart';
 import 'map_states.dart';
 
 /// istanbul street-level: about 2-3 streets, per docs/product/map.md.
 const _initialZoom = 17.0;
 const _debounceDuration = Duration(milliseconds: 400);
 
-// how far a single cluster tap zooms in. fitting the camera to the
-// cluster's own bounds (CameraUpdate.newLatLngBounds) sounds more
-// "precise", but for a tight cluster (markers a few meters apart, like
-// the seeded galata group) the bounds-fit zoom can come out *lower* than
-// the current zoom — the tap would then not zoom in at all, and the
-// cluster would never split. a fixed step guarantees forward progress on
-// every tap, splitting any cluster within a couple of taps.
-const _clusterTapZoomStep = 2.0;
+// How long a cat's face takes to fade in over the silhouette that stood in
+// for it (approved design, `marker · LOD`: a late avatar cross-fades in
+// over 200 ms, with no spinner). Only marker alpha moves for this.
+const _photoFadeDuration = Duration(milliseconds: 200);
 
-// clustering itself is native (google_maps_flutter's own ClusterManager,
-// which wraps Google's official @googlemaps/markerclusterer on web) — every
-// cat marker just tags itself with this id and the sdk groups them.
-const _catsClusterManagerId = ClusterManagerId('cats');
+// The approved design's selection move: the camera brings the cat to rest
+// over this long, decelerating. The sheet's own height is handed to
+// GoogleMap.padding while a cat is selected, so "centred" means centred in
+// the band above the sheet rather than behind it.
+const _selectionCameraDuration = Duration(milliseconds: 600);
+
+// The band the preview sheet covers, as a fraction of the screen. The
+// sheet's real height is not known until it lays out, and the camera has to
+// move before that; this is what it occupies at the content sizes it can
+// reach.
+const _sheetHeightFraction = 1 / 3;
+
+// Radius of the selected cat's halo, in logical pixels — comfortably
+// outside the selected avatar marker it surrounds.
+const _selectionHaloRadius = 43.0;
+
+// What an unselected marker fades to while another cat is selected
+// (approved design, artboard 02).
+const _unselectedMarkerAlpha = 0.32;
 
 // The approved design's bottom measurements (artboard 01 / spec block):
 // the add-cat pill sits 44 px above the screen bottom and the locate button
@@ -87,12 +102,39 @@ class MapScreen extends ConsumerStatefulWidget {
 }
 
 class _MapScreenState extends ConsumerState<MapScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   GoogleMapController? _controller;
   Timer? _debounce;
   Set<Marker> _markers = {};
   int _markerBuildGeneration = 0;
   bool _atMinZoom = false;
+
+  /// The camera the map is currently showing. Seeded when the map is
+  /// created, because no camera event fires for a map nobody has touched,
+  /// and updated on every frame of every movement after that — the halo is
+  /// projected from it, so it has to be current, not settled.
+  CameraPosition? _camera;
+
+  /// The viewport the halo is projected into.
+  Size _mapSize = Size.zero;
+
+  /// Zoom the marker set was last resolved at. Resolution changes on
+  /// settle, not per frame: rebuilding a screenful of bitmaps on every step
+  /// of a pinch is exactly the cost this map has always avoided.
+  double _resolvedZoom = _initialZoom;
+
+  /// Cats whose face has just arrived and is fading in over their
+  /// silhouette, and the controller driving it. Only marker alpha moves —
+  /// no bitmap is re-rendered for a frame of this.
+  final _fadingIn = <String>{};
+  late final AnimationController _photoFade = AnimationController(
+    vsync: this,
+    duration: _photoFadeDuration,
+  );
+
+  /// Photo urls already asked for, so a rebuild does not re-request one
+  /// that is still in flight.
+  final _requestedPhotos = <String>{};
 
   // prototype/app.js's `mapHelpFilter` (map.js's renderLeafletMarkers):
   // hides every non-alerted marker instead of navigating or refetching —
@@ -114,6 +156,19 @@ class _MapScreenState extends ConsumerState<MapScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _photoFade.addListener(_onPhotoFadeTick);
+    _photoFade.addStatusListener(_onPhotoFadeStatus);
+  }
+
+  void _onPhotoFadeTick() {
+    if (mounted) setState(() {});
+  }
+
+  void _onPhotoFadeStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    if (_fadingIn.isEmpty) return;
+    _fadingIn.clear();
+    unawaited(_rebuildFromState());
   }
 
   @override
@@ -121,6 +176,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     WidgetsBinding.instance.removeObserver(this);
     _debounce?.cancel();
     _heroFlightClearanceTimer?.cancel();
+    _photoFade.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -137,17 +193,39 @@ class _MapScreenState extends ConsumerState<MapScreen>
     }
   }
 
-  // rebuilds the marker set (fetching/decoding each cat's photo into a
-  // BitmapDescriptor) whenever the fetched cat list or the selected marker
-  // changes — selection re-renders that one pin larger/ringed (prototype's
-  // .marker.is-selected). guarded by a generation counter so a slow rebuild
-  // from stale inputs can't clobber a newer one that finished first.
+  /// Rebuilds the whole marker set from the current cats, selection and
+  /// camera.
+  ///
+  /// Three decisions happen here, in order, because each depends on the one
+  /// before it: which cats are visible at all, which of them are grouped
+  /// into a cluster, and at what resolution the rest are drawn. Guarded by
+  /// a generation counter so a slow rebuild from stale inputs cannot
+  /// clobber a newer one that finished first.
+  ///
+  /// This runs on a camera settle, never on a camera frame — a bitmap
+  /// rebuild and a marker-set diff on every step of a pinch is the cost the
+  /// map exists to avoid.
   Future<void> _rebuildMarkers(List<CatMarker> cats, String? selectedId) async {
     final generation = ++_markerBuildGeneration;
     final bitmaps = ref.read(markerBitmapBuilderProvider);
+    final camera = _camera;
+    final zoom = _resolvedZoom;
     final visibleCats = _helpFilterOn
         ? cats.where((cat) => cat.needsHelp).toList()
         : cats;
+
+    final grouped = clusterCats(
+      cats: visibleCats,
+      zoom: zoom,
+      selectedId: selectedId,
+    );
+    final tiers = resolveTiers(
+      cats: grouped.loose,
+      zoom: zoom,
+      cameraLat: camera?.target.latitude ?? istanbulFallback.latitude,
+      cameraLng: camera?.target.longitude ?? istanbulFallback.longitude,
+      selectedId: selectedId,
+    );
 
     // Cats recorded at the same doorway end up on the same coordinate, and
     // identical positions make the one drawn last the only one that can be
@@ -156,53 +234,208 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // target. It is display only — nothing is written back, and the offset
     // is derived from the cat's own id, so a pin lands in the same place on
     // every rebuild instead of jumping between renders.
-    final positions = fanOutCoincident(visibleCats);
+    final positions = fanOutCoincident(grouped.loose);
+    final dimUnselected = selectedId != null;
+    final fadeValue = _photoFade.value;
 
-    final markers = await Future.wait(
-      visibleCats.map((cat) async {
-        final selected = cat.id == selectedId;
-        final icon = await bitmaps.pin(
-          cacheKey: cat.id,
-          photoUrl: cat.primaryPhoto,
-          needsHelp: cat.needsHelp,
-          selected: selected,
-        );
-        return Marker(
-          markerId: MarkerId(cat.id),
+    final built = await Future.wait([
+      for (final cluster in grouped.clusters)
+        _buildClusterMarker(bitmaps, cluster, dimUnselected),
+      for (final cat in grouped.loose)
+        _buildCatMarkers(
+          bitmaps: bitmaps,
+          cat: cat,
+          tier: tiers[cat.id] ?? MarkerTier.dot,
           position: positions[cat.id] ?? LatLng(cat.lat, cat.lng),
-          icon: icon,
-          clusterManagerId: _catsClusterManagerId,
-          // The selected pin is always on top; everything else stacks by
-          // latitude, southern pins over northern ones, which is what a map
-          // reader expects and — more to the point — is stable, so the same
-          // cat does not win the overlap one rebuild and lose it the next.
-          zIndexInt: selected ? selectedMarkerZIndex : latitudeZIndex(cat.lat),
-          onTap: () => _onCatSelected(cat),
-        );
-      }),
-    );
+          selected: cat.id == selectedId,
+          dimUnselected: dimUnselected,
+          fadeValue: fadeValue,
+        ),
+    ]);
 
     if (generation != _markerBuildGeneration || !mounted) return;
-    setState(() => _markers = markers.toSet());
+    setState(() => _markers = built.expand((m) => m).toSet());
   }
 
-  Future<void> _onClusterTap(Cluster cluster) async {
+  /// Rebuilds from whatever the provider currently holds — the shape every
+  /// caller that is reacting to something other than a provider change
+  /// (a camera settle, a photo landing) needs.
+  Future<void> _rebuildFromState() {
+    final state = ref.read(catsMapProvider);
+    return _rebuildMarkers(state.markers, state.selectedMarker?.id);
+  }
+
+  Future<List<Marker>> _buildClusterMarker(
+    MarkerBitmapBuilder bitmaps,
+    CatCluster cluster,
+    bool dimUnselected,
+  ) async {
+    final icon = await bitmaps.cluster(
+      count: cluster.count,
+      containsHelp: cluster.containsHelp,
+    );
+    return [
+      Marker(
+        markerId: MarkerId(cluster.id),
+        position: LatLng(cluster.lat, cluster.lng),
+        icon: icon,
+        alpha: dimUnselected ? _unselectedMarkerAlpha : 1.0,
+        zIndexInt: latitudeZIndex(cluster.lat),
+        onTap: () => unawaited(_onClusterTap(cluster)),
+      ),
+    ];
+  }
+
+  /// One cat's markers — two of them, briefly, while its face fades in over
+  /// the silhouette that stood in for it.
+  Future<List<Marker>> _buildCatMarkers({
+    required MarkerBitmapBuilder bitmaps,
+    required CatMarker cat,
+    required MarkerTier tier,
+    required LatLng position,
+    required bool selected,
+    required bool dimUnselected,
+    required double fadeValue,
+  }) async {
+    // A cat that should be a face but whose photo has not landed is drawn
+    // as a silhouette, and the photo is asked for. No spinner: the mark is
+    // already the right shape in the right place, it just does not know
+    // whose face it is yet.
+    final wantsPhoto = tier == MarkerTier.avatar && cat.primaryPhoto.isNotEmpty;
+    if (wantsPhoto && !bitmaps.hasPhoto(cat.primaryPhoto)) {
+      _requestPhoto(cat.primaryPhoto, cat.id);
+      final icon = await bitmaps.pin(
+        cacheKey: cat.id,
+        photoUrl: cat.primaryPhoto,
+        needsHelp: cat.needsHelp,
+        tier: MarkerTier.silhouette,
+        selected: selected,
+      );
+      return [
+        _marker(
+          id: cat.id,
+          cat: cat,
+          position: position,
+          icon: icon,
+          selected: selected,
+          alpha: _alphaFor(selected: selected, dimUnselected: dimUnselected),
+        ),
+      ];
+    }
+
+    final icon = await bitmaps.pin(
+      cacheKey: cat.id,
+      photoUrl: cat.primaryPhoto,
+      needsHelp: cat.needsHelp,
+      tier: tier,
+      selected: selected,
+    );
+    final base = _alphaFor(selected: selected, dimUnselected: dimUnselected);
+    if (!_fadingIn.contains(cat.id)) {
+      return [
+        _marker(
+          id: cat.id,
+          cat: cat,
+          position: position,
+          icon: icon,
+          selected: selected,
+          alpha: base,
+        ),
+      ];
+    }
+
+    // The cross-fade: the outgoing silhouette and the incoming face are
+    // both real markers at the same point, and only their alpha moves. No
+    // bitmap is re-rendered for a frame of this, so the cost is a marker
+    // diff over the platform channel and nothing else.
+    final outgoing = await bitmaps.pin(
+      cacheKey: cat.id,
+      photoUrl: cat.primaryPhoto,
+      needsHelp: cat.needsHelp,
+      tier: MarkerTier.silhouette,
+      selected: selected,
+    );
+    return [
+      _marker(
+        id: '${cat.id}#outgoing',
+        cat: cat,
+        position: position,
+        icon: outgoing,
+        selected: selected,
+        alpha: base * (1 - fadeValue),
+      ),
+      _marker(
+        id: cat.id,
+        cat: cat,
+        position: position,
+        icon: icon,
+        selected: selected,
+        alpha: base * fadeValue,
+      ),
+    ];
+  }
+
+  double _alphaFor({required bool selected, required bool dimUnselected}) =>
+      (dimUnselected && !selected) ? _unselectedMarkerAlpha : 1.0;
+
+  Marker _marker({
+    required String id,
+    required CatMarker cat,
+    required LatLng position,
+    required BitmapDescriptor icon,
+    required bool selected,
+    required double alpha,
+  }) {
+    return Marker(
+      markerId: MarkerId(id),
+      position: position,
+      icon: icon,
+      alpha: alpha,
+      // The selected pin is always on top; everything else stacks by
+      // latitude, southern pins over northern ones, which is what a map
+      // reader expects and — more to the point — is stable, so the same cat
+      // does not win the overlap one rebuild and lose it the next.
+      zIndexInt: selected ? selectedMarkerZIndex : latitudeZIndex(cat.lat),
+      onTap: () => _onCatSelected(cat),
+    );
+  }
+
+  /// Asks for a cat's photo once, and fades its face in when it lands.
+  void _requestPhoto(String url, String catId) {
+    if (!_requestedPhotos.add(url)) return;
+    final bitmaps = ref.read(markerBitmapBuilderProvider);
+    unawaited(
+      bitmaps.warmPhoto(url).then((settled) {
+        if (!settled || !mounted) return;
+        // Reduced motion still swaps the face in — it is a value arriving,
+        // not travel — it simply does so without the fade.
+        if (TekirMotion.of(context).reduced) {
+          unawaited(_rebuildFromState());
+          return;
+        }
+        _fadingIn.add(catId);
+        unawaited(_rebuildFromState());
+        _photoFade.forward(from: 0);
+      }),
+    );
+  }
+
+  Future<void> _onClusterTap(CatCluster cluster) async {
     unawaited(TekirHaptics.acknowledge());
     final controller = _controller;
     if (controller == null) return;
     final currentZoom = await controller.getZoomLevel();
-    final targetZoom = math.min(
-      currentZoom + _clusterTapZoomStep,
-      istanbulMaxZoom,
-    );
     await controller.animateCamera(
-      CameraUpdate.newLatLngZoom(cluster.position, targetZoom),
+      CameraUpdate.newLatLngZoom(
+        LatLng(cluster.lat, cluster.lng),
+        zoomAfterClusterTap(currentZoom, istanbulMaxZoom),
+      ),
     );
   }
 
   // Selecting a marker highlights it and opens the preview sheet — it never
-  // navigates directly (prototype/app.js's selectCat -> openSheet). Only
-  // the sheet's "Detaya git" action opens the cat-detail route.
+  // navigates directly. Only the sheet's own action opens the cat-detail
+  // route.
   void _onCatSelected(CatMarker cat) {
     // Fired here, synchronously, rather than after the marker set is
     // rebuilt: the pin's own selected state is a re-rendered bitmap that
@@ -210,48 +443,33 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // acknowledges the tap.
     unawaited(TekirHaptics.acknowledge());
     ref.read(catsMapProvider.notifier).selectCat(cat);
-    unawaited(_liftSelectedPinClearOfSheet(cat));
+    unawaited(_centreSelected(cat));
   }
 
-  /// Slides the camera so the tapped pin sits above the preview sheet
-  /// rather than behind it.
+  /// Brings the selected cat to rest in the band above the sheet (approved
+  /// design, artboard 02).
   ///
-  /// The sheet covers roughly the bottom third of the screen, and a pin
-  /// tapped low — or near the right edge, where a pin can sit half off the
-  /// map — was then hidden by the surface describing it. Nothing marked the
-  /// connection between the two.
+  /// The shipped behaviour was a nudge — scroll the pin just far enough to
+  /// clear the sheet — chosen so the user's own framing of the
+  /// neighbourhood survived the tap. The approved design replaces that with
+  /// a real centring, and answers the objection differently: the sheet is
+  /// about this one cat, so the map should be too.
   ///
-  /// Deliberately a nudge, not a recentre: moving the pin to the middle of
-  /// the remaining space would throw away the user's own framing of the
-  /// neighbourhood, which is the thing they were reading when they tapped.
-  Future<void> _liftSelectedPinClearOfSheet(CatMarker cat) async {
+  /// "Centred" is centred in what is left of the map, not in the whole
+  /// widget. [GoogleMap.padding] carries the sheet's height while a cat is
+  /// selected, so the sdk's own idea of the centre already excludes the
+  /// covered band and `newLatLng` lands the cat above it without any
+  /// arithmetic here.
+  Future<void> _centreSelected(CatMarker cat) async {
     final controller = _controller;
     if (controller == null) return;
-    final size = MediaQuery.sizeOf(context);
-    // The sheet's own height is not known until it lays out, and this runs
-    // before it opens; a third of the screen is what it occupies at the
-    // content sizes this sheet can reach.
-    final sheetHeight = size.height / 3;
-    final screenPoint = await controller.getScreenCoordinate(
-      LatLng(cat.lat, cat.lng),
+    await controller.animateCamera(
+      CameraUpdate.newLatLng(LatLng(cat.lat, cat.lng)),
+      // Reduced motion arrives in the same frame: the camera still moves —
+      // the cat has to end up above the sheet either way — it just does not
+      // travel there.
+      duration: TekirMotion.of(context)(_selectionCameraDuration),
     );
-    if (!mounted) return;
-
-    final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
-    final pinY = screenPoint.y / devicePixelRatio;
-    final pinX = screenPoint.x / devicePixelRatio;
-    // The band the sheet will cover, plus the pin's own height so a pin
-    // resting exactly on the sheet's edge still clears it.
-    final safeBottom = size.height - sheetHeight - 48;
-    final dy = pinY > safeBottom ? pinY - safeBottom : 0.0;
-    // Horizontal only when the pin is genuinely near an edge.
-    const edgeMargin = 56.0;
-    final dx = pinX > size.width - edgeMargin
-        ? pinX - (size.width - edgeMargin)
-        : (pinX < edgeMargin ? pinX - edgeMargin : 0.0);
-    if (dy == 0 && dx == 0) return;
-
-    await controller.animateCamera(CameraUpdate.scrollBy(dx, dy));
   }
 
   void _toggleHelpFilter() {
@@ -347,13 +565,54 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // on every frame of a pan or fling gesture.
     _debounce?.cancel();
     _debounce = Timer(_debounceDuration, _fetchVisible);
+    // Resolution and grouping settle with the camera, for the same reason:
+    // both would otherwise redraw a screenful of bitmaps on every frame of
+    // a pinch.
+    unawaited(_resolveMarkersAtCurrentCamera());
+  }
+
+  Future<void> _resolveMarkersAtCurrentCamera() async {
+    final camera = _camera;
+    if (camera == null) return;
+    if (camera.zoom == _resolvedZoom) return;
+    _resolvedZoom = camera.zoom;
+    await _rebuildFromState();
   }
 
   void _onCameraMove(CameraPosition position) {
     // tracks whether "alanı genişlet" can still widen anything; the small
     // epsilon absorbs the sdk reporting e.g. 12.000001 at the floor.
     final atMin = position.zoom <= istanbulMinZoom + 0.01;
-    if (atMin != _atMinZoom) setState(() => _atMinZoom = atMin);
+    // The halo is projected from this camera, so it has to move with every
+    // frame rather than with the settle — a ring that lagged the map would
+    // read as belonging to the screen, not to the cat.
+    setState(() {
+      _camera = position;
+      if (atMin != _atMinZoom) _atMinZoom = atMin;
+    });
+  }
+
+  /// Where the selected cat sits on screen right now, or null when there is
+  /// no selection, no camera yet, or the cat has been panned out of view.
+  Offset? _selectedHaloCentre(CatMarker? selected) {
+    final camera = _camera;
+    if (selected == null || camera == null || _mapSize.isEmpty) return null;
+    final offset = screenOffsetOf(
+      LatLng(selected.lat, selected.lng),
+      cameraTarget: camera.target,
+      zoom: camera.zoom,
+      size: _mapSize,
+    );
+    // Off-screen by more than the halo's own reach: drawing it would pin a
+    // ring to an edge the cat is not at.
+    const slack = _selectionHaloRadius * 2;
+    if (offset.dx < -slack ||
+        offset.dy < -slack ||
+        offset.dx > _mapSize.width + slack ||
+        offset.dy > _mapSize.height + slack) {
+      return null;
+    }
+    return offset;
   }
 
   Future<void> _fetchVisible() async {
@@ -614,81 +873,111 @@ class _MapScreenState extends ConsumerState<MapScreen>
         !mapState.isLoading &&
         mapState.error == null &&
         mapState.markers.isEmpty;
+    final selected = mapState.selectedMarker;
+    final initialCamera = CameraPosition(
+      target: center,
+      // A fallback center is a fixed, hard-coded istanbul point, not a
+      // real location — the close walking-distance zoom would read as
+      // pointing at one specific place. Zooming out to the map's own
+      // widest allowed view instead shows "greater istanbul", per issue
+      // #235.
+      zoom: isFallback ? istanbulFallbackZoom : _initialZoom,
+    );
+    _camera ??= initialCamera;
+    final haloCentre = _selectedHaloCentre(selected);
 
-    return Stack(
-      children: [
-        GoogleMap(
-          initialCameraPosition: CameraPosition(
-            target: center,
-            // A fallback center is a fixed, hard-coded istanbul point, not
-            // a real location — the close walking-distance zoom would read
-            // as pointing at one specific place. Zooming out to the map's
-            // own widest allowed view instead shows "greater istanbul", per
-            // issue #235.
-            zoom: isFallback ? istanbulFallbackZoom : _initialZoom,
-          ),
-          style: catsOfIstanbulMapStyle,
-          cameraTargetBounds: CameraTargetBounds(istanbulBounds),
-          minMaxZoomPreference: const MinMaxZoomPreference(
-            istanbulMinZoom,
-            istanbulMaxZoom,
-          ),
-          myLocationButtonEnabled: false,
-          zoomControlsEnabled: false,
-          mapToolbarEnabled: false,
-          markers: _markers,
-          clusterManagers: {
-            ClusterManager(
-              clusterManagerId: _catsClusterManagerId,
-              onClusterTap: _onClusterTap,
-            ),
-          },
-          onMapCreated: _onMapCreated,
-          onCameraIdle: _onCameraIdle,
-          onCameraMove: _onCameraMove,
-        ),
-        if (isInitialRead)
-          // state 13 · harita yükleniyor. keyed on the attempt counter so
-          // a retry remounts the gate and earns a fresh 400 ms of silence.
-          _InitialReadOverlay(
-            key: ValueKey(mapState.attempt),
-            locationKnown: !isFallback,
-            onRetry: _retryVisible,
-          )
-        else ...[
-          if (mapState.isLoading) const _LoadingBar(),
-          if (mapState.error != null)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + AppSpacing.s3,
-              left: AppSpacing.s3,
-              right: AppSpacing.s3,
-              // on web, GoogleMap is a real platform view (an html
-              // element), not flutter-rendered pixels — widgets stacked
-              // above it need PointerInterceptor or their taps can fall
-              // through to the map underneath.
-              child: PointerInterceptor(
-                child: MapErrorBanner(onRetry: _retryVisible),
+    return LayoutBuilder(
+      builder: (context, box) {
+        // Recorded rather than read at projection time: the halo projects
+        // during a camera frame, which is not a layout pass.
+        if (box.biggest != _mapSize) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && box.biggest != _mapSize) {
+              setState(() => _mapSize = box.biggest);
+            }
+          });
+        }
+        return Stack(
+          children: [
+            GoogleMap(
+              initialCameraPosition: initialCamera,
+              style: catsOfIstanbulMapStyle,
+              cameraTargetBounds: CameraTargetBounds(istanbulBounds),
+              minMaxZoomPreference: const MinMaxZoomPreference(
+                istanbulMinZoom,
+                istanbulMaxZoom,
               ),
-            ),
-        ],
-        if (isEmptyRadius)
-          // state 07 · civarda kayıt yok. no user dot is drawn: a
-          // screen-center dot stops being the user's position the moment
-          // the camera pans, and nothing anchors it to the real
-          // coordinate yet.
-          Positioned(
-            left: AppSpacing.s4,
-            right: AppSpacing.s4,
-            bottom: _bottomChromeClearance(context),
-            child: PointerInterceptor(
-              child: EmptyRadiusCard(
-                searchRadiusMeters: mapState.searchRadiusMeters,
-                onAddCat: _addCat,
-                onWidenArea: _atMinZoom ? null : _widenArea,
+              myLocationButtonEnabled: false,
+              zoomControlsEnabled: false,
+              mapToolbarEnabled: false,
+              // The selected cat's halo is drawn in dart, over the map, and
+              // dart can only project a flat, north-up camera — the sdk
+              // exposes no perspective transform of its own. Neither
+              // gesture is part of the approved design's map either: it is
+              // a paper street map, not a 3d one.
+              rotateGesturesEnabled: false,
+              tiltGesturesEnabled: false,
+              // While a cat is selected the sheet covers the bottom band,
+              // so the sdk is told the map is that much shorter. Its own
+              // idea of "centre" then excludes the covered band, and
+              // centring on the cat puts it above the sheet rather than
+              // behind it.
+              padding: EdgeInsets.only(
+                bottom: selected == null
+                    ? 0
+                    : box.maxHeight * _sheetHeightFraction,
               ),
+              markers: _markers,
+              onMapCreated: _onMapCreated,
+              onCameraIdle: _onCameraIdle,
+              onCameraMove: _onCameraMove,
             ),
-          ),
-      ],
+            if (haloCentre != null)
+              SelectionHalo(center: haloCentre, radius: _selectionHaloRadius),
+            if (isInitialRead)
+              // state 13 · harita yükleniyor. keyed on the attempt counter so
+              // a retry remounts the gate and earns a fresh 400 ms of silence.
+              _InitialReadOverlay(
+                key: ValueKey(mapState.attempt),
+                locationKnown: !isFallback,
+                onRetry: _retryVisible,
+              )
+            else ...[
+              if (mapState.isLoading) const _LoadingBar(),
+              if (mapState.error != null)
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + AppSpacing.s3,
+                  left: AppSpacing.s3,
+                  right: AppSpacing.s3,
+                  // on web, GoogleMap is a real platform view (an html
+                  // element), not flutter-rendered pixels — widgets stacked
+                  // above it need PointerInterceptor or their taps can fall
+                  // through to the map underneath.
+                  child: PointerInterceptor(
+                    child: MapErrorBanner(onRetry: _retryVisible),
+                  ),
+                ),
+            ],
+            if (isEmptyRadius)
+              // state 07 · civarda kayıt yok. no user dot is drawn: a
+              // screen-center dot stops being the user's position the moment
+              // the camera pans, and nothing anchors it to the real
+              // coordinate yet.
+              Positioned(
+                left: AppSpacing.s4,
+                right: AppSpacing.s4,
+                bottom: _bottomChromeClearance(context),
+                child: PointerInterceptor(
+                  child: EmptyRadiusCard(
+                    searchRadiusMeters: mapState.searchRadiusMeters,
+                    onAddCat: _addCat,
+                    onWidenArea: _atMinZoom ? null : _widenArea,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

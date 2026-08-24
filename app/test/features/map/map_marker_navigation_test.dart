@@ -47,6 +47,14 @@ class _FixedCatDetailNotifier extends CatDetailNotifier {
   Future<void> load() async {}
 }
 
+// Reduced motion is on for the whole harness. Selecting a cat mounts the
+// selection halo (selection_halo.dart), whose ring turns and pulses for as
+// long as the selection lasts — a continuous animation that would hang
+// every pumpAndSettle below, exactly like state 07's sonar pulse already
+// does. Under reduced motion the halo holds still, which is its own
+// contract and costs these tests nothing: none of them are about motion.
+// selection_halo_test.dart covers the animated case on its own terms.
+
 // Idle pre-fetch state — hasLoadedOnce with zero markers would mount
 // state 07's empty-radius card (map_states.dart), whose sonar pulse
 // repeats forever and would hang every pumpAndSettle below.
@@ -115,7 +123,10 @@ Future<void> _pumpMap(WidgetTester tester) async {
           _GuestSessionIdentityService(),
         ),
       ],
-      child: MaterialApp.router(routerConfig: appRouter),
+      child: MediaQuery(
+        data: const MediaQueryData(disableAnimations: true),
+        child: MaterialApp.router(routerConfig: appRouter),
+      ),
     ),
   );
   await tester.pump();

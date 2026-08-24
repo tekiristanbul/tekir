@@ -12,7 +12,9 @@ define the role of the map in helping people find and help Istanbul street cats.
 - the map should mainly show cat photos and the map itself. it is the application, not one destination among several: since 0.5 (issue #284) there is no bottom navigation bar, and the map runs full height under a top strip holding search, notifications and the account. every other screen is pushed over it.
 - cat search, notifications and the account are reached from that strip; adding a cat and returning to the user's own position are the two actions anchored to the bottom of the map.
 - the map should stay simple and avoid unnecessary detail.
-- nearby cat markers are clustered. as the user zooms in, clusters separate into individual cats.
+- nearby cat markers are clustered. as the user zooms in, clusters separate into individual cats. since 0.5 (issue #285) the grouping and the bubble that stands for it are the product's own, drawn in tekir's palette and type — google's native cluster appearance is not configurable and was never tekir's.
+- how much of a cat a marker shows follows the zoom, not the cat (issue #285): at street zoom it is the cat's own face, a few steps out a photoless silhouette, and across the city a dot. a cat drawn as a dot never triggers a photo request, and at most twelve faces are on screen at once — beyond that the overflow drops to a silhouette rather than disappearing.
+- selecting a cat brings it to rest above the sheet describing it, marks it with a slow ring and a single pulse, and quiets every other marker. pulse is reserved for exactly two things — a cat needing help, and the selected cat — and nothing else in the product uses it.
 - tapping a cat opens a detail page showing identifying information, help needs, media, and updates.
 - map-level freshness information is compact and uses these mvp states:
   - `today`: the latest update is less than 24 hours old.
