@@ -8,15 +8,15 @@ import 'package:app/features/discover/data/discover_location_service.dart';
 import 'package:app/features/map/data/location_service.dart';
 import 'package:app/features/map/ui/cats_map_notifier.dart';
 import 'package:app/features/map/ui/map_screen.dart';
-import 'package:app/features/discover/ui/discover_screen.dart';
+import 'package:app/features/discover/ui/cat_search_panel.dart';
 import 'package:app/features/profile/ui/profile_screen.dart';
 import 'package:app/features/cat_detail/data/cat_detail.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_notifier.dart';
 import 'package:app/features/cat_detail/ui/cat_detail_screen.dart';
 
-// Discover's nearby tab resolves location and fetches on mount (issue #82);
-// these shell-navigation tests only care about the shell's own chrome, so a
-// permission-denied stub keeps them off the real Geolocator platform
+// The search panel's nearby chip resolves location and fetches on mount
+// (issue #82); these navigation tests only care about the map's own chrome,
+// so a permission-denied stub keeps them off the real Geolocator platform
 // channel and off a real network call entirely (resolve() failing
 // short-circuits before any fetch is ever attempted).
 class _DeniedDiscoverLocationService extends DiscoverLocationService {
@@ -114,60 +114,65 @@ Future<void> _pumpShell(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets(
-    'the bottom nav shows the 3 approved-prototype tabs plus the add-cat fab on the map',
-    (tester) async {
-      await _pumpShell(tester);
-
-      expect(find.byType(MapScreen), findsOneWidget);
-      expect(find.text('Harita'), findsOneWidget);
-      expect(find.text('Keşfet'), findsOneWidget);
-      expect(find.text('Profil'), findsOneWidget);
-      expect(find.byIcon(Icons.add), findsOneWidget);
-    },
-  );
-
-  testWidgets('tapping Keşfet switches to the discover tab, nav bar stays', (
+  testWidgets('the map fills the screen under a top strip, with no tab bar', (
     tester,
   ) async {
     await _pumpShell(tester);
 
-    await tester.tap(find.text('Keşfet'));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(DiscoverScreen), findsOneWidget);
-    expect(find.byType(MapScreen), findsNothing);
-    expect(find.text('Harita'), findsOneWidget);
-    expect(find.text('Profil'), findsOneWidget);
-    // add-cat fab is map-only — on other tabs it floated over content.
-    expect(find.byIcon(Icons.add), findsNothing);
+    expect(find.byType(MapScreen), findsOneWidget);
+    // The retired tab bar's three labels (issue #284).
+    expect(find.text('Harita'), findsNothing);
+    expect(find.text('Keşfet'), findsNothing);
+    expect(find.text('Profil'), findsNothing);
+    // The strip's three controls, plus the map's two bottom actions.
+    expect(find.bySemanticsLabel(RegExp('^kedi ara')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('^Bildirimler')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('^Hesabım')), findsOneWidget);
+    expect(find.bySemanticsLabel('Konumuma dön'), findsOneWidget);
+    expect(find.text('kedi ekle'), findsOneWidget);
   });
 
-  testWidgets('tapping Profil switches to the profile tab, nav bar stays', (
+  testWidgets('the search pill opens the cat search panel over the map', (
     tester,
   ) async {
     await _pumpShell(tester);
 
-    await tester.tap(find.text('Profil'));
+    await tester.tap(find.bySemanticsLabel(RegExp('^kedi ara')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CatSearchPanel), findsOneWidget);
+
+    await tester.tap(find.text('vazgeç'));
+    await tester.pumpAndSettle();
+
+    // Dismissing the panel leaves the user on the map, never elsewhere.
+    expect(find.byType(CatSearchPanel), findsNothing);
+    expect(find.byType(MapScreen), findsOneWidget);
+  });
+
+  testWidgets('the account avatar opens the profile as a pushed route', (
+    tester,
+  ) async {
+    await _pumpShell(tester);
+
+    await tester.tap(find.bySemanticsLabel(RegExp('^Hesabım')));
     await tester.pumpAndSettle();
 
     expect(find.byType(ProfileScreen), findsOneWidget);
-    expect(find.text('Harita'), findsOneWidget);
-    expect(find.text('Keşfet'), findsOneWidget);
-    expect(find.byIcon(Icons.add), findsNothing);
+    // Pushed over the map, so the map's own chrome is gone rather than
+    // still framing another destination.
+    expect(find.text('kedi ekle'), findsNothing);
   });
 
-  testWidgets(
-    'a pushed route (cat detail) covers the shell — no bottom nav, no fab',
-    (tester) async {
-      await _pumpShell(tester);
-      appRouter.go('/cats/$_catId');
-      await tester.pumpAndSettle();
+  testWidgets('a pushed route (cat detail) covers the map chrome entirely', (
+    tester,
+  ) async {
+    await _pumpShell(tester);
+    appRouter.go('/cats/$_catId');
+    await tester.pumpAndSettle();
 
-      expect(find.byType(CatDetailScreen), findsOneWidget);
-      expect(find.text('Harita'), findsNothing);
-      expect(find.text('Keşfet'), findsNothing);
-      expect(find.text('Profil'), findsNothing);
-    },
-  );
+    expect(find.byType(CatDetailScreen), findsOneWidget);
+    expect(find.text('kedi ekle'), findsNothing);
+    expect(find.bySemanticsLabel(RegExp('^kedi ara')), findsNothing);
+  });
 }

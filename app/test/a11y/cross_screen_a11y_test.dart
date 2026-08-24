@@ -26,7 +26,6 @@ import 'package:go_router/go_router.dart';
 import 'package:app/core/identity/device_identity.dart';
 import 'package:app/core/network/api_client.dart';
 import 'package:app/core/identity/session_identity.dart';
-import 'package:app/core/router/app_shell.dart';
 import 'package:app/core/theme/app_theme.dart';
 import 'package:app/features/account/data/account_api.dart';
 import 'package:app/features/account/ui/account_screen.dart';
@@ -44,7 +43,7 @@ import 'package:app/features/cat_detail/ui/cat_detail_screen.dart';
 import 'package:app/features/discover/data/discover_api.dart';
 import 'package:app/features/discover/data/discover_cat.dart';
 import 'package:app/features/discover/data/discover_location_service.dart';
-import 'package:app/features/discover/ui/discover_screen.dart';
+import 'package:app/features/discover/ui/cat_search_panel.dart';
 import 'package:app/features/follow/data/follows_api.dart';
 import 'package:app/features/map/data/cat_marker.dart';
 import 'package:app/features/map/data/location_service.dart';
@@ -142,6 +141,7 @@ class _FakeDiscoverApi extends DiscoverApi {
     required DiscoverFilter filter,
     required double lat,
     required double lng,
+    String? query,
     String? cursor,
   }) async => DiscoverPage(items: nearby, nextCursor: null);
 }
@@ -315,43 +315,19 @@ GoRouter _router(Widget home) => GoRouter(
   ],
 );
 
-/// Tab routes (`/discover`, `/profile`) settle inside the real [AppShell]
-/// via a StatefulShellRoute mirroring appRouter's, so the bottom-nav chrome
-/// is part of the checked composition. The map branch stays a stub: shell
-/// branches mount lazily, so it never builds, and the shell-with-real-map
-/// composition already has its own case pumping [CatsOfIstanbulApp].
+/// `/profile` is a plain pushed route since issue #284 — there is no shell
+/// and no tab bar left for it to settle inside. The search panel is not a
+/// route at all, so its own case pumps it directly.
 GoRouter _shellRouter(String initialLocation) => GoRouter(
   initialLocation: initialLocation,
   routes: [
-    StatefulShellRoute.indexedStack(
-      builder: (context, state, navigationShell) =>
-          AppShell(navigationShell: navigationShell),
-      branches: [
-        StatefulShellBranch(
-          routes: [
-            GoRoute(
-              path: '/',
-              builder: (context, state) => const Scaffold(body: Text('map')),
-            ),
-          ],
-        ),
-        StatefulShellBranch(
-          routes: [
-            GoRoute(
-              path: '/discover',
-              builder: (context, state) => const DiscoverScreen(),
-            ),
-          ],
-        ),
-        StatefulShellBranch(
-          routes: [
-            GoRoute(
-              path: '/profile',
-              builder: (context, state) => const ProfileScreen(),
-            ),
-          ],
-        ),
-      ],
+    GoRoute(
+      path: '/',
+      builder: (context, state) => const Scaffold(body: Text('map')),
+    ),
+    GoRoute(
+      path: '/profile',
+      builder: (context, state) => const ProfileScreen(),
     ),
     ..._stubRoutes,
   ],
@@ -386,7 +362,7 @@ Future<void> _pumpShellRouted(
 ) => _pumpApp(tester, _shellRouter(initialLocation), overrides);
 
 final _cases = <_ScreenCase>[
-  _ScreenCase('app shell with the map empty-radius state', (tester) async {
+  _ScreenCase('map chrome with the empty-radius state', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -410,8 +386,8 @@ final _cases = <_ScreenCase>[
       ),
     );
   }, usesPlatformView: true),
-  _ScreenCase('discover nearby list in the app shell', (tester) async {
-    await _pumpShellRouted(tester, '/discover', [
+  _ScreenCase('cat search panel, nearby results', (tester) async {
+    await _pumpRouted(tester, const CatSearchPanel(), [
       sessionIdentityServiceProvider.overrideWithValue(
         _FakeSessionIdentityService(),
       ),
@@ -421,6 +397,8 @@ final _cases = <_ScreenCase>[
       discoverApiProvider.overrideWithValue(
         _FakeDiscoverApi([
           const DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
             id: 'cat-1',
             name: 'Tekir',
             primaryPhoto: '',
@@ -428,6 +406,8 @@ final _cases = <_ScreenCase>[
             distanceMeters: 42,
           ),
           DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
             id: 'cat-2',
             name: 'Boncuk',
             primaryPhoto: '',
@@ -442,7 +422,7 @@ final _cases = <_ScreenCase>[
       ),
     ]);
   }),
-  _ScreenCase('signed-in profile in the app shell', (tester) async {
+  _ScreenCase('signed-in profile', (tester) async {
     await _pumpShellRouted(tester, '/profile', [
       sessionIdentityServiceProvider.overrideWithValue(
         _FakeSessionIdentityService(_session),

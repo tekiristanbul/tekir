@@ -34,6 +34,7 @@ class _FakeFollowsApi implements FollowsApi {
   _FakeFollowsApi([this.follows = const []]);
 
   final List<CatMarker> follows;
+  int calls = 0;
 
   @override
   Future<void> follow(String catId) async {}
@@ -42,7 +43,10 @@ class _FakeFollowsApi implements FollowsApi {
   Future<void> unfollow(String catId) async {}
 
   @override
-  Future<List<CatMarker>> fetchFollows() async => follows;
+  Future<List<CatMarker>> fetchFollows() async {
+    calls++;
+    return follows;
+  }
 }
 
 class _FakeLocationService extends DiscoverLocationService {
@@ -66,6 +70,7 @@ class _FakeDiscoverApi extends DiscoverApi {
   final List<Object> pages;
   int calls = 0;
   final List<String?> cursorsSeen = [];
+  final List<String?> queriesSeen = [];
   final List<(double, double)> anchorsSeen = [];
 
   @override
@@ -73,9 +78,11 @@ class _FakeDiscoverApi extends DiscoverApi {
     required DiscoverFilter filter,
     required double lat,
     required double lng,
+    String? query,
     String? cursor,
   }) async {
     cursorsSeen.add(cursor);
+    queriesSeen.add(query);
     anchorsSeen.add((lat, lng));
     final next = pages[calls];
     calls++;
@@ -105,6 +112,8 @@ ProviderContainer _buildContainer({
 }
 
 void main() {
+  group('name search (issue #284)', _searchTests);
+
   test('ensureNearbyLoaded only fetches once across repeated calls', () async {
     final location = _FakeLocationService(_resolved);
     final api = _FakeDiscoverApi([const DiscoverPage(items: [])]);
@@ -155,11 +164,27 @@ void main() {
       final location = _FakeLocationService(_resolved);
       final api = _FakeDiscoverApi([
         const DiscoverPage(
-          items: [DiscoverCat(id: 'a', primaryPhoto: '', distanceMeters: 10)],
+          items: [
+            DiscoverCat(
+              lat: 41.0,
+              lng: 29.0,
+              id: 'a',
+              primaryPhoto: '',
+              distanceMeters: 10,
+            ),
+          ],
           nextCursor: 'cursor-1',
         ),
         const DiscoverPage(
-          items: [DiscoverCat(id: 'b', primaryPhoto: '', distanceMeters: 20)],
+          items: [
+            DiscoverCat(
+              lat: 41.0,
+              lng: 29.0,
+              id: 'b',
+              primaryPhoto: '',
+              distanceMeters: 20,
+            ),
+          ],
         ),
       ]);
       final container = _buildContainer(location: location, discoverApi: api);
@@ -207,7 +232,15 @@ void main() {
         final location = _FakeLocationService(outcome);
         final api = _FakeDiscoverApi([
           const DiscoverPage(
-            items: [DiscoverCat(id: 'a', primaryPhoto: '', distanceMeters: 10)],
+            items: [
+              DiscoverCat(
+                lat: 41.0,
+                lng: 29.0,
+                id: 'a',
+                primaryPhoto: '',
+                distanceMeters: 10,
+              ),
+            ],
           ),
         ]);
         final container = _buildContainer(location: location, discoverApi: api);
@@ -248,11 +281,27 @@ void main() {
       );
       final api = _FakeDiscoverApi([
         const DiscoverPage(
-          items: [DiscoverCat(id: 'a', primaryPhoto: '', distanceMeters: 10)],
+          items: [
+            DiscoverCat(
+              lat: 41.0,
+              lng: 29.0,
+              id: 'a',
+              primaryPhoto: '',
+              distanceMeters: 10,
+            ),
+          ],
           nextCursor: 'cursor-1',
         ),
         const DiscoverPage(
-          items: [DiscoverCat(id: 'b', primaryPhoto: '', distanceMeters: 20)],
+          items: [
+            DiscoverCat(
+              lat: 41.0,
+              lng: 29.0,
+              id: 'b',
+              primaryPhoto: '',
+              distanceMeters: 20,
+            ),
+          ],
         ),
       ]);
       final container = _buildContainer(location: location, discoverApi: api);
@@ -276,11 +325,25 @@ void main() {
     final api = _FakeDiscoverApi([
       const DiscoverPage(
         items: [
-          DiscoverCat(id: 'nearby-1', primaryPhoto: '', distanceMeters: 5),
+          DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
+            id: 'nearby-1',
+            primaryPhoto: '',
+            distanceMeters: 5,
+          ),
         ],
       ),
       const DiscoverPage(
-        items: [DiscoverCat(id: 'help-1', primaryPhoto: '', distanceMeters: 5)],
+        items: [
+          DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
+            id: 'help-1',
+            primaryPhoto: '',
+            distanceMeters: 5,
+          ),
+        ],
       ),
     ]);
     final container = _buildContainer(location: location, discoverApi: api);
@@ -323,13 +386,31 @@ void main() {
         final api = _FakeDiscoverApi([
           const DiscoverPage(
             items: [
-              DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 5),
-              DiscoverCat(id: 'cat-2', primaryPhoto: '', distanceMeters: 10),
+              DiscoverCat(
+                lat: 41.0,
+                lng: 29.0,
+                id: 'cat-1',
+                primaryPhoto: '',
+                distanceMeters: 5,
+              ),
+              DiscoverCat(
+                lat: 41.0,
+                lng: 29.0,
+                id: 'cat-2',
+                primaryPhoto: '',
+                distanceMeters: 10,
+              ),
             ],
           ),
           const DiscoverPage(
             items: [
-              DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 5),
+              DiscoverCat(
+                lat: 41.0,
+                lng: 29.0,
+                id: 'cat-1',
+                primaryPhoto: '',
+                distanceMeters: 5,
+              ),
             ],
           ),
         ]);
@@ -363,7 +444,13 @@ void main() {
       final api = _FakeDiscoverApi([
         const DiscoverPage(
           items: [
-            DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 5),
+            DiscoverCat(
+              lat: 41.0,
+              lng: 29.0,
+              id: 'cat-1',
+              primaryPhoto: '',
+              distanceMeters: 5,
+            ),
           ],
         ),
       ]);
@@ -389,12 +476,32 @@ void main() {
     final api = _FakeDiscoverApi([
       const DiscoverPage(
         items: [
-          DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 5),
-          DiscoverCat(id: 'cat-2', primaryPhoto: '', distanceMeters: 10),
+          DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
+            id: 'cat-1',
+            primaryPhoto: '',
+            distanceMeters: 5,
+          ),
+          DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
+            id: 'cat-2',
+            primaryPhoto: '',
+            distanceMeters: 10,
+          ),
         ],
       ),
       const DiscoverPage(
-        items: [DiscoverCat(id: 'cat-1', primaryPhoto: '', distanceMeters: 5)],
+        items: [
+          DiscoverCat(
+            lat: 41.0,
+            lng: 29.0,
+            id: 'cat-1',
+            primaryPhoto: '',
+            distanceMeters: 5,
+          ),
+        ],
       ),
     ]);
     final container = ProviderContainer(
@@ -455,4 +562,104 @@ class _FollowsApiWith implements FollowsApi {
 
   @override
   Future<List<CatMarker>> fetchFollows() async => cats;
+}
+
+// issue #284: searching by a cat's name.
+void _searchTests() {
+  test(
+    'a query reloads the surfaces already open and reaches the api',
+    () async {
+      final location = _FakeLocationService(_resolved);
+      final api = _FakeDiscoverApi([
+        DiscoverPage(
+          items: [
+            DiscoverCat(
+              lat: 41.0,
+              lng: 29.0,
+              id: 'a',
+              name: 'boncuk',
+              primaryPhoto: '',
+              distanceMeters: 10,
+            ),
+          ],
+        ),
+        DiscoverPage(
+          items: [
+            DiscoverCat(
+              lat: 41.0,
+              lng: 29.0,
+              id: 'a',
+              name: 'boncuk',
+              primaryPhoto: '',
+              distanceMeters: 10,
+            ),
+          ],
+        ),
+      ]);
+      final container = _buildContainer(location: location, discoverApi: api);
+      addTearDown(container.dispose);
+
+      await container.read(discoverProvider.notifier).ensureNearbyLoaded();
+      expect(api.queriesSeen, [null]);
+
+      await container.read(discoverProvider.notifier).setQuery('  boncuk  ');
+
+      // Trimmed before it is stored, and passed on as a query rather than a
+      // second unfiltered read.
+      expect(container.read(discoverProvider).query, 'boncuk');
+      expect(api.queriesSeen, [null, 'boncuk']);
+    },
+  );
+
+  test('a surface that was never opened is not fetched by a query', () async {
+    final location = _FakeLocationService(_resolved);
+    final api = _FakeDiscoverApi([const DiscoverPage(items: [])]);
+    final container = _buildContainer(location: location, discoverApi: api);
+    addTearDown(container.dispose);
+
+    await container.read(discoverProvider.notifier).setQuery('boncuk');
+
+    expect(api.calls, 0);
+    // It still picks the query up when it does open.
+    await container.read(discoverProvider.notifier).ensureNearbyLoaded();
+    expect(api.queriesSeen, ['boncuk']);
+  });
+
+  test('an unchanged query does no work at all', () async {
+    final location = _FakeLocationService(_resolved);
+    final api = _FakeDiscoverApi([const DiscoverPage(items: [])]);
+    final container = _buildContainer(location: location, discoverApi: api);
+    addTearDown(container.dispose);
+
+    await container.read(discoverProvider.notifier).ensureNearbyLoaded();
+    await container.read(discoverProvider.notifier).setQuery('');
+
+    expect(api.calls, 1);
+  });
+
+  test('followed cats filter locally, without a second follows read', () async {
+    final location = _FakeLocationService(_resolved);
+    final api = _FakeDiscoverApi([const DiscoverPage(items: [])]);
+    final follows = _FakeFollowsApi(const [
+      CatMarker(id: 'a', name: 'boncuk', primaryPhoto: '', lat: 41, lng: 29),
+      CatMarker(id: 'b', name: 'tekir', primaryPhoto: '', lat: 41, lng: 29),
+    ]);
+    final container = _buildContainer(
+      location: location,
+      discoverApi: api,
+      followsApi: follows,
+    );
+    addTearDown(container.dispose);
+
+    await container.read(discoverProvider.notifier).loadFollowing();
+    expect(container.read(discoverProvider).filteredFollowing.length, 2);
+
+    await container.read(discoverProvider.notifier).setQuery('BON');
+
+    expect(follows.calls, 1);
+    expect(
+      container.read(discoverProvider).filteredFollowing.map((c) => c.id),
+      ['a'],
+    );
+  });
 }

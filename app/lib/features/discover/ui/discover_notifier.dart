@@ -9,12 +9,16 @@ import '../data/discover_api.dart';
 import '../data/discover_cat.dart';
 import '../data/discover_location_service.dart';
 
-/// The keşfet screen's three mvp surfaces (docs/product/discovery.md,
-/// issue #82): every active cat by distance, only those with an active
-/// needs-help alert, and the account's own followed cats. Matches the
-/// approved prototype's segmented control (prototype/app.js:707-749)
-/// exactly — `nearby`/`needsHelp` are public and location-aware; `following`
-/// is private, account-owned state.
+/// The three mvp discovery surfaces (docs/product/discovery.md, issue
+/// #82): every active cat by distance, only those with an active
+/// needs-help alert, and the account's own followed cats. `nearby`/
+/// `needsHelp` are public and location-aware; `following` is private,
+/// account-owned state.
+///
+/// Since issue #284 these are the search panel's three chips rather than a
+/// separate keşfet tab's segmented control. The surfaces, their analytics
+/// vocabulary and their loading rules are unchanged — only what presents
+/// them moved.
 enum DiscoverTab { nearby, needsHelp, following }
 
 /// One of the two location-aware tabs' state: which page of
@@ -122,24 +126,48 @@ class DiscoverFollowingTabState {
 class DiscoverState {
   const DiscoverState({
     this.selectedTab = DiscoverTab.nearby,
+    this.query = '',
     this.nearby = const DiscoverLocationTabState(),
     this.needsHelp = const DiscoverLocationTabState(),
     this.following = const DiscoverFollowingTabState(),
   });
 
   final DiscoverTab selectedTab;
+
+  /// The name being searched for (issue #284), already trimmed. Empty means
+  /// no search: every surface shows its full list, which is what the
+  /// approved design opens with.
+  final String query;
+
   final DiscoverLocationTabState nearby;
   final DiscoverLocationTabState needsHelp;
   final DiscoverFollowingTabState following;
 
+  bool get isSearching => query.isNotEmpty;
+
+  /// The followed cats matching [query]. Filtered here rather than on the
+  /// wire: follows is one account's own short list, already fully loaded,
+  /// so a round trip would buy nothing and `GET /v1/me/follows` stays
+  /// untouched.
+  List<CatMarker> get filteredFollowing {
+    if (!isSearching) return following.cats;
+    final needle = query.toLowerCase();
+    return [
+      for (final cat in following.cats)
+        if (cat.name.toLowerCase().contains(needle)) cat,
+    ];
+  }
+
   DiscoverState copyWith({
     DiscoverTab? selectedTab,
+    String? query,
     DiscoverLocationTabState? nearby,
     DiscoverLocationTabState? needsHelp,
     DiscoverFollowingTabState? following,
   }) {
     return DiscoverState(
       selectedTab: selectedTab ?? this.selectedTab,
+      query: query ?? this.query,
       nearby: nearby ?? this.nearby,
       needsHelp: needsHelp ?? this.needsHelp,
       following: following ?? this.following,
@@ -179,6 +207,27 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
           );
     }
     state = state.copyWith(selectedTab: tab);
+  }
+
+  /// Sets the name being searched for and reloads whichever location-aware
+  /// surfaces have already been opened (issue #284).
+  ///
+  /// Debouncing belongs to the field, not here — this is called once the
+  /// typing has settled. A surface that has never been opened is left
+  /// alone: it will pick the query up from [state] when it first loads,
+  /// which is also why the query is stored before anything is reloaded.
+  ///
+  /// `following` needs no reload at all; it filters in place.
+  Future<void> setQuery(String query) async {
+    final next = query.trim();
+    if (next == state.query) return;
+    state = state.copyWith(query: next);
+    await Future.wait([
+      if (state.nearby.hasLoadedOnce || state.nearby.isLoading)
+        _loadLocationTab(DiscoverFilter.nearby),
+      if (state.needsHelp.hasLoadedOnce || state.needsHelp.isLoading)
+        _loadLocationTab(DiscoverFilter.needsHelp),
+    ]);
   }
 
   Future<void> ensureNearbyLoaded() async {
@@ -247,7 +296,12 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
     try {
       final page = await ref
           .read(discoverApiProvider)
-          .fetch(filter: filter, lat: lat, lng: lng);
+          .fetch(
+            filter: filter,
+            lat: lat,
+            lng: lng,
+            query: state.query.isEmpty ? null : state.query,
+          );
       _setTab(
         filter,
         DiscoverLocationTabState(
@@ -296,6 +350,7 @@ class DiscoverNotifier extends Notifier<DiscoverState> {
             filter: filter,
             lat: lat,
             lng: lng,
+            query: state.query.isEmpty ? null : state.query,
             cursor: current.nextCursor,
           );
       final latest = _tabFor(filter);

@@ -258,13 +258,19 @@ func (h *CatsHandler) NearbyDuplicates(w http.ResponseWriter, r *http.Request) {
 
 // discoverCatResponse is one entry of GET /v1/cats/discover's paginated
 // result (issue #82) — the same map-marker-preview fields catMarkerResponse
-// carries, minus area (this is a distance-ordered list, not a viewport —
-// tapping an entry opens the existing cat-detail flow, which fetches its
-// own coordinates), plus DistanceMeters, the field this endpoint adds.
+// carries, plus DistanceMeters, the field this endpoint adds.
+//
+// area was deliberately absent until issue #284, on the reasoning that a
+// distance-ordered list is not a viewport. Picking a search result now
+// selects that cat on the map instead of opening its detail, so the client
+// needs the position in the same response — the alternative is a second
+// round trip between the tap and the camera moving. Additive: a 0.4 client
+// that does not read this field is unaffected.
 type discoverCatResponse struct {
 	ID             string               `json:"id"`
 	Name           string               `json:"name"`
 	PrimaryPhoto   string               `json:"primary_photo"`
+	Area           areaLatLng           `json:"area"`
 	AreaLabel      *string              `json:"area_label"`
 	DistanceMeters float64              `json:"distance_meters"`
 	ActiveAlert    *activeAlertResponse `json:"active_alert"`
@@ -280,7 +286,7 @@ type discoverPageResponse struct {
 }
 
 // Discover answers GET /v1/cats/discover?lat=&lng=&filter=nearby|needs_help
-// &cursor=&limit= (issue #82): the location-aware half of the mvp discover
+// &q=&cursor=&limit= (issue #82; q added by issue #284): the location-aware half of the mvp discover
 // screen's three surfaces (docs/product/discovery.md) — every active cat,
 // or only those with a currently active needs-help alert, nearest first
 // from the caller's own (lat, lng). Public: like GET /v1/cats' bbox mode
@@ -307,7 +313,7 @@ func (h *CatsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	page, err := h.cats.ListDiscover(r.Context(), filter, lat, lng, q.Get("cursor"), limit, UserFromContext(r.Context()).UserID)
+	page, err := h.cats.ListDiscover(r.Context(), filter, lat, lng, q.Get("q"), q.Get("cursor"), limit, UserFromContext(r.Context()).UserID)
 	if err != nil {
 		writeCatsServiceError(w, err)
 		return
@@ -319,6 +325,7 @@ func (h *CatsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 			ID:             c.ID,
 			Name:           c.Name,
 			PrimaryPhoto:   c.PrimaryPhoto,
+			Area:           areaLatLng{Lat: c.Lat, Lng: c.Lng},
 			AreaLabel:      c.AreaLabel,
 			DistanceMeters: c.DistanceMeters,
 			ActiveAlert:    toActiveAlertResponse(c.ActiveAlert),
@@ -829,6 +836,8 @@ func writeCatsServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid area"})
 	case errors.Is(err, service.ErrInvalidDiscoverFilter):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid discover filter"})
+	case errors.Is(err, service.ErrInvalidNameQuery):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid name query"})
 	case errors.Is(err, service.ErrMissingPhoto):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "photo is required"})
 	case errors.Is(err, service.ErrMediaTooLarge):

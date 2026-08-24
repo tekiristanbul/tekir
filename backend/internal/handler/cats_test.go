@@ -76,6 +76,11 @@ type fakeCatsLister struct {
 	updateIdempotencyRow repository.GetUpdateByIdempotencyKeyRow
 	updateIdempotencyErr error
 
+	// capturedDistance, if non-nil, records the arg the last
+	// ListCatsByDistance call received — issue #284's name search has to be
+	// observable at this layer, since the fake never filters itself.
+	capturedDistance *repository.ListCatsByDistanceParams
+
 	nearbyDuplicateRows []repository.ListNearbyCatsForDuplicateCheckRow
 	nearbyDuplicateErr  error
 
@@ -226,6 +231,9 @@ func (f fakeCatsLister) GetUpdateForCorrectionCheck(ctx context.Context, arg rep
 }
 
 func (f fakeCatsLister) ListCatsByDistance(ctx context.Context, arg repository.ListCatsByDistanceParams) ([]repository.ListCatsByDistanceRow, error) {
+	if f.capturedDistance != nil {
+		*f.capturedDistance = arg
+	}
 	return f.distanceRows, f.distanceErr
 }
 
@@ -2617,3 +2625,58 @@ func (fakeHandlerObjectStore) Put(_ context.Context, key, _ string, _ []byte) (s
 }
 
 func (fakeHandlerObjectStore) Delete(_ context.Context, _ string) error { return nil }
+
+// issue #284: the q param reaches the service, and a discover row now
+// carries the cat's coordinates so a search result can be selected on the
+// map without a second read.
+func TestCatsHandler_Discover_NameQueryAndArea(t *testing.T) {
+	id := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	var captured repository.ListCatsByDistanceParams
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{
+		capturedDistance: &captured,
+		distanceRows: []repository.ListCatsByDistanceRow{
+			{
+				ID:        id,
+				Name:      pgtype.Text{String: "boncuk", Valid: true},
+				PhotoUrl:  "https://placecats.com/millie/300/200",
+				CatLat:    41.0256,
+				CatLng:    28.9744,
+				DistanceM: 220,
+			},
+		},
+	}), testMaxUploadBytes)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/discover?lat=41.0256&lng=28.9744&filter=nearby&q=boncuk", nil)
+	rec := httptest.NewRecorder()
+	h.Discover(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !captured.NameQuery.Valid || captured.NameQuery.String != "boncuk" {
+		t.Errorf("q did not reach the query: %+v", captured.NameQuery)
+	}
+	var body discoverPageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(body.Items))
+	}
+	if body.Items[0].Area.Lat != 41.0256 || body.Items[0].Area.Lng != 28.9744 {
+		t.Errorf("unexpected area: %+v", body.Items[0].Area)
+	}
+}
+
+func TestCatsHandler_Discover_InvalidNameQuery(t *testing.T) {
+	h := NewCatsHandler(service.NewCatsService(fakeCatsLister{}), testMaxUploadBytes)
+
+	long := strings.Repeat("a", 200)
+	req := httptest.NewRequest(http.MethodGet, "/v1/cats/discover?lat=41.0256&lng=28.9744&filter=nearby&q="+long, nil)
+	rec := httptest.NewRecorder()
+	h.Discover(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

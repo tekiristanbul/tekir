@@ -146,6 +146,16 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('ilk kediyi ekle'), findsOneWidget);
+      // One line at normal text scale, in half a card's width. The longer
+      // label wrapped, which read as a button whose text had slipped.
+      expect(
+        tester
+            .renderObject<RenderBox>(find.text('ilk kediyi ekle'))
+            .size
+            .height,
+        lessThan(24),
+        reason: 'the primary action wrapped to a second line',
+      );
       expect(find.text('alanı genişlet'), findsOneWidget);
       // a screen-center dot stops being the user's position as soon as
       // the camera pans, so state 07 draws no user dot at all.
