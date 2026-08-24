@@ -241,6 +241,18 @@ void main() {
 
       expect(find.text('Kedi ekle'), findsOneWidget);
       expect(find.text('Fotoğraf (zorunlu)'), findsOneWidget);
+      // issue #287: the photo is picked in the shape it becomes — a round
+      // profile photo since #236 — not in a cover-shaped well that shows a
+      // crop the cat will never be seen in.
+      final well = tester.getSize(
+        find
+            .ancestor(
+              of: find.text('Fotoğraf ekle'),
+              matching: find.byType(ClipOval),
+            )
+            .first,
+      );
+      expect(well.width, closeTo(well.height, 0.5));
     },
   );
 
